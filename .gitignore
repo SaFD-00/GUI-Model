@@ -1,0 +1,18 @@
+# Data & Models
+data/
+LlamaFactory/
+outputs/
+exports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
