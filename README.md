@@ -122,7 +122,7 @@ data/
 5. **Section 5**: Stage 1 모델 Merge & HuggingFace 업로드
 6. **Section 6**: Stage 2 학습 (Exp-2, Exp-3, Exp-4)
 7. **Section 7**: Stage 2 평가 (4-Way + Baseline Zero-shot 비교)
-8. **Section 8**: Stage 2 최적 모델 Merge & 업로드
+8. **Section 8**: Stage 2 모든 모델 Merge & 업로드
 
 ## 프로젝트 구조
 
