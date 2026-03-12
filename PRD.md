@@ -56,7 +56,7 @@
 | Exp | Stage 1 (World Modeling) | Stage 2 (Action Prediction) | Base Model | 목적 |
 |-----|--------------------------|----------------------------|------------|------|
 | Exp-1 | Full FT | — | Qwen3-VL-8B-Instruct | World Model 품질 평가 |
-| Exp-2 | Full FT → Merge | LoRA FT | SaFD-00/qwen3-vl-8b-gui | 핵심 실험: World Model → Action |
+| Exp-2 | Full FT → Merge | LoRA FT | SaFD-00/qwen3-vl-8b-stage1-world-model | 핵심 실험: World Model → Action |
 | Exp-3 | — | LoRA FT | Qwen3-VL-8B-Instruct | Control Group (Baseline) |
 | Exp-4 | — | LoRA FT | trillionlabs/gWorld-8B | 기존 World Model 비교 |
 
@@ -226,10 +226,10 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 | 산출물 | 위치 | 설명 |
 |--------|------|------|
-| 학습된 모델 (Stage 1) | `SaFD-00/qwen3-vl-8b-gui` | World Model |
-| 학습된 모델 (Exp-2) | `SaFD-00/qwen3-vl-8b-gui-world-model` | World Model + Action |
-| 학습된 모델 (Exp-3) | `SaFD-00/qwen3-vl-8b-gui-baseline` | Baseline |
-| 학습된 모델 (Exp-4) | `SaFD-00/qwen3-vl-8b-gui-gworld` | gWorld + Action |
-| 평가 리포트 | `outputs/stage*_predict_*/evaluation_report.md` | 모델별 상세 메트릭 |
-| 시각화 차트 | `outputs/stage2_evaluation.png` | 4-Way 비교 차트 |
+| 학습된 모델 (Stage 1) | `SaFD-00/qwen3-vl-8b-stage1-world-model` | World Model |
+| 학습된 모델 (Exp-2) | `SaFD-00/qwen3-vl-8b-stage2-world-model` | World Model + Action |
+| 학습된 모델 (Exp-3) | `SaFD-00/qwen3-vl-8b-stage2-base` | Baseline |
+| 학습된 모델 (Exp-4) | `SaFD-00/qwen3-vl-8b-stage2-gworld` | gWorld + Action |
+| 평가 리포트 | `outputs/stage*_eval/*/evaluation_report.md` | 모델별 상세 메트릭 |
+| 시각화 차트 | `outputs/stage2_eval/stage2_evaluation.png` | 4-Way 비교 차트 |
 | 실행 노트북 | `gui-model.ipynb` | 전체 파이프라인 |
