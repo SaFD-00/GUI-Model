@@ -9,7 +9,7 @@
 | 연구 유형 | Ablation Study (4-Way Comparison) |
 | Base Model | Qwen/Qwen3-VL-8B-Instruct |
 | Framework | LLaMA-Factory |
-| Hardware | A100 80GB × 4 |
+| Hardware | A100 80GB × 4 (Stage 1) / RTX 5090 32GB × 2 (Stage 2) |
 
 ## 2. 연구 동기
 
@@ -155,8 +155,8 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 | 항목 | 값 |
 |------|-----|
-| GPU | NVIDIA A100 80GB × 4 |
-| 분산 학습 | torchrun (NPROC_PER_NODE=4) |
+| GPU | NVIDIA A100 80GB × 4 (Stage 1) / RTX 5090 32GB × 2 (Stage 2) |
+| 분산 학습 | torchrun (NPROC_PER_NODE=4 Stage 1 / NPROC_PER_NODE=2 Stage 2) |
 | 메모리 최적화 | DeepSpeed ZeRO Stage 3 |
 | 정밀도 | bf16 (bfloat16) |
 | Gradient Checkpointing | Enabled |
@@ -179,8 +179,8 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 | Parameter | 값 | 근거 |
 |-----------|-----|------|
-| per_device_train_batch_size | 4 | LoRA는 메모리 효율적, per_device=4 가능 |
-| gradient_accumulation_steps | 2 | effective batch 32 |
+| per_device_train_batch_size | 2 | RTX 5090 32GB VRAM 고려, per_device=2 |
+| gradient_accumulation_steps | 8 | effective batch 32 (2×8×2GPU) |
 | learning_rate | 5e-5 | LoRA 표준 |
 | lr_scheduler_type | cosine | 수렴 안정성 |
 | warmup_ratio | 0.05 | 표준 |
@@ -220,7 +220,7 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 | Stage 1 World Model 품질 부족 | Exp-2가 Exp-3보다 성능이 낮을 수 있음 | Stage 1 평가에서 조기 확인, 하이퍼파라미터 조정 |
 | gWorld의 학습 데이터 분포 차이 | Exp-4와의 비교가 unfair할 수 있음 | Per-Type 분석으로 액션 타입별 강약점 파악 |
 | 데이터셋 규모 (~3K) 제한 | 통계적 유의성 확보 어려움 | Per-Type 메트릭으로 세분화 분석, confidence interval 보고 |
-| A100 메모리 OOM | per_device_batch_size=2에서 OOM 발생 가능 | gradient checkpointing 활성화, per_device=1로 fallback 후 grad_accum 조정 |
+| RTX 5090 메모리 OOM (Stage 2) | per_device_batch_size=2에서 OOM 발생 가능 | gradient checkpointing 활성화, per_device=1로 fallback 후 grad_accum 조정 |
 
 ## 10. Deliverables
 
