@@ -2,7 +2,7 @@
 
 모바일 UI의 상태 전이(World Modeling)와 액션 예측(Action Prediction)을 위한 2-Stage Fine-tuning 파이프라인.
 
-**핵심 가설**: GUI World Modeling으로 사전학습된 VLM은 Action Prediction에서 더 빠르게 수렴한다.
+**핵심 가설**: GUI World Modeling으로 사전학습된 VLM은 Action Prediction에서 더 높은 성능을 보인다.
 
 ## 개요
 
@@ -20,6 +20,23 @@ Stage 1: World Modeling          Stage 2: Action Prediction
 - **Stage 1**: UI 상태(XML)와 액션이 주어졌을 때, 다음 UI 상태를 예측하는 World Model 학습
 - **Stage 2**: 스크린샷 + UI 상태 + 태스크 설명으로부터 수행할 액션을 예측
 
+## 4-Way 비교 실험
+
+World Model 사전학습이 Action Prediction 성능에 미치는 영향을 검증하기 위한 4-Way ablation study.
+
+| Exp | Stage 1 | Stage 2 | Base Model | 목적 |
+|-----|---------|---------|------------|------|
+| Exp-1 | Full FT | — | Qwen3-VL-8B-Instruct | World Model 학습 및 평가 |
+| Exp-2 | Full FT → Merge | LoRA FT | SaFD-00/qwen3-vl-8b-gui | World Model + Action Prediction |
+| Exp-3 | — | LoRA FT | Qwen3-VL-8B-Instruct | Baseline (Control Group) |
+| Exp-4 | — | LoRA FT | trillionlabs/gWorld-8B | 기존 World Model |
+
+**핵심 비교:**
+- Exp-2 vs Exp-3 → 자체 World Modeling 사전학습 효과 검증
+- Exp-3 vs Exp-4 → 기존 World Model(gWorld)의 Action Prediction 기여도
+- Exp-2 vs Exp-4 → 자체 vs 기존 World Model 비교
+- Baseline (Zero-shot) → Stage 1/2 모두에서 Qwen3-VL-8B-Instruct 원본 대비 성능 측정
+
 ## 모델
 
 | 항목 | 값 |
@@ -33,9 +50,10 @@ Stage 1: World Modeling          Stage 2: Action Prediction
 
 | Dataset | Stage | Entries | 설명 |
 |---------|-------|---------|------|
-| GUI-Model_stage1_train | 1 | 3,087 | 전체 (OpenApp 포함) |
-| GUI-Model_stage1_NoOpenApp_train | 1 | 2,073 | OpenApp 제외 |
-| GUI-Model_stage2_train | 2 | 3,655 | Action Prediction |
+| GUI-Model_stage1_train | 1 | ~2,988 | World Modeling (Train 95%) |
+| GUI-Model_stage1_test | 1 | ~157 | World Modeling (Test 5%) |
+| GUI-Model_stage2_train | 2 | ~2,832 | Action Prediction (Train 90%) |
+| GUI-Model_stage2_test | 2 | ~315 | Action Prediction (Test 10%) |
 | Images | 공유 | 3,655 | 모바일 UI 스크린샷 (PNG) |
 
 ## 학습 설정
@@ -45,33 +63,33 @@ Stage 1: World Modeling          Stage 2: Action Prediction
 | 항목 | 값 |
 |------|-----|
 | Method | Full (all parameters) |
-| Dataset | GUI-Model_stage1_NoOpenApp_train (2,073건) |
-| Effective Batch | 16 (1 x 8 x 2 GPU) |
-| Learning Rate | 2e-5 (constant) |
+| Dataset | GUI-Model_stage1_train (~2,988건) |
+| Effective Batch | 64 (2 × 8 × 4 GPU) |
+| Learning Rate | 2e-5 (cosine, warmup=0.1) |
 | Epochs | 3.0 |
 | DeepSpeed | ZeRO-3 |
-| Hardware | A100 80GB x 2 |
+| Hardware | A100 80GB × 4 |
 
-### Stage 2: Action Prediction (LoRA, 3-Way 비교)
-
-World Model 사전학습이 Action Prediction 성능에 미치는 영향을 검증하기 위한 3-Way 비교 실험.
-
-| ID | Base Model | HuggingFace ID |
-|----|------------|----------------|
-| S2-1 | Qwen3-VL-8B (Baseline) | `Qwen/Qwen3-VL-8B-Instruct` |
-| S2-2 | Code2World-8B | `GD-ML/Code2World` |
-| S2-3 | gWorld-8B | `trillionlabs/gWorld-8B` |
+### Stage 2: Action Prediction (LoRA, 4-Way 비교)
 
 **공통 설정:**
 
 | 항목 | 값 |
 |------|-----|
 | Method | LoRA (r=16, α=32, dropout=0.1) |
-| Dataset | GUI-Model_stage2_train (3,655건) |
-| Effective Batch | 16 (4 x 2 x 2 GPU) |
+| Dataset | GUI-Model_stage2_train (~2,832건) |
+| Effective Batch | 32 (4 × 2 × 4 GPU) |
 | Learning Rate | 5e-5 (cosine, warmup=0.05) |
-| Epochs | 3.0 |
-| Hardware | A100 80GB x 2 |
+| Epochs | 1.0 |
+| Hardware | A100 80GB × 4 |
+
+**Stage 2 실험:**
+
+| ID | Base Model | HuggingFace ID |
+|----|------------|----------------|
+| Exp-2 | Stage 1 Merged | `SaFD-00/qwen3-vl-8b-gui` |
+| Exp-3 | Qwen3-VL-8B (Baseline) | `Qwen/Qwen3-VL-8B-Instruct` |
+| Exp-4 | gWorld-8B | `trillionlabs/gWorld-8B` |
 
 ## 사용법
 
@@ -90,7 +108,6 @@ cd GUI-Model
 data/
 ├── images/                          # 모바일 UI 스크린샷 (3,655개 PNG)
 ├── gui-model_stage1.jsonl           # Stage 1 전체
-├── gui-model_stage1_NoOpenApp.jsonl # Stage 1 (OpenApp 제외)
 └── gui-model_stage2.jsonl           # Stage 2
 ```
 
@@ -99,27 +116,33 @@ data/
 `gui-model.ipynb` 노트북의 셀을 순서대로 실행합니다:
 
 1. **Section 0**: 환경 설정 및 LLaMA-Factory 설치
-2. **Section 1**: Stage 1 데이터 등록
-3. **Section 1.5**: Stage 2 데이터 변환 및 등록
-4. **Section 2**: Stage 1 학습 (Full FT, DeepSpeed ZeRO-3)
-5. **Section 3**: Stage 1 모델 Merge & HuggingFace 업로드
-6. **Section 4**: Stage 2 학습 (LoRA, 3-Way 비교)
-7. **Section 6**: Stage 2 최적 모델 Merge & 업로드
+2. **Section 1-2**: Stage 1/2 데이터 등록
+3. **Section 3**: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
+4. **Section 4**: Stage 1 평가 (Exp-1 vs Baseline Zero-shot)
+5. **Section 5**: Stage 1 모델 Merge & HuggingFace 업로드
+6. **Section 6**: Stage 2 학습 (Exp-2, Exp-3, Exp-4)
+7. **Section 7**: Stage 2 평가 (4-Way + Baseline Zero-shot 비교)
+8. **Section 8**: Stage 2 최적 모델 Merge & 업로드
 
 ## 프로젝트 구조
 
 ```
 GUI-Model/
-├── gui-model.ipynb    # 전체 파이프라인 (데이터 준비 → 학습 → 배포)
+├── gui-model.ipynb    # 전체 파이프라인 (데이터 준비 → 학습 → 평가 → 배포)
+├── PRD.md             # Product Requirements Document
+├── README.md          # 이 파일
 ├── data/              # 데이터셋 (git 미포함)
 │   ├── images/        # 모바일 UI 스크린샷
 │   ├── gui-model_stage1.jsonl
-│   ├── gui-model_stage1_NoOpenApp.jsonl
 │   └── gui-model_stage2.jsonl
-└── README.md
+└── .env.example       # 환경변수 템플릿
 ```
 
-> `data/`와 `LlamaFactory/`는 용량 문제로 저장소에 포함되지 않습니다.
+## References
+
+- [Code2World](https://arxiv.org/abs/2602.09856) (GD-ML) - GUI World Model via Renderable Code Generation
+- [gWorld](https://arxiv.org/abs/2602.01576) (TrillionLabs) - Generative Visual Code Mobile World Models
+- [MobileDreamer](https://arxiv.org/abs/2601.04035) - Generative Sketch World Model for GUI Agent
 
 ## 라이선스
 
