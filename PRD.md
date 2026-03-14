@@ -100,8 +100,15 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 | Perplexity | exp(eval_loss) |
 | BLEU-4 | 생성 XML vs GT XML n-gram 유사도 |
 | ROUGE-L | 최장 공통 부분 문자열 기반 유사도 |
-| Element Accuracy | XML 요소(태그+속성) 일치율 |
-| Index Coverage | XML 인덱스 커버리지 |
+| Exact Match | GT XML과 완전 일치 비율 |
+| Hungarian EA | Element Accuracy (매칭수 / max(pred, gt)) |
+| Hungarian F1 | Precision-Recall F1 Score |
+| Hungarian Prec | Precision (매칭수 / pred 요소 수) |
+| Hungarian Rec | Recall (매칭수 / gt 요소 수) |
+| Hungarian Text | 매칭 쌍의 Jaccard 텍스트 유사도 평균 |
+| Hungarian Idx | 매칭 쌍의 index 위치 정확도 (|diff| ≤ 2) |
+
+> **Hungarian Matching**: BeautifulSoup로 XML에서 interactive 요소를 추출한 뒤, Munkres(헝가리안) 알고리즘으로 pred-gt 간 최적 1:1 매칭을 수행하여 요소 수준의 정확도를 산출한다.
 
 비교: Exp-1 (Fine-tuned) vs Baseline (Zero-shot)
 
@@ -195,7 +202,7 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 ### Secondary (부차)
 
 - **Exp-2 수렴 속도**: Exp-3 대비 training loss가 더 빠르게 감소
-- **Exp-1 Stage 1 메트릭**: Baseline(Zero-shot) 대비 유의미한 BLEU/ROUGE-L 향상
+- **Exp-1 Stage 1 메트릭**: Baseline(Zero-shot) 대비 유의미한 BLEU/ROUGE-L/Hungarian EA 향상
 
 ### Exploratory (탐색)
 
