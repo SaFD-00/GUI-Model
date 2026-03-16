@@ -1,8 +1,8 @@
 # Data & Models
-**/data/
-**/outputs/
-**/exports/
-GUI-Model/LlamaFactory/
+data/
+LlamaFactory/
+outputs/
+exports/
 
 # Python
 __pycache__/
@@ -14,18 +14,10 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Claude Code
-**/.claude/
+.claude/
 
 # Environment
 .env
-
-# Android / Gradle
-**/.gradle/
-**/.idea/
-**/build/
-**/local.properties
-*.apk
-*.aab
 
 # OS
 .DS_Store

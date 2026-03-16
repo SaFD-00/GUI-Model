@@ -1,0 +1,49 @@
+collection:
+  avd:
+    api_level: 34
+    headless: true
+  smart_monkey:
+    action_weights:
+      tap: 0.60
+      press_back: 0.10
+      swipe: 0.10
+      input_text: 0.10
+      long_press: 0.05
+      press_home: 0.00
+    action_delay_ms: 500
+    seed: 42
+    max_retries_on_crash: 3
+    sample_texts:
+      - "Hello World"
+      - "Test Note"
+      - "Meeting at 3pm"
+      - "Shopping list"
+      - "Important memo"
+      - "John Doe"
+      - "test@example.com"
+      - "12345"
+      - "New item"
+      - "Quick note"
+  session:
+    max_events_per_app: 100
+    screenshot_format: png
+    screenshot_quality: 90
+  server:
+    host: "0.0.0.0"
+    port: 12345
+  fallback:
+    max_back_attempts: 3
+    allowed_packages:
+      - com.android.systemui
+      - com.android.permissioncontroller
+  storage:
+    output_dir: data/raw/sessions
+annotation:
+  grounding: { enabled: true, min_element_area: 100 }
+  ocr: { enabled: true, min_text_length: 1 }
+  state_diff: { enabled: true, min_changes: 1 }
+  element_qa: { enabled: true, templates_per_screen: 5 }
+  llm_caption: { enabled: false, provider: openai, model: gpt-4o-mini }
+format:
+  output_dir: data/processed
+  normalize_coords: true

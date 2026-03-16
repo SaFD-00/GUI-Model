@@ -1,0 +1,5 @@
+pyyaml>=6.0
+Pillow>=10.0
+loguru>=0.7
+# annotation (optional)
+# openai>=1.0
