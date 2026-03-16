@@ -1,17 +1,90 @@
-# GUI-Model: Product Requirements Document
+# PRD: GUI-Model
 
-## 1. 프로젝트 개요
+> **Version**: 1.0.0
+> **Last Updated**: 2026-03-16
+> **Status**: Completed
+> **Author**: bsw
+> **Base Model**: [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)
+> **Framework**: [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory)
+> **Upstream**: [Code2World](https://arxiv.org/abs/2602.09856), [gWorld](https://arxiv.org/abs/2602.01576), [MobileDreamer](https://arxiv.org/abs/2601.04035)
 
-| 항목 | 내용 |
+---
+
+## 1. 개요
+
+### 1.1 프로젝트 요약
+
+**GUI-Model**은 모바일 GUI **World Modeling이 Action Prediction 성능에 미치는 영향**을 정량적으로 검증하는 Ablation Study(4-Way Comparison) 프로젝트이다. Qwen3-VL-8B-Instruct를 Base Model로, LLaMA-Factory 프레임워크에서 2-Stage fine-tuning 파이프라인을 실행하고 4가지 조건에서 비교 평가한다.
+
+### 1.2 Monkey 파이프라인 내 위치
+
+본 프로젝트는 상위 프로젝트 **Monkey**(범용 GUI Foundation Model 구축)의 학습 파이프라인에서 **Phase 1 SFT의 유효성을 선행 검증**하는 실험이다.
+
+```
+Monkey Pipeline (전체)
+═══════════════════════════════════════════════════════════════════
+
+Phase 1 - SFT
+─────────────────────────────────────────────────────────────────
+
+  Stage 1                          Stage 2
+  GUI World Modeling          →    Task Finetuning
+  (Full Finetuning)                (LoRA Finetuning)
+
+  • Visual Grounding               • Short-horizon Tasks
+  • OCR & Text Recognition          - 단일 액션 예측
+  • Layout Understanding             - Element 클릭/타이핑
+  • Screenshot Captioning          • Long-horizon Tasks
+  • State Difference Detection       - 다단계 웹 네비게이션
+  • Element Attribute QA             - 앱 조작 workflow
+
+
+Phase 2 - RL
+─────────────────────────────────────────────────────────────────
+
+  RL Finetuning (GRPO)
+
+  • Short-horizon reward: 정확한 액션 좌표/타입 매칭
+  • Long-horizon reward: 태스크 완료 성공률
+  • Curriculum: easy tasks → hard tasks
+```
+
+**GUI-Model이 검증하는 것**: Phase 1의 Stage 1(World Modeling) → Stage 2(Task Finetuning) 연결 구간에서, World Modeling 사전학습이 downstream Action Prediction 성능에 실제로 기여하는지를 4-Way ablation으로 정량 검증한다. 이 검증 결과가 Monkey Phase 1 파이프라인의 curriculum learning 설계를 뒷받침한다.
+
+| Monkey Phase | 단계 | GUI-Model 대응 | 상태 |
+|-------------|------|----------------|------|
+| Phase 1 - Stage 1 | GUI World Modeling (Full FT) | Exp-1 (World Model 학습 + 평가) | ✅ 검증 완료 |
+| Phase 1 - Stage 2 | Task Finetuning (LoRA) | Exp-2/3/4 (Action Prediction 4-Way 비교) | ✅ 검증 완료 |
+| Phase 2 | RL Finetuning (GRPO) | 미포함 (Monkey에서 진행 예정) | — |
+
+> **핵심 결론**: GUI-Model 실험 결과, World Modeling → Action Prediction 경로가 유효함을 확인(Exp-2 > Exp-3). 이에 따라 Monkey 프로젝트에서 Phase 1 → Phase 2 RL 학습으로의 진행 근거를 확보함.
+
+### 1.3 핵심 가치
+
+| 기존 방식 | 문제 | GUI-Model |
+|-----------|------|-----------|
+| World Model 예측 품질만 평가 (Code2World, gWorld) | downstream 태스크 기여도 미검증 | World Model → Action Prediction 성능 영향 정량 검증 |
+| 단일 모델 단일 평가 | 사전학습 기여도 분리 불가 | 4-Way ablation (동일 조건, Base Model만 변경) |
+| 대규모 데이터 의존 (gWorld 80K+) | 소규모 데이터 효율성 미확인 | ~3K 데이터로 데이터 효율성 검증 |
+
+### 1.4 Base Model: Qwen3-VL-8B-Instruct
+
+| 항목 | 상세 |
 |------|------|
-| 프로젝트명 | GUI-Model |
-| 목적 | 모바일 GUI World Modeling이 Action Prediction 성능에 미치는 영향 정량 검증 |
-| 연구 유형 | Ablation Study (4-Way Comparison) |
-| Base Model | Qwen/Qwen3-VL-8B-Instruct |
-| Framework | LLaMA-Factory |
-| Hardware | A100 80GB × 4 (Stage 1) / RTX 5090 32GB × 2 (Stage 2) |
-| Repository | [GitHub](https://github.com/SaFD-00/GUI-Model) |
-| 상태 | 학습 및 평가 완료 |
+| 아키텍처 | ViT visual encoder + Qwen LLM (Dense, 8B params) |
+| 핵심 기술 | Interleaved-MRoPE (위치 인코딩), DeepStack (시각-텍스트 정렬) |
+| 컨텍스트 | 256K tokens (최대 1M tokens 확장 가능) |
+| GUI 지원 | 네이티브 GUI 에이전트 기능 — 요소 인식, 기능 이해, 도구 호출 |
+| 시각 능력 | 32언어 OCR, 2D grounding, 동적 해상도, 멀티이미지/비디오 |
+| 선정 이유 | 8B 규모에서 최고 수준의 GUI 이해력, 오픈소스, 활발한 생태계 |
+
+### 1.5 기술적 차별점
+
+- **4-Way Ablation Design**: 동일 Base Model에 대해 World Model 사전학습 유무/종류별 4가지 조건을 동일한 Stage 2 설정으로 비교
+- **Full FT → LoRA 2-Stage 구조**: Stage 1에서 전체 파라미터를 World Model에 적응시킨 후, Stage 2에서 LoRA로 효율적 Action Prediction 학습
+- **XML 기반 World Modeling**: GUI 상태를 HTML-style XML로 표현하여 UI 구조적 이해 학습
+- **Hungarian Matching 평가**: 요소 수준의 정량적 World Model 품질 측정 (Munkres 알고리즘 기반 최적 1:1 매칭)
+- **LLaMA-Factory 기반**: 커스텀 학습 코드 없이 프레임워크 설정만으로 재현 가능한 실험
 
 ---
 
@@ -57,9 +130,79 @@
 
 ---
 
-## 4. 실험 설계
+## 4. 시스템 아키텍처
 
-### 4.1 4-Way Comparison
+### 4.1 계층 구조
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                       GUI-Model Pipeline                          │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                  Stage 1: World Modeling                     │  │
+│  │                  (Full Fine-Tuning)                          │  │
+│  │  UI State (XML) + Action + Screenshot → Next UI State (XML) │  │
+│  └──────────────────────────┬──────────────────────────────────┘  │
+│                             │ Merge                                │
+│                             ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 Stage 2: Action Prediction                   │  │
+│  │                 (LoRA Fine-Tuning)                           │  │
+│  │  Screenshot + UI State + Task → Action (JSON)               │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐    │
+│  │ LLaMA-   │  │  Data    │  │  Eval    │  │  vLLM         │    │
+│  │ Factory  │  │  Module  │  │  Module  │  │  Inference    │    │
+│  └──────────┘  └──────────┘  └──────────┘  └───────────────┘    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 데이터 흐름
+
+```
+[모바일 UI 인터랙션 데이터]
+    │
+    ▼ JSONL 변환
+[ShareGPT Multimodal Format] → 스크린샷(PNG) + UI 계층구조(XML) + 액션(JSON)
+    │
+    ├──► Stage 1: World Modeling Data (~3,145건)
+    │    (screenshot + UI XML + action) → (next UI XML)
+    │
+    └──► Stage 2: Action Prediction Data (~3,655건)
+         (screenshot + UI XML + task) → (action JSON)
+```
+
+### 4.3 핵심 컴포넌트
+
+| 컴포넌트 | 역할 | 기술 스택 |
+|----------|------|----------|
+| LLaMA-Factory | 학습/평가 프레임워크 (SFT, LoRA) | transformers, PEFT, DeepSpeed |
+| gui-model.ipynb | 전체 파이프라인 오케스트레이션 | Jupyter Notebook |
+| Custom Metrics | Hungarian Matching, BLEU, ROUGE 통합 평가 | BeautifulSoup, Munkres, NLTK |
+| vLLM Inference | 배치 추론 (Stage 2 평가) | vLLM (≥0.8.2) |
+| HuggingFace Hub | 모델 체크포인트 관리 및 배포 | huggingface_hub |
+
+### 4.4 파이프라인 오케스트레이션
+
+```
+gui-model.ipynb
+│
+├── Section 0: 환경 설정 및 LLaMA-Factory 설치
+├── Section 1-2: 데이터 분할 및 LLaMA-Factory dataset_info.json 등록
+├── Section 3: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
+├── Section 4: Stage 1 평가 (Exp-1 vs Baseline Zero-shot)
+├── Section 5: Stage 1 모델 Merge & HuggingFace 업로드
+├── Section 6: Stage 2 학습 (Exp-2, Exp-3, Exp-4 — LoRA FT)
+├── Section 7: Stage 2 평가 (4-Way + Baseline Zero-shot 비교)
+└── Section 8: Stage 2 모든 모델 Merge & 업로드
+```
+
+---
+
+## 5. 실험 설계
+
+### 5.1 4-Way Comparison
 
 | Exp | Stage 1 (World Modeling) | Stage 2 (Action Prediction) | Base Model | 목적 |
 |-----|--------------------------|----------------------------|------------|------|
@@ -70,7 +213,7 @@
 
 **Baseline**: Qwen3-VL-8B-Instruct (Zero-shot, 학습 없음)을 Stage 1/2 모두에서 평가
 
-### 4.2 변수 통제
+### 5.2 변수 통제
 
 Stage 2 실험 간 공정성을 위해 다음 변수를 통일:
 
@@ -86,7 +229,7 @@ Stage 2 실험 간 공정성을 위해 다음 변수를 통일:
 | Template | qwen3_vl_nothink | 동일 |
 | cutoff_len | 8,192 | 동일 |
 
-### 4.3 Training Pipeline
+### 5.3 Training Pipeline
 
 ```
 [Stage 1]                    [Stage 2]                    [Evaluation]
@@ -99,7 +242,7 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
     └─ (gWorld-8B) ─────────────────►  LoRA FT (Exp-4) ──►  Stage 2 Metrics
 ```
 
-### 4.4 Evaluation Protocol
+### 5.4 Evaluation Protocol
 
 #### Stage 1 평가 (World Modeling)
 
@@ -135,13 +278,13 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 ---
 
-## 5. 데이터셋
+## 6. 데이터셋
 
-### 5.1 출처
+### 6.1 출처
 
 모바일 UI 인터랙션 데이터로부터 구성. 각 샘플은 스크린샷(PNG) + UI 계층구조(XML) + 액션 정보를 포함.
 
-### 5.2 Stage 1 (World Modeling)
+### 6.2 Stage 1 (World Modeling)
 
 | 항목 | 값 |
 |------|-----|
@@ -152,7 +295,7 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 | Format | ShareGPT (multimodal) |
 | Task | UI State (XML) + Action → Next UI State (XML) |
 
-### 5.3 Stage 2 (Action Prediction)
+### 6.3 Stage 2 (Action Prediction)
 
 | 항목 | 값 |
 |------|-----|
@@ -173,13 +316,13 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 | long_click | 1 | 0.6% |
 | openapp | 1 | 0.6% |
 
-### 5.4 이미지
+### 6.4 이미지
 
 - 3,655개 모바일 UI 스크린샷 (PNG)
 - Stage 1/2 공유
 - image_max_pixels: 4,233,600
 
-### 5.5 데이터 형식 상세
+### 6.5 데이터 형식 상세
 
 #### ShareGPT Multimodal Format
 
@@ -221,7 +364,9 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 ---
 
-## 6. 하드웨어 및 인프라
+## 7. 하드웨어 및 학습 설정
+
+### 7.1 인프라
 
 | 항목 | 값 |
 |------|-----|
@@ -233,7 +378,7 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 | Framework | LLaMA-Factory |
 | Inference | vLLM (≥0.8.2) |
 
-### Stage 1 하이퍼파라미터 (Full FT)
+### 7.2 Stage 1 하이퍼파라미터 (Full FT)
 
 | Parameter | 값 | 근거 |
 |-----------|-----|------|
@@ -245,7 +390,7 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 | num_train_epochs | 3.0 | 데이터 ~3K, 충분한 학습 |
 | weight_decay | 0.01 | 표준 정규화 |
 
-### Stage 2 하이퍼파라미터 (LoRA)
+### 7.3 Stage 2 하이퍼파라미터 (LoRA)
 
 | Parameter | 값 | 근거 |
 |-----------|-----|------|
@@ -258,54 +403,179 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 ---
 
-## 7. 프로젝트 구조
+## 8. 설정 파일
 
+### 8.1 Stage 1 학습: `stage1_full/qwen3_vl_8b_gui.yaml`
+
+```yaml
+### model
+model_name_or_path: Qwen/Qwen3-VL-8B-Instruct
+trust_remote_code: true
+image_max_pixels: 4233600
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+freeze_vision_tower: true
+
+### dataset
+dataset: GUI-Model_stage1_train
+template: qwen3_vl_nothink
+cutoff_len: 8192
+overwrite_cache: true
+preprocessing_num_workers: 8
+
+### output
+output_dir: ./outputs/stage1_full
+logging_steps: 1
+save_steps: 50
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: constant
+warmup_ratio: 0.0
+weight_decay: 0.01
+bf16: true
+gradient_checkpointing: true
+deepspeed: examples/deepspeed/ds_z3_config.json
 ```
-GUI-Model/
-├── PRD.md                          # 본 문서 (요구사항 정의)
-├── README.md                       # 프로젝트 개요 및 실행 가이드
-├── gui-model.ipynb                 # 전체 파이프라인 실행 노트북
-├── .env.example                    # 환경변수 템플릿
-├── .gitignore
-│
-├── data/                           # 데이터셋 (git-ignored)
-│   ├── gui-model_stage1.jsonl      # World Modeling 데이터
-│   ├── gui-model_stage2.jsonl      # Action Prediction 데이터
-│   └── images/                     # 모바일 UI 스크린샷 (3,655개)
-│
-├── LlamaFactory/                   # LLaMA-Factory 프레임워크
-│   ├── src/llamafactory/           # Python 패키지 소스
-│   │   └── v1/                     # v1 엔진 (core, config, plugins)
-│   ├── examples/
-│   │   └── train_custom/GUI-Model/ # 학습/평가 YAML 설정 파일
-│   │       ├── stage1_full/        # Stage 1 Full FT 설정
-│   │       ├── stage1_eval/        # Stage 1 평가 설정
-│   │       ├── stage2_lora/        # Stage 2 LoRA 설정
-│   │       └── stage2_eval/        # Stage 2 평가 설정
-│   ├── outputs/                    # 학습 및 평가 결과
-│   │   ├── stage1_eval/            # Stage 1 평가 리포트
-│   │   │   ├── eval_loss/          # Loss 메트릭
-│   │   │   └── hungarian_matching/ # 요소 수준 메트릭
-│   │   └── stage2_eval/            # Stage 2 4-Way 평가 리포트
-│   │       ├── base/               # Baseline (Zero-shot)
-│   │       ├── lora_base/          # Exp-3 (Control)
-│   │       ├── lora_world_model/   # Exp-2 (World Model)
-│   │       └── lora_gworld/        # Exp-4 (gWorld)
-│   └── data/                       # 데이터 설정 템플릿
-│
-└── .claude/                        # Claude Code 프로젝트 파일
-    ├── plans/                      # 개발 계획 문서
-    ├── reference/metrics/          # 커스텀 평가 메트릭 구현
-    │   ├── metric.py               # BLEU, ROUGE, Hungarian 통합
-    │   └── hungarian_metric.py     # 헝가리안 매칭 알고리즘
-    └── research/                   # 문헌 조사
+
+### 8.2 Stage 1 평가: `stage1_eval/eval_loss.yaml`
+
+```yaml
+### model
+model_name_or_path: ./outputs/stage1_full
+trust_remote_code: true
+image_max_pixels: 4233600
+
+### method
+stage: sft
+do_eval: true
+finetuning_type: full
+freeze_vision_tower: true
+
+### dataset
+eval_dataset: GUI-Model_stage1_test
+template: qwen3_vl_nothink
+cutoff_len: 8192
+
+### output
+output_dir: ./outputs/stage1_eval_loss
+overwrite_output_dir: true
+
+### eval
+per_device_eval_batch_size: 1
+```
+
+### 8.3 Stage 1 생성 평가: `stage1_eval/predict.yaml`
+
+```yaml
+### model
+model_name_or_path: ./outputs/stage1_full
+trust_remote_code: true
+image_max_pixels: 4233600
+
+### method
+stage: sft
+do_predict: true
+finetuning_type: full
+freeze_vision_tower: true
+
+### dataset
+dataset: GUI-Model_stage1_test
+template: qwen3_vl_nothink
+cutoff_len: 8192
+
+### output
+output_dir: ./outputs/stage1_predict
+overwrite_output_dir: true
+
+### predict
+per_device_eval_batch_size: 1
+predict_with_generate: true
+```
+
+### 8.4 Stage 2 학습 (LoRA)
+
+`stage2_lora/` 디렉토리에 Exp-2, Exp-3, Exp-4 각각의 YAML 설정 파일이 존재한다. `model_name_or_path`만 다르고 나머지 설정은 동일:
+
+| Exp | model_name_or_path |
+|-----|-------------------|
+| Exp-2 | `SaFD-00/qwen3-vl-8b-stage1-world-model` |
+| Exp-3 | `Qwen/Qwen3-VL-8B-Instruct` |
+| Exp-4 | `trillionlabs/gWorld-8B` |
+
+공통 설정: `finetuning_type: lora`, `lora_rank: 16`, `lora_alpha: 32`, `lora_dropout: 0.1`, `template: qwen3_vl_nothink`
+
+### 8.5 데이터 등록
+
+`LlamaFactory/data/dataset_info.json`에 아래 데이터셋 엔트리를 추가해야 한다:
+
+- `GUI-Model_stage1_train`, `GUI-Model_stage1_test`: Stage 1 데이터
+- `GUI-Model_stage2_train`, `GUI-Model_stage2_test`: Stage 2 데이터
+
+설정 파일 위치: `LlamaFactory/examples/train_custom/GUI-Model/`
+
+---
+
+## 9. CLI 인터페이스
+
+### 9.1 학습
+
+```bash
+# Stage 1: World Modeling Full FT (A100 80GB × 4)
+cd LlamaFactory
+FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
+  llamafactory-cli train examples/train_custom/GUI-Model/stage1_full/qwen3_vl_8b_gui.yaml
+
+# Stage 2: Action Prediction LoRA FT (RTX 5090 32GB × 2)
+# Exp-2, Exp-3, Exp-4 각각 별도 YAML
+FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=2 \
+  llamafactory-cli train examples/train_custom/GUI-Model/stage2_lora/<exp>.yaml
+```
+
+### 9.2 평가
+
+```bash
+# Stage 1 평가: eval_loss
+llamafactory-cli eval examples/train_custom/GUI-Model/stage1_eval/eval_loss.yaml
+
+# Stage 1 평가: predict (생성 + Hungarian Matching)
+llamafactory-cli train examples/train_custom/GUI-Model/stage1_eval/predict.yaml
+
+# Stage 2 평가: vLLM 배치 추론 + 커스텀 메트릭
+# gui-model.ipynb Section 7 참조
+```
+
+### 9.3 모델 Merge & 배포
+
+```bash
+# LoRA 어댑터 → Base Model 병합
+llamafactory-cli export \
+  --model_name_or_path <base_model> \
+  --adapter_name_or_path <adapter_path> \
+  --export_dir <output_path> \
+  --export_size 5
+
+# HuggingFace Hub 업로드
+python -c "
+from huggingface_hub import HfApi
+api = HfApi()
+api.upload_folder(folder_path='<output_path>', repo_id='SaFD-00/<model_name>')
+"
 ```
 
 ---
 
-## 8. 평가 결과
+## 10. 평가 결과
 
-### 8.1 Stage 1: World Modeling (Exp-1 vs Baseline)
+### 10.1 Stage 1: World Modeling (Exp-1 vs Baseline)
 
 #### Loss 기반 메트릭
 
@@ -335,7 +605,7 @@ GUI-Model/
 
 > **소결**: Full FT World Model은 모든 메트릭에서 Zero-shot 대비 압도적 개선을 보임. 특히 Hungarian EA(+170.1%)와 F1(+157.7%)에서 요소 수준의 구조적 이해 능력이 크게 향상됨.
 
-### 8.2 Stage 2: Action Prediction (4-Way Comparison)
+### 10.2 Stage 2: Action Prediction (4-Way Comparison)
 
 #### 종합 메트릭 (Test Set: 160 samples)
 
@@ -373,7 +643,7 @@ GUI-Model/
 
 ---
 
-## 9. 가설 검증 결과
+## 11. 가설 검증 결과
 
 ### H1: World Model → Action Prediction 성능 향상 ✅ **지지됨**
 
@@ -407,7 +677,7 @@ GUI-Model/
 
 ---
 
-## 10. 성공 기준 달성 현황
+## 12. 성공 기준 달성 현황
 
 ### Primary (핵심) ✅
 
@@ -424,9 +694,56 @@ GUI-Model/
 
 ---
 
-## 11. 의존성
+## 13. 비기능 요구사항
 
-### Core
+### 13.1 에러 처리
+
+| 상황 | 대응 |
+|------|------|
+| GPU OOM | gradient accumulation 증가, per_device_batch_size 축소 |
+| 학습 중단 | 최신 체크포인트에서 자동 재개 (--resume_from_checkpoint) |
+| 데이터 손상 (이미지 로드 실패) | 해당 샘플 스킵, 로그 기록 |
+| NaN loss 발생 | 학습 중단, loss spike 지점 로그 기록 |
+
+### 13.2 로깅
+
+```
+필수 로그 항목:
+  - 학습 loss (train/loss, train/learning_rate)
+  - 평가 메트릭 (eval/accuracy, eval/loss)
+  - GPU 메모리 사용량
+  - 학습 throughput (samples/sec)
+  - 체크포인트 저장 이벤트
+
+로깅 백엔드:
+  - LLaMA-Factory 내장 로거 (TensorBoard)
+  - loss plot 자동 생성 (plot_loss: true)
+```
+
+### 13.3 재현성
+
+| 항목 | 값 |
+|------|-----|
+| Random Seed | 42 (데이터 분할) |
+| Deterministic Splitting | Stratified by action type (Stage 2) |
+| 설정 파일 버전 관리 | `examples/train_custom/GUI-Model/` 내 YAML |
+| 모델 체크포인트 | HuggingFace Hub에 공개 |
+| 데이터셋 공유 | Google Drive 링크 |
+
+---
+
+## 14. 의존성
+
+### 14.1 시스템
+
+```
+- Python >= 3.10
+- CUDA >= 12.1
+- NVIDIA GPU (A100 80GB × 4 또는 RTX 5090 32GB × 2)
+- OS: Linux (Ubuntu 22.04+)
+```
+
+### 14.2 Core
 
 | 패키지 | 버전 | 용도 |
 |--------|------|------|
@@ -440,7 +757,7 @@ GUI-Model/
 | deepspeed | — | ZeRO 메모리 최적화 |
 | vllm | ≥0.8.2 | 고속 추론 |
 
-### Evaluation
+### 14.3 Evaluation
 
 | 패키지 | 용도 |
 |--------|------|
@@ -450,7 +767,7 @@ GUI-Model/
 | rouge | ROUGE-L 계산 |
 | jieba | 중국어 토크나이징 |
 
-### Infrastructure
+### 14.4 Infrastructure
 
 | 패키지 | 용도 |
 |--------|------|
@@ -460,7 +777,25 @@ GUI-Model/
 
 ---
 
-## 12. 타임라인
+## 15. 코드 계보
+
+| 원본 | 대상 | 변경 수준 |
+|------|------|----------|
+| LLaMA-Factory (hiyouga) | 학습/평가 프레임워크 | 그대로 사용, 커스텀 메트릭만 패치 |
+| Code2World (GD-ML) | 연구 동기, World Model 접근법 | 실험 설계 참고 |
+| gWorld (TrillionLabs) | Exp-4 Base Model, 비교 대상 | 모델 사용 (trillionlabs/gWorld-8B) |
+| MobileDreamer | Element-level matching 아이디어 | Hungarian Matching 평가 참고 |
+| MobileGPT-V2 | XML 인코딩 | annotation 파이프라인 참고 (Monkey 프로젝트) |
+
+**참고**:
+- https://github.com/hiyouga/LLaMA-Factory
+- https://arxiv.org/abs/2602.09856 (Code2World)
+- https://arxiv.org/abs/2602.01576 (gWorld)
+- https://arxiv.org/abs/2601.04035 (MobileDreamer)
+
+---
+
+## 16. 타임라인
 
 | Phase | Task | 예상 소요 | 상태 |
 |-------|------|----------|------|
@@ -473,7 +808,7 @@ GUI-Model/
 
 ---
 
-## 13. 리스크 및 완화 방안
+## 17. 리스크 및 완화 방안
 
 | 리스크 | 영향 | 완화 방안 | 결과 |
 |--------|------|----------|------|
@@ -485,7 +820,7 @@ GUI-Model/
 
 ---
 
-## 14. Deliverables
+## 18. Deliverables
 
 | 산출물 | 위치 | 설명 | 상태 |
 |--------|------|------|------|
@@ -500,7 +835,7 @@ GUI-Model/
 
 ---
 
-## 15. 향후 연구 방향
+## 19. 향후 연구 방향
 
 | 방향 | 설명 | 기대 효과 |
 |------|------|----------|
@@ -513,7 +848,7 @@ GUI-Model/
 
 ---
 
-## 16. 용어 정리
+## 20. 용어 정리
 
 | 용어 | 설명 |
 |------|------|
@@ -531,3 +866,58 @@ GUI-Model/
 | Stratified Split | 클래스 비율을 유지하면서 데이터를 분할하는 방법 |
 | Effective Batch Size | per_device_batch × gradient_accumulation × num_GPUs |
 | Conditional Metric | 해당 조건에 해당하는 샘플에서만 계산한 메트릭 (e.g., params가 존재하는 경우만) |
+| Interleaved-MRoPE | Qwen3-VL의 위치 인코딩 방식, 시각과 텍스트 토큰의 위치 정보를 교차 인코딩 |
+| DeepStack | Qwen3-VL의 시각-텍스트 정렬 기법, long-horizon temporal reasoning 강화 |
+| RARL | Render-Aware Reinforcement Learning — 렌더링 결과의 시각적 일관성을 reward로 사용하는 RL |
+
+---
+
+## 부록: 프로젝트 디렉토리 구조
+
+```
+GUI-Model/
+├── PRD.md                          # 본 문서 (요구사항 정의)
+├── CLAUDE.md                       # Claude Code 컨텍스트
+├── README.md                       # 프로젝트 개요 및 실행 가이드
+├── gui-model.ipynb                 # 전체 파이프라인 실행 노트북
+├── .env.example                    # 환경변수 템플릿
+├── .gitignore
+│
+├── data/                           # 데이터셋 (git-ignored)
+│   ├── gui-model_stage1.jsonl      # World Modeling 데이터
+│   ├── gui-model_stage2.jsonl      # Action Prediction 데이터
+│   └── images/                     # 모바일 UI 스크린샷 (3,655개)
+│
+├── LlamaFactory/                   # LLaMA-Factory 프레임워크
+│   ├── src/llamafactory/           # Python 패키지 소스
+│   │   └── v1/                     # v1 엔진 (core, config, plugins)
+│   ├── examples/
+│   │   └── train_custom/GUI-Model/ # 학습/평가 YAML 설정 파일
+│   │       ├── stage1_full/        # Stage 1 Full FT 설정
+│   │       ├── stage1_eval/        # Stage 1 평가 설정
+│   │       ├── stage2_lora/        # Stage 2 LoRA 설정
+│   │       └── stage2_eval/        # Stage 2 평가 설정
+│   ├── outputs/                    # 학습 및 평가 결과
+│   │   ├── stage1_eval/            # Stage 1 평가 리포트
+│   │   │   ├── eval_loss/          # Loss 메트릭
+│   │   │   └── hungarian_matching/ # 요소 수준 메트릭
+│   │   └── stage2_eval/            # Stage 2 4-Way 평가 리포트
+│   │       ├── base/               # Baseline (Zero-shot)
+│   │       ├── lora_base/          # Exp-3 (Control)
+│   │       ├── lora_world_model/   # Exp-2 (World Model)
+│   │       └── lora_gworld/        # Exp-4 (gWorld)
+│   └── data/                       # 데이터 설정 템플릿
+│       └── GUI-Model/              # 데이터셋 JSONL + images
+│
+└── .claude/                        # Claude Code 프로젝트 파일
+    ├── plans/                      # 개발 계획 문서
+    ├── reference/                  # 참조 자료
+    │   ├── metrics/                # 커스텀 평가 메트릭 구현
+    │   │   ├── metric.py           # BLEU, ROUGE, Hungarian 통합
+    │   │   ├── hungarian_metric.py # 헝가리안 매칭 알고리즘
+    │   │   └── patch_guide_0315.txt # LLaMA-Factory 메트릭 패치 가이드
+    │   ├── Code2World.pdf          # 관련 논문
+    │   ├── gWorld.pdf
+    │   └── MobileDreamer.pdf
+    └── research/                   # 문헌 조사
+```
