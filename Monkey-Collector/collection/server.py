@@ -35,7 +35,7 @@ class CollectionServer:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._client: Optional[socket.socket] = None
-        # Smart Monkey synchronization
+        # Smart Explorer synchronization
         self._xml_event = threading.Event()
         self._latest_xml: Optional[str] = None
 
@@ -153,7 +153,7 @@ class CollectionServer:
 
         if self.on_xml:
             self.on_xml(raw_xml, top_package, target_package)
-        # Signal Smart Monkey synchronization
+        # Signal Smart Explorer synchronization
         self._latest_xml = raw_xml
         self._xml_event.set()
         logger.debug(f"Received XML: top={top_package}, target={target_package}")
@@ -174,7 +174,7 @@ class CollectionServer:
         """Block until the next XML is received from the Android app.
 
         Returns the raw XML string, or None on timeout.
-        Used by SmartMonkey orchestrator for step-by-step synchronization.
+        Used by SmartExplorer orchestrator for step-by-step synchronization.
         """
         self._xml_event.clear()
         if self._xml_event.wait(timeout):

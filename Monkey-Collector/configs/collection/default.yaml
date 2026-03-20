@@ -2,7 +2,7 @@ collection:
   avd:
     api_level: 34
     headless: true
-  smart_monkey:
+  smart_explorer:
     action_weights:
       tap: 0.60
       press_back: 0.10

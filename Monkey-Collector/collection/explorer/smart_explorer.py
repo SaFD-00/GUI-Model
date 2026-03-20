@@ -1,13 +1,13 @@
-"""Smart Monkey explorer with XML-aware action selection.
+"""Smart Explorer with XML-aware action selection.
 
-Unlike random Monkey (adb shell monkey), SmartMonkey:
+Unlike random monkey (adb shell monkey), SmartExplorer:
 1. Parses XML to identify interactable elements
 2. Detects EditText fields and fills them with text
 3. Detects app exit and automatically returns
 4. Uses weighted action selection (tap 60%, back 10%, etc.)
 
 Adapted from MobileForge (server/explorer/smart_monkey.py).
-Key difference: SmartMonkey only handles action selection and execution.
+Key difference: SmartExplorer only handles action selection and execution.
 Screenshot/XML capture is handled by the Android app via TCP.
 """
 
@@ -51,7 +51,7 @@ SAMPLE_TEXTS = [
 ]
 
 
-class SmartMonkey:
+class SmartExplorer:
     """XML-aware action selector and executor for Android apps.
 
     Selects intelligent actions based on the current UI accessibility tree,

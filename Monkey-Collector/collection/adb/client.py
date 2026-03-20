@@ -76,7 +76,7 @@ class AdbClient:
         return result.stdout.strip()
 
     def launch_app(self, package: str) -> str:
-        """Launch an app via monkey (simplest way to launch)."""
+        """Launch an app via adb shell monkey (simplest way to launch)."""
         return self.shell(
             f"monkey -p {package} -c android.intent.category.LAUNCHER 1"
         )

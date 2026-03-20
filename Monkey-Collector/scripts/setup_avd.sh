@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== AVD Setup for Monkey Collection ==="
+echo "=== AVD Setup for Monkey-Collector ==="
 
 # Create AVD if not exists
 AVD_NAME="monkey_collector"

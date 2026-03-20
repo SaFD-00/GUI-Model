@@ -143,9 +143,9 @@ class FormatConverter:
             else:
                 image_rel = ""
 
-            base_id = f"monkey_{session_id}_{step_str}"
+            base_id = f"mc_{session_id}_{step_str}"
             base_meta = {
-                "source": "monkey_collection",
+                "source": "monkey_collector",
                 "platform": "android",
                 "resolution": list(resolution),
                 "app_package": app_package,

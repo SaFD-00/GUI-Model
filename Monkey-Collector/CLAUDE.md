@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Monkey는 GUI World Modeling 학습 데이터를 자동 수집하는 파이프라인이다. Android AVD에서 **Smart Monkey**(XML 기반 지능형 액션 선택, MobileForge 포팅)로 UI 이벤트를 생성하고, AccessibilityService 기반 Android 앱이 UI 변화를 감지하여 스크린샷+XML을 TCP로 Python 서버에 전송한다. 수집된 raw data는 annotation pipeline을 통해 grounding/OCR/state_diff/element_qa/world_modeling 학습 데이터(JSONL)로 변환된다.
+Monkey-Collector는 GUI World Modeling 학습 데이터를 자동 수집하는 파이프라인이다. Android AVD에서 **Smart Explorer**(XML 기반 지능형 액션 선택, MobileForge 포팅)로 UI 이벤트를 생성하고, AccessibilityService 기반 Android 앱이 UI 변화를 감지하여 스크린샷+XML을 TCP로 Python 서버에 전송한다. 수집된 raw data는 annotation pipeline을 통해 grounding/OCR/state_diff/element_qa/world_modeling 학습 데이터(JSONL)로 변환된다.
 
 이 저장소는 더 큰 프로젝트(Qwen3-VL-8B 기반 GUI Foundation Model)의 Phase 1 Stage 1 데이터 수집 부분이다. PRD.md에 전체 학습 파이프라인 설계가 기술되어 있다.
 
@@ -39,15 +39,15 @@ monkey-collect pipeline --apps-config configs/collection/apps.yaml
 ### Python Server (`collection/`)
 
 ```
-Smart Monkey ──ADB input──▶ AVD (지능형 액션 실행)
+Smart Explorer ──ADB input──▶ AVD (지능형 액션 실행)
 TCP Server   ◀──TCP──────── Android App (스크린샷+XML 수신)
 Annotation                  (수집 후 오프라인 변환)
 ```
 
 - **cli.py**: `monkey-collect` CLI 엔트리포인트. argparse 기반 4개 서브커맨드 (run/batch/annotate/pipeline)
-- **orchestrator.py**: `CollectionOrchestrator` — Smart Monkey 루프로 세션 관리. XML 파싱 → 액션 선택 → ADB 실행 → TCP 수신 대기 → 반복
-- **server.py**: `CollectionServer` — 단일 클라이언트 TCP 서버. `wait_for_xml()` 동기 대기 메서드로 Smart Monkey와 동기화. 4종 메시지 타입 처리 (S/X/E/F)
-- **explorer/**: `SmartMonkey`(XML 기반 지능형 액션 선택, MobileForge 포팅), `action_space`(Action 데이터클래스)
+- **orchestrator.py**: `CollectionOrchestrator` — Smart Explorer 루프로 세션 관리. XML 파싱 → 액션 선택 → ADB 실행 → TCP 수신 대기 → 반복
+- **server.py**: `CollectionServer` — 단일 클라이언트 TCP 서버. `wait_for_xml()` 동기 대기 메서드로 Smart Explorer와 동기화. 4종 메시지 타입 처리 (S/X/E/F)
+- **explorer/**: `SmartExplorer`(XML 기반 지능형 액션 선택, MobileForge 포팅), `action_space`(Action 데이터클래스)
 - **adb/**: `AdbClient`(subprocess 래퍼, tap/swipe/input_text/long_press/dump_xml 포함), `MonkeyRunner`(레거시)
 - **storage/writer.py**: `DataWriter` — 세션 디렉토리 구조(screenshots/, xml/, events.jsonl, metadata.json) 관리
 - **fallback/monitor.py**: `FallbackMonitor` — 앱 이탈 감지 추적, 연속 이탈 시 force restart 판단
@@ -75,10 +75,10 @@ Kotlin 기반 AccessibilityService 앱. Gradle 빌드 (app/ 내 nested gradle pr
 
 ### Data Flow
 
-1. SmartMonkey → XML 파싱 → 지능형 액션 선택 → `adb input tap/swipe/text` 실행
+1. SmartExplorer → XML 파싱 → 지능형 액션 선택 → `adb input tap/swipe/text` 실행
 2. CollectorService → UI 변화 감지 → 화면 안정화 → 스크린샷+XML을 TCP로 전송
-3. CollectionServer → DataWriter로 세션 디렉토리에 저장 + SmartMonkey에 XML 전달
-4. SmartMonkey → 수신 XML로 다음 액션 결정 (step-by-step 루프)
+3. CollectionServer → DataWriter로 세션 디렉토리에 저장 + SmartExplorer에 XML 전달
+4. SmartExplorer → 수신 XML로 다음 액션 결정 (step-by-step 루프)
 5. FormatConverter → 6종 annotation JSONL 생성
 
 ## Key Design Decisions
@@ -88,11 +88,11 @@ Kotlin 기반 AccessibilityService 앱. Gradle 빌드 (app/ 내 nested gradle pr
 - **xml_encoder의 이중 출력**: `parse_to_html_xml()`은 bounds 포함, `encode_to_html_xml()`은 bounds/important/class 제거된 LLM용 버전
 - **flagged step 필터링**: 앱 이탈(external_app) 발생 step은 annotation에서 자동 제외
 - **step 카운터**: DataWriter에서 XML 저장 시(`save_xml()`) step_count 증가 — 스크린샷과 XML은 같은 step 번호로 매칭
-- **Smart Monkey 동기화**: `server.wait_for_xml(timeout)` → 액션 실행 후 TCP로 XML 수신 대기 → timeout 시 ADB `uiautomator dump` fallback
+- **Smart Explorer 동기화**: `server.wait_for_xml(timeout)` → 액션 실행 후 TCP로 XML 수신 대기 → timeout 시 ADB `uiautomator dump` fallback
 
 ## Configuration
 
-- `configs/collection/default.yaml`: Smart Monkey 액션 가중치, 서버 설정, annotation 활성화/비활성화, 출력 경로
+- `configs/collection/default.yaml`: Smart Explorer 액션 가중치, 서버 설정, annotation 활성화/비활성화, 출력 경로
 - `configs/collection/apps.yaml`: 수집 대상 앱 목록 (package, source, max_events)
 
 ## Dependencies

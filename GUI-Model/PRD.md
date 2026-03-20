@@ -16,12 +16,12 @@
 
 **GUI-Model**은 모바일 GUI **World Modeling이 Action Prediction 성능에 미치는 영향**을 정량적으로 검증하는 Ablation Study(4-Way Comparison) 프로젝트이다. Qwen3-VL-8B-Instruct를 Base Model로, LLaMA-Factory 프레임워크에서 2-Stage fine-tuning 파이프라인을 실행하고 4가지 조건에서 비교 평가한다.
 
-### 1.2 Monkey 파이프라인 내 위치
+### 1.2 Monkey-Collector 파이프라인 내 위치
 
-본 프로젝트는 상위 프로젝트 **Monkey**(범용 GUI Foundation Model 구축)의 학습 파이프라인에서 **Phase 1 SFT의 유효성을 선행 검증**하는 실험이다.
+본 프로젝트는 상위 프로젝트 **Monkey-Collector**(범용 GUI Foundation Model 구축)의 학습 파이프라인에서 **Phase 1 SFT의 유효성을 선행 검증**하는 실험이다.
 
 ```
-Monkey Pipeline (전체)
+Monkey-Collector Pipeline (전체)
 ═══════════════════════════════════════════════════════════════════
 
 Phase 1 - SFT
@@ -49,15 +49,15 @@ Phase 2 - RL
   • Curriculum: easy tasks → hard tasks
 ```
 
-**GUI-Model이 검증하는 것**: Phase 1의 Stage 1(World Modeling) → Stage 2(Task Finetuning) 연결 구간에서, World Modeling 사전학습이 downstream Action Prediction 성능에 실제로 기여하는지를 4-Way ablation으로 정량 검증한다. 이 검증 결과가 Monkey Phase 1 파이프라인의 curriculum learning 설계를 뒷받침한다.
+**GUI-Model이 검증하는 것**: Phase 1의 Stage 1(World Modeling) → Stage 2(Task Finetuning) 연결 구간에서, World Modeling 사전학습이 downstream Action Prediction 성능에 실제로 기여하는지를 4-Way ablation으로 정량 검증한다. 이 검증 결과가 Monkey-Collector Phase 1 파이프라인의 curriculum learning 설계를 뒷받침한다.
 
-| Monkey Phase | 단계 | GUI-Model 대응 | 상태 |
+| MC Phase | 단계 | GUI-Model 대응 | 상태 |
 |-------------|------|----------------|------|
 | Phase 1 - Stage 1 | GUI World Modeling (Full FT) | Exp-1 (World Model 학습 + 평가) | ✅ 검증 완료 |
 | Phase 1 - Stage 2 | Task Finetuning (LoRA) | Exp-2/3/4 (Action Prediction 4-Way 비교) | ✅ 검증 완료 |
-| Phase 2 | RL Finetuning (GRPO) | 미포함 (Monkey에서 진행 예정) | — |
+| Phase 2 | RL Finetuning (GRPO) | 미포함 (Monkey-Collector에서 진행 예정) | — |
 
-> **핵심 결론**: GUI-Model 실험 결과, World Modeling → Action Prediction 경로가 유효함을 확인(Exp-2 > Exp-3). 이에 따라 Monkey 프로젝트에서 Phase 1 → Phase 2 RL 학습으로의 진행 근거를 확보함.
+> **핵심 결론**: GUI-Model 실험 결과, World Modeling → Action Prediction 경로가 유효함을 확인(Exp-2 > Exp-3). 이에 따라 Monkey-Collector 프로젝트에서 Phase 1 → Phase 2 RL 학습으로의 진행 근거를 확보함.
 
 ### 1.3 핵심 가치
 
@@ -785,7 +785,7 @@ api.upload_folder(folder_path='<output_path>', repo_id='SaFD-00/<model_name>')
 | Code2World (GD-ML) | 연구 동기, World Model 접근법 | 실험 설계 참고 |
 | gWorld (TrillionLabs) | Exp-4 Base Model, 비교 대상 | 모델 사용 (trillionlabs/gWorld-8B) |
 | MobileDreamer | Element-level matching 아이디어 | Hungarian Matching 평가 참고 |
-| MobileGPT-V2 | XML 인코딩 | annotation 파이프라인 참고 (Monkey 프로젝트) |
+| MobileGPT-V2 | XML 인코딩 | annotation 파이프라인 참고 (Monkey-Collector 프로젝트) |
 
 **참고**:
 - https://github.com/hiyouga/LLaMA-Factory

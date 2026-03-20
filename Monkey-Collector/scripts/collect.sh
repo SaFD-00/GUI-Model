@@ -6,7 +6,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-echo "=== Monkey Data Collection ==="
+echo "=== Monkey-Collector Data Collection ==="
 
 # Default config
 CONFIG="${1:-configs/collection/default.yaml}"

@@ -50,13 +50,13 @@ def _find_element_at(
     return min(candidates, key=lambda e: e.area)
 
 
-def _map_monkey_event(
+def _map_collector_event(
     event: dict, elements: list[UIElement]
 ) -> dict | None:
-    """Map a monkey event to a GUI-Model action format.
+    """Map a collector event to a GUI-Model action format.
 
     Args:
-        event: Monkey event dict with type, coordinates, etc.
+        event: Collector event dict with type, coordinates, etc.
         elements: UI elements from the before state.
 
     Returns:
@@ -75,7 +75,7 @@ def _map_monkey_event(
             "index": target.index,
         }
     elif event_type == "swipe":
-        # Support both random monkey (dx/dy) and Smart Monkey (x1/y1/x2/y2) formats
+        # Support both random monkey (dx/dy) and Smart Explorer (x1/y1/x2/y2) formats
         if "x1" in event and "x2" in event:
             dx = event.get("x2", 0) - event.get("x1", 0)
             dy = event.get("y2", 0) - event.get("y1", 0)
@@ -130,13 +130,13 @@ def generate(
     """Generate a world modeling training example.
 
     Encodes before and after screen states as HTML-style XML and maps
-    the monkey event to a structured action format, producing a
+    the collector event to a structured action format, producing a
     ShareGPT-format training example for state transition prediction.
 
     Args:
         before_xml: Raw uiautomator XML before the action.
         after_xml: Raw uiautomator XML after the action.
-        event: Monkey event dict with type, coordinates, etc.
+        event: Collector event dict with type, coordinates, etc.
         before_elements: Parsed UIElements from before_xml.
         screenshot_path: Relative path to the before screenshot.
 
@@ -157,7 +157,7 @@ def generate(
         return None
 
     # Map event to action
-    action = _map_monkey_event(event, before_elements)
+    action = _map_collector_event(event, before_elements)
     if action is None:
         # Fallback: generic click if we have coordinates
         x, y = event.get("x", 0), event.get("y", 0)

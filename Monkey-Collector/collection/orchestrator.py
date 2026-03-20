@@ -1,4 +1,4 @@
-"""Collection orchestrator: coordinates Smart Monkey exploration with data collection."""
+"""Collection orchestrator: coordinates Smart Explorer with data collection."""
 
 import logging
 import time
@@ -10,7 +10,7 @@ from typing import Optional
 import yaml
 
 from .adb.client import AdbClient
-from .explorer.smart_monkey import SmartMonkey
+from .explorer.smart_explorer import SmartExplorer
 from .annotation.xml_parser import UITree
 from .fallback.monitor import FallbackMonitor
 from .server import CollectionServer
@@ -39,7 +39,7 @@ class SessionResult:
 
 
 class CollectionOrchestrator:
-    """Orchestrates the full data collection pipeline using Smart Monkey."""
+    """Orchestrates the full data collection pipeline using Smart Explorer."""
 
     def __init__(self, config_path: str = "configs/collection/default.yaml"):
         with open(config_path, "r") as f:
@@ -49,11 +49,11 @@ class CollectionOrchestrator:
         self.adb = AdbClient()
         self.writer = DataWriter(col_cfg["storage"]["output_dir"])
         self.server_cfg = col_cfg["server"]
-        self.smart_monkey_cfg = col_cfg.get("smart_monkey", {})
+        self.smart_explorer_cfg = col_cfg.get("smart_explorer", {})
         self.fallback_cfg = col_cfg.get("fallback", {})
 
     def run_session(self, app: AppConfig) -> SessionResult:
-        """Run a single collection session for one app using Smart Monkey."""
+        """Run a single collection session for one app using Smart Explorer."""
         session_id = str(uuid.uuid4())[:8]
         logger.info(f"=== Session {session_id}: {app.name} ({app.package}) ===")
 
@@ -66,7 +66,7 @@ class CollectionOrchestrator:
         self.writer.init_session(session_id, app.package, {
             "app_name": app.name,
             "resolution": list(resolution),
-            "exploration_mode": "smart_monkey",
+            "exploration_mode": "smart_explorer",
         })
 
         # Setup callbacks
@@ -103,11 +103,11 @@ class CollectionOrchestrator:
         )
         server.start()
 
-        # Initialize Smart Monkey with screen resolution
-        sm_config = dict(self.smart_monkey_cfg)
+        # Initialize Smart Explorer with screen resolution
+        sm_config = dict(self.smart_explorer_cfg)
         sm_config["screen_width"] = resolution[0]
         sm_config["screen_height"] = resolution[1]
-        smart_monkey = SmartMonkey(self.adb, sm_config)
+        smart_explorer = SmartExplorer(self.adb, sm_config)
 
         try:
             # 1. Launch target app
@@ -122,7 +122,7 @@ class CollectionOrchestrator:
                 logger.info("No initial XML from TCP, using ADB dump")
                 xml_str = self.adb.dump_xml()
 
-            # 3. Smart Monkey exploration loop
+            # 3. Smart Explorer exploration loop
             for step in range(app.max_events):
                 try:
                     # 3a. Parse UI tree
@@ -133,10 +133,10 @@ class CollectionOrchestrator:
                         ui_tree = UITree.from_xml_string(xml_str)
 
                     # 3b. Select action
-                    action = smart_monkey.select_action(ui_tree)
+                    action = smart_explorer.select_action(ui_tree)
 
                     # 3c. Execute action via ADB
-                    smart_monkey.execute_action(action)
+                    smart_explorer.execute_action(action)
 
                     # 3d. Log event (compatible with events.jsonl format)
                     event_data = action.to_dict()
@@ -151,7 +151,7 @@ class CollectionOrchestrator:
                     )
 
                     # 3e. Wait for Android app to capture and send
-                    time.sleep(smart_monkey.action_delay_ms / 1000.0)
+                    time.sleep(smart_explorer.action_delay_ms / 1000.0)
                     new_xml = server.wait_for_xml(timeout=10.0)
                     if new_xml is not None:
                         xml_str = new_xml
@@ -160,7 +160,7 @@ class CollectionOrchestrator:
                         xml_str = self.adb.dump_xml()
 
                     # 3f. Check for app escape
-                    if smart_monkey.has_left_app(app.package):
+                    if smart_explorer.has_left_app(app.package):
                         logger.info(f"Step {step}: Left target app, returning")
                         if monitor.should_force_restart():
                             logger.warning(
@@ -172,13 +172,13 @@ class CollectionOrchestrator:
                             time.sleep(2.0)
                             monitor.on_valid_step()
                         else:
-                            smart_monkey.return_to_app(app.package)
+                            smart_explorer.return_to_app(app.package)
                             time.sleep(1.0)
                         xml_str = self.adb.dump_xml()
 
                 except Exception as e:
                     logger.warning(f"Step {step} error: {e}")
-                    smart_monkey.recover(app.package)
+                    smart_explorer.recover(app.package)
                     time.sleep(1.0)
                     xml_str = self.adb.dump_xml()
 

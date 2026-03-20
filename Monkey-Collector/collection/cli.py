@@ -7,14 +7,14 @@ from loguru import logger
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monkey GUI data collection pipeline")
+    parser = argparse.ArgumentParser(description="Monkey-Collector GUI data collection pipeline")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # run: single app
     run_parser = subparsers.add_parser("run", help="Collect data from a single app")
     run_parser.add_argument("--app", required=True, help="Target app package name")
-    run_parser.add_argument("--events", type=int, default=100, help="Number of Smart Monkey steps")
-    run_parser.add_argument("--seed", type=int, default=None, help="Random seed for Smart Monkey")
+    run_parser.add_argument("--events", type=int, default=100, help="Number of Smart Explorer steps")
+    run_parser.add_argument("--seed", type=int, default=None, help="Random seed for Smart Explorer")
     run_parser.add_argument("--action-delay", type=int, default=None, help="Delay between actions (ms)")
     run_parser.add_argument("--config", default="configs/collection/default.yaml")
 
@@ -48,9 +48,9 @@ def main() -> None:
 
         # Override smart_monkey config from CLI args
         if args.seed is not None:
-            orch.smart_monkey_cfg["seed"] = args.seed
+            orch.smart_explorer_cfg["seed"] = args.seed
         if args.action_delay is not None:
-            orch.smart_monkey_cfg["action_delay_ms"] = args.action_delay
+            orch.smart_explorer_cfg["action_delay_ms"] = args.action_delay
 
         app = AppConfig(package=args.app, name=args.app, max_events=args.events)
         result = orch.run_session(app)
