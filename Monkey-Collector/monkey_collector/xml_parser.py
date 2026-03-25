@@ -121,14 +121,7 @@ class UITree:
 
 
 def parse_uiautomator_xml(xml_content: str) -> list[UIElement]:
-    """Parse a uiautomator XML dump into a flat list of UIElements.
-
-    Args:
-        xml_content: Raw XML string from uiautomator dump.
-
-    Returns:
-        Flat list of visible UIElement objects with non-zero bounds.
-    """
+    """Parse a uiautomator XML dump into a flat list of UIElements."""
     elements: list[UIElement] = []
     try:
         root = ET.fromstring(xml_content)

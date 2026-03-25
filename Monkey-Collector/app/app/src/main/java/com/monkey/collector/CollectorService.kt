@@ -2,13 +2,13 @@ package com.monkey.collector
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.app.NotificationCompat
 
@@ -20,7 +20,7 @@ class CollectorService : AccessibilityService() {
         private const val NOTIFICATION_CHANNEL_ID = "MonkeyCollector_Channel"
         private const val NOTIFICATION_ID = 1
 
-        private val ALLOWED_PACKAGES = setOf(
+        private val EXCLUDED_PACKAGES = setOf(
             "com.android.systemui",
             "com.android.permissioncontroller",
             "com.monkey.collector"
@@ -68,16 +68,32 @@ class CollectorService : AccessibilityService() {
         if (now - lastEventTime < DEBOUNCE_MS) return
         lastEventTime = now
 
-        // Get top package
-        val topPackage = getTopPackage()
-        if (topPackage.isNullOrEmpty()) return
+        // Check TCP connection
+        if (tcpClient?.isConnected() != true) {
+            Log.w(TAG, "TCP not connected, skipping capture")
+            return
+        }
+
+        // Get top interactable window root (MobileGPT-V2 pattern)
+        val topResult = getTopInteractableRoot()
+        if (topResult == null) {
+            Log.d(TAG, "No interactable window found")
+            return
+        }
+        val (topPackage, root) = topResult
 
         // Check for external app
         if (targetPackage.isNotEmpty() &&
             topPackage != targetPackage &&
-            topPackage !in ALLOWED_PACKAGES
+            topPackage !in EXCLUDED_PACKAGES
         ) {
-            tcpClient?.sendExternalApp(topPackage, targetPackage)
+            Thread {
+                val sent = tcpClient?.sendExternalApp(topPackage, targetPackage) ?: false
+                if (!sent) {
+                    Log.w(TAG, "Failed to send external app event")
+                }
+            }.start()
+
             consecutiveBackCount++
 
             if (consecutiveBackCount >= 3) {
@@ -93,13 +109,11 @@ class CollectorService : AccessibilityService() {
             } else {
                 performGlobalAction(GLOBAL_ACTION_BACK)
             }
+            try { root.recycle() } catch (_: Exception) {}
             return
         }
 
         consecutiveBackCount = 0
-
-        // Capture screenshot + XML
-        val root = rootInActiveWindow ?: return
 
         Thread {
             try {
@@ -124,12 +138,19 @@ class CollectorService : AccessibilityService() {
                 // Step 4: Dump XML (existing logic)
                 val xml = XmlDumper.dumpNodeTree(root)
 
-                // Step 5: Send data (existing logic)
+                // Step 5: Send data with return value check
                 if (bitmap != null) {
-                    tcpClient?.sendScreenshot(bitmap)
+                    val screenshotSent = tcpClient?.sendScreenshot(bitmap) ?: false
+                    if (!screenshotSent) {
+                        Log.w(TAG, "Failed to send screenshot at step $stepCount")
+                    }
                     bitmap.recycle()
                 }
-                tcpClient?.sendXml(xml, topPackage, targetPackage)
+
+                val xmlSent = tcpClient?.sendXml(xml, topPackage, targetPackage) ?: false
+                if (!xmlSent) {
+                    Log.w(TAG, "Failed to send XML at step $stepCount")
+                }
 
                 stepCount++
                 Log.d(TAG, "Step $stepCount captured for $topPackage")
@@ -184,9 +205,14 @@ class CollectorService : AccessibilityService() {
         // Connect TCP client
         tcpClient = TcpClient(serverIp, serverPort)
         Thread {
-            tcpClient?.connect()
-            isCollecting = true
-            Log.i(TAG, "Collection started: target=$targetPkg, server=$serverIp:$serverPort")
+            val connected = tcpClient?.connect() ?: false
+            if (connected) {
+                isCollecting = true
+                Log.i(TAG, "Collection started: target=$targetPkg, server=$serverIp:$serverPort")
+            } else {
+                Log.e(TAG, "TCP connection failed, collection NOT started")
+                // isCollecting remains false — no data will be captured
+            }
         }.start()
     }
 
@@ -245,13 +271,36 @@ class CollectorService : AccessibilityService() {
         }
     }
 
-    private fun getTopPackage(): String? {
+    /**
+     * Get the top interactable application window's root node and package name.
+     * Iterates through windows to find TYPE_APPLICATION windows, excluding system packages.
+     * (MobileGPT-V2 getTopInteractableRoot pattern)
+     */
+    private fun getTopInteractableRoot(): Pair<String, AccessibilityNodeInfo>? {
         return try {
-            windows
-                ?.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-                ?.mapNotNull { it.root?.packageName?.toString() }
-                ?.firstOrNull { it !in ALLOWED_PACKAGES }
+            val windowList = windows ?: return null
+
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                for (w in windowList) {
+                    Log.d(TAG, "Window: type=${w.type}, layer=${w.layer}, " +
+                            "pkg=${w.root?.packageName}, active=${w.isActive}, " +
+                            "focused=${w.isFocused}")
+                }
+            }
+
+            for (w in windowList) {
+                if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                val root = w.root ?: continue
+                val pkg = root.packageName?.toString() ?: continue
+                if (pkg in EXCLUDED_PACKAGES) {
+                    root.recycle()
+                    continue
+                }
+                return Pair(pkg, root)
+            }
+            null
         } catch (e: Exception) {
+            Log.e(TAG, "getTopInteractableRoot error: ${e.message}")
             null
         }
     }

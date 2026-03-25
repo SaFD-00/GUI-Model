@@ -5,26 +5,21 @@ Unlike random monkey (adb shell monkey), SmartExplorer:
 2. Detects EditText fields and fills them with text
 3. Detects app exit and automatically returns
 4. Uses weighted action selection (tap 60%, back 10%, etc.)
-
-Adapted from MobileForge (server/explorer/smart_monkey.py).
-Key difference: SmartExplorer only handles action selection and execution.
-Screenshot/XML capture is handled by the Android app via TCP.
 """
 
 from __future__ import annotations
 
-import logging
 import random
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from collection.adb.client import AdbClient
-from collection.annotation.xml_parser import UITree
-from collection.explorer.action_space import (
+from loguru import logger
+
+from monkey_collector.adb import AdbClient
+from monkey_collector.xml_parser import UITree
+from monkey_collector.actions import (
     Action, Tap, Swipe, InputText, PressBack, PressHome, LongPress,
 )
-
-logger = logging.getLogger(__name__)
 
 # Default action weights
 DEFAULT_WEIGHTS: Dict[str, float] = {
@@ -52,23 +47,17 @@ SAMPLE_TEXTS = [
 
 
 class SmartExplorer:
-    """XML-aware action selector and executor for Android apps.
-
-    Selects intelligent actions based on the current UI accessibility tree,
-    and executes them via ADB. Does NOT handle capture — that is done by
-    the Android app through the TCP pipeline.
-    """
+    """XML-aware action selector and executor for Android apps."""
 
     def __init__(
         self,
         adb: AdbClient,
-        config: Dict[str, Any] = None,
+        config: Dict[str, Any] | None = None,
     ):
         config = config or {}
         self.adb = adb
         self.action_weights = config.get("action_weights", DEFAULT_WEIGHTS)
         self.action_delay_ms = config.get("action_delay_ms", 500)
-        self.max_retries_on_crash = config.get("max_retries_on_crash", 3)
         self.screen_width = config.get("screen_width", 1080)
         self.screen_height = config.get("screen_height", 1920)
         self.seed = config.get("seed", 42)
@@ -99,7 +88,7 @@ class SmartExplorer:
         # Normalize weights
         total = sum(weights.values())
         if total == 0:
-            return PressBack(timestamp=time.time())
+            return PressBack()
 
         normalized = {k: v / total for k, v in weights.items()}
 
@@ -166,16 +155,10 @@ class SmartExplorer:
         scrollable: list,
     ) -> Action:
         """Create a concrete action instance."""
-        ts = time.time()
-
         if action_type == "tap" and clickable:
             elem = self._rng.choice(clickable)
             cx, cy = elem.center
-            return Tap(
-                x=cx, y=cy,
-                element_id=elem.content_desc or elem.resource_id or None,
-                timestamp=ts,
-            )
+            return Tap(x=cx, y=cy, element_index=elem.index)
 
         if action_type == "input_text" and editable:
             elem = self._rng.choice(editable)
@@ -184,11 +167,7 @@ class SmartExplorer:
             self.adb.tap(cx, cy)
             time.sleep(0.3)
             text = self._rng.choice(self.sample_texts)
-            return InputText(
-                text=text,
-                element_id=elem.content_desc or elem.resource_id or None,
-                timestamp=ts,
-            )
+            return InputText(text=text, element_index=elem.index)
 
         if action_type == "swipe":
             if scrollable:
@@ -198,7 +177,7 @@ class SmartExplorer:
                     x1=cx, y1=cy + 200,
                     x2=cx, y2=cy - 200,
                     duration_ms=300,
-                    timestamp=ts,
+                    element_index=elem.index,
                 )
             else:
                 mid_x = self.screen_width // 2
@@ -206,34 +185,28 @@ class SmartExplorer:
                     x1=mid_x, y1=self.screen_height * 3 // 4,
                     x2=mid_x, y2=self.screen_height // 4,
                     duration_ms=300,
-                    timestamp=ts,
                 )
 
         if action_type == "long_press" and clickable:
             elem = self._rng.choice(clickable)
             cx, cy = elem.center
-            return LongPress(
-                x=cx, y=cy,
-                element_id=elem.content_desc or elem.resource_id or None,
-                timestamp=ts,
-            )
+            return LongPress(x=cx, y=cy, element_index=elem.index)
 
         if action_type == "press_home":
-            return PressHome(timestamp=ts)
+            return PressHome()
 
         if action_type == "press_back":
-            return PressBack(timestamp=ts)
+            return PressBack()
 
         # Fallback: random tap on a clickable element or random coordinates
         if clickable:
             elem = self._rng.choice(clickable)
             cx, cy = elem.center
-            return Tap(x=cx, y=cy, timestamp=ts)
+            return Tap(x=cx, y=cy, element_index=elem.index)
 
         return Tap(
             x=self._rng.randint(100, self.screen_width - 100),
             y=self._rng.randint(200, self.screen_height - 200),
-            timestamp=ts,
         )
 
     def _weighted_choice(self, weights: Dict[str, float]) -> str:

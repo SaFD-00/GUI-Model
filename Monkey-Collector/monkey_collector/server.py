@@ -1,20 +1,27 @@
 """TCP server for receiving data from Android AccessibilityService app."""
 
 import json
-import logging
-import os
 import socket
-import struct
 import threading
 from typing import Callable, Optional
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 BUFFER_SIZE = 65536
 
 
 class CollectionServer:
-    """TCP server that receives screenshots and XML from the Android app."""
+    """TCP server that receives screenshots and XML from the Android app.
+
+    Protocol (App → Server):
+      S + size_line + binary_data   = Screenshot
+      X + top_pkg + target_pkg + size_line + xml_data = XML hierarchy
+      E + json_line                 = External app detection
+      F                             = Session finish
+
+    Protocol (Server → App):
+      action_json + \\r\\n           = Action command
+    """
 
     def __init__(
         self,
@@ -35,9 +42,10 @@ class CollectionServer:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._client: Optional[socket.socket] = None
-        # Smart Explorer synchronization
+        # SmartExplorer synchronization
         self._xml_event = threading.Event()
         self._latest_xml: Optional[str] = None
+        self._latest_xml_meta: Optional[dict] = None
 
     def start(self):
         """Start the server in a background thread."""
@@ -63,19 +71,48 @@ class CollectionServer:
             self._thread.join(timeout=5)
         logger.info("Collection server stopped")
 
+    def is_client_connected(self) -> bool:
+        return self._client is not None
+
+    def send_action(self, action: dict) -> bool:
+        """Send an action command to the connected App."""
+        if not self._client:
+            logger.warning("No client connected, cannot send action")
+            return False
+        try:
+            data = json.dumps(action, ensure_ascii=False) + "\r\n"
+            self._client.sendall(data.encode("utf-8"))
+            return True
+        except (OSError, BrokenPipeError) as e:
+            logger.error(f"Failed to send action: {e}")
+            return False
+
+    def wait_for_xml(
+        self, timeout: float = 15.0
+    ) -> Optional[tuple[str, dict]]:
+        """Block until the next XML is received from the Android app.
+
+        Returns (xml_string, meta_dict) or None on timeout.
+        """
+        self._xml_event.clear()
+        if self._xml_event.wait(timeout):
+            meta = self._latest_xml_meta or {}
+            return self._latest_xml, meta
+        return None
+
     def _run(self):
-        """Main server loop."""
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_socket.settimeout(1.0)
         self._server_socket.bind((self.host, self.port))
         self._server_socket.listen(1)
+        logger.info(f"Listening on {self.host}:{self.port}")
 
         while self._running:
             try:
                 client, addr = self._server_socket.accept()
                 self._client = client
-                logger.info(f"Client connected: {addr}")
+                logger.info(f"Client connected from {addr[0]}:{addr[1]}")
                 self._handle_client(client)
             except socket.timeout:
                 continue
@@ -83,11 +120,16 @@ class CollectionServer:
                 break
 
     def _handle_client(self, client: socket.socket):
-        """Handle messages from a connected client."""
+        client.settimeout(60.0)
         try:
             while self._running:
-                msg_type = client.recv(1)
+                try:
+                    msg_type = client.recv(1)
+                except socket.timeout:
+                    continue
+
                 if not msg_type:
+                    logger.info("Client disconnected")
                     break
 
                 msg_type = msg_type.decode("ascii")
@@ -99,30 +141,38 @@ class CollectionServer:
                 elif msg_type == "E":
                     self._handle_external_app(client)
                 elif msg_type == "F":
-                    logger.info("Received finish signal")
+                    logger.info("Received finish signal from client")
                     if self.on_finish:
                         self.on_finish()
                     break
                 else:
-                    logger.warning(f"Unknown message type: {msg_type}")
-        except (ConnectionResetError, BrokenPipeError):
-            logger.warning("Client disconnected")
+                    logger.warning(f"Unknown message type: {msg_type!r}")
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.warning(f"Client disconnected: {e}")
+        except socket.timeout:
+            logger.warning("Client connection timed out")
         finally:
             client.close()
             self._client = None
 
     def _recv_text_line(self, client: socket.socket) -> str:
-        """Receive text until newline."""
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = client.recv(1)
-            if not chunk:
-                break
-            data += chunk
-        return data.decode("utf-8").strip()
+        original_timeout = client.gettimeout()
+        client.settimeout(30.0)
+        try:
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = client.recv(1)
+                if not chunk:
+                    break
+                data += chunk
+            return data.decode("utf-8").strip()
+        except socket.timeout:
+            logger.warning("Timeout receiving text line")
+            raise
+        finally:
+            client.settimeout(original_timeout)
 
     def _recv_binary(self, client: socket.socket) -> bytes:
-        """Receive binary data with size prefix (size as text line)."""
         size_str = self._recv_text_line(client)
         file_size = int(size_str)
         data = b""
@@ -136,30 +186,33 @@ class CollectionServer:
         return data
 
     def _handle_screenshot(self, client: socket.socket):
-        """Handle screenshot message: 'S' + size_line + binary_data."""
         image_data = self._recv_binary(client)
         if self.on_screenshot:
             self.on_screenshot(image_data)
         logger.debug(f"Received screenshot: {len(image_data)} bytes")
 
     def _handle_xml(self, client: socket.socket):
-        """Handle XML message: 'X' + top_pkg_line + target_pkg_line + size_line + xml_data."""
         top_package = self._recv_text_line(client)
         target_package = self._recv_text_line(client)
         xml_data = self._recv_binary(client)
         raw_xml = xml_data.decode("utf-8").strip()
-        # Normalize empty class attributes
         raw_xml = raw_xml.replace('class=""', 'class="unknown"')
 
         if self.on_xml:
             self.on_xml(raw_xml, top_package, target_package)
-        # Signal Smart Explorer synchronization
+
         self._latest_xml = raw_xml
+        self._latest_xml_meta = {
+            "top_package": top_package,
+            "target_package": target_package,
+        }
         self._xml_event.set()
-        logger.debug(f"Received XML: top={top_package}, target={target_package}")
+        logger.debug(
+            f"Received XML: top={top_package}, target={target_package}, "
+            f"size={len(raw_xml)} bytes"
+        )
 
     def _handle_external_app(self, client: socket.socket):
-        """Handle external app detection: 'E' + json_line."""
         payload_str = self._recv_text_line(client)
         try:
             payload = json.loads(payload_str)
@@ -169,14 +222,3 @@ class CollectionServer:
         if self.on_external_app:
             self.on_external_app(payload)
         logger.warning(f"External app detected: {payload}")
-
-    def wait_for_xml(self, timeout: float = 15.0) -> Optional[str]:
-        """Block until the next XML is received from the Android app.
-
-        Returns the raw XML string, or None on timeout.
-        Used by SmartExplorer orchestrator for step-by-step synchronization.
-        """
-        self._xml_event.clear()
-        if self._xml_event.wait(timeout):
-            return self._latest_xml
-        return None

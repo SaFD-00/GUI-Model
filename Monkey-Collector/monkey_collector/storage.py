@@ -1,24 +1,30 @@
 """Session-based raw data storage."""
 
 import json
-import logging
 import os
-import shutil
 from datetime import datetime
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class DataWriter:
-    """Writes raw collection data to session directories."""
+    """Writes raw collection data to session directories.
 
-    def __init__(self, base_dir: str = "data/raw/sessions"):
+    Directory structure:
+        data/raw/{session_id}/
+        ├── metadata.json
+        ├── screenshots/0000.png, 0001.png, ...
+        ├── xml/0000.xml, 0001.xml, ...
+        └── events.jsonl
+    """
+
+    def __init__(self, base_dir: str = "data/raw"):
         self.base_dir = base_dir
         self.session_dir: Optional[str] = None
         self.step_count = 0
 
-    def init_session(self, session_id: str, app_package: str, metadata: Optional[dict] = None):
+    def init_session(self, session_id: str, app_package: str):
         """Initialize a new session directory."""
         self.session_dir = os.path.join(self.base_dir, session_id)
         self.step_count = 0
@@ -28,30 +34,24 @@ class DataWriter:
 
         meta = {
             "session_id": session_id,
-            "app_package": app_package,
+            "package": app_package,
             "started_at": datetime.now().isoformat(),
             "completed_at": None,
             "total_steps": 0,
             "external_app_events": 0,
         }
-        if metadata:
-            meta.update(metadata)
-
-        meta_path = os.path.join(self.session_dir, "metadata.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2, ensure_ascii=False)
-
+        self._write_metadata(meta)
         logger.info(f"Session initialized: {self.session_dir}")
 
     def save_screenshot(self, image_data: bytes) -> str:
-        """Save screenshot data and return the file path."""
+        """Save screenshot data. Returns file path."""
         path = os.path.join(self.session_dir, "screenshots", f"{self.step_count:04d}.png")
         with open(path, "wb") as f:
             f.write(image_data)
         return path
 
-    def save_xml(self, xml_content: str, top_package: str, target_package: str) -> str:
-        """Save XML content and return the file path."""
+    def save_xml(self, xml_content: str) -> str:
+        """Save XML content and increment step count. Returns file path."""
         path = os.path.join(self.session_dir, "xml", f"{self.step_count:04d}.xml")
         with open(path, "w", encoding="utf-8") as f:
             f.write(xml_content)
@@ -68,7 +68,6 @@ class DataWriter:
         """Log external app detection event."""
         event = {"type": "external_app", "step": self.step_count, **payload}
         self.log_event(event)
-        # Update metadata
         self._increment_metadata("external_app_events")
 
     def finalize_session(self):
@@ -79,9 +78,13 @@ class DataWriter:
                 meta = json.load(f)
             meta["completed_at"] = datetime.now().isoformat()
             meta["total_steps"] = self.step_count
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2, ensure_ascii=False)
+            self._write_metadata(meta)
         logger.info(f"Session finalized: {self.step_count} steps")
+
+    def _write_metadata(self, meta: dict):
+        meta_path = os.path.join(self.session_dir, "metadata.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
 
     def _increment_metadata(self, key: str):
         meta_path = os.path.join(self.session_dir, "metadata.json")
@@ -89,5 +92,4 @@ class DataWriter:
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             meta[key] = meta.get(key, 0) + 1
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2, ensure_ascii=False)
+            self._write_metadata(meta)

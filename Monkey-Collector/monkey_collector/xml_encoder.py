@@ -1,7 +1,5 @@
 """Convert uiautomator XML to HTML-style XML format.
 
-Ported from MobileGPT-V2/Server/screenParser/parseXML.py and Encoder.py.
-
 Mapping rules:
 - EditText -> <input>, with text as element.text
 - checkable=true -> <checker>, with checked attribute
@@ -11,13 +9,6 @@ Mapping rules:
 - TextView -> <p>, with text as element.text
 - scrollable=true -> <scroll>
 - Others -> class short name
-
-Attributes kept: text, id (resource-id without package prefix), description
-(content-desc), important, class, checkable/clickable/scrollable/long-clickable
-(only when true), bounds, index.
-
-Post-processing: remove empty bounds [0,0][0,0] nodes, simplify single-child
-wrappers, remove scroll redundancies.
 
 Encoded version: remove bounds, important, class attributes (for LLM consumption).
 """
@@ -37,16 +28,7 @@ _LAYOUT_CLASSES = frozenset({
 
 
 def reformat_xml(xml_string: str) -> str:
-    """Convert raw uiautomator XML to HTML-style element tree.
-
-    Applies tag mapping, attribute filtering, and prunes empty leaf nodes.
-
-    Args:
-        xml_string: Raw uiautomator XML string.
-
-    Returns:
-        HTML-style XML string, or empty string on failure.
-    """
+    """Convert raw uiautomator XML to HTML-style element tree."""
     try:
         tree = ET.fromstring(xml_string)
     except ET.ParseError as e:
@@ -64,7 +46,7 @@ def reformat_xml(xml_string: str) -> str:
         attrib_bool = {
             "checkable": "checkable",
             "clickable": "clickable",
-            "scrollable": "scrollable",
+            "data-scroll": "scrollable",
             "long-clickable": "long-clickable",
         }
         attrib_int = {
@@ -117,7 +99,7 @@ def reformat_xml(xml_string: str) -> str:
             new_element = ET.Element("p", new_text_attrib)
             if len(element) == 0 and "text" in new_element.attrib:
                 new_element.text = new_element.attrib.pop("text")
-        elif new_text_attrib.get("scrollable") == "true":
+        elif new_text_attrib.get("data-scroll") == "true":
             new_element = ET.Element("scroll", new_text_attrib)
         else:
             new_element = ET.Element(class_short, new_text_attrib)
@@ -145,11 +127,7 @@ def reformat_xml(xml_string: str) -> str:
 
 
 def remove_nodes_with_empty_bounds(element: ET.Element) -> None:
-    """Remove nodes with [0,0][0,0] bounds in-place.
-
-    Args:
-        element: Root element to process recursively.
-    """
+    """Remove nodes with [0,0][0,0] bounds in-place."""
     for node in list(element):
         if node.get("bounds") == "[0,0][0,0]":
             element.remove(node)
@@ -158,17 +136,7 @@ def remove_nodes_with_empty_bounds(element: ET.Element) -> None:
 
 
 def simplify_structure(xml_string: str) -> str:
-    """Collapse single-child wrapper nodes.
-
-    When a non-interactive container has a single child and no meaningful
-    text/description, the child replaces the parent.
-
-    Args:
-        xml_string: HTML-style XML string.
-
-    Returns:
-        Simplified XML string.
-    """
+    """Collapse single-child wrapper nodes."""
     try:
         root = ET.fromstring(xml_string)
     except ET.ParseError as e:
@@ -197,14 +165,7 @@ def simplify_structure(xml_string: str) -> str:
 
 
 def remove_redundancies(xml_string: str) -> str:
-    """Remove duplicate children within scroll containers.
-
-    Args:
-        xml_string: HTML-style XML string.
-
-    Returns:
-        XML string with scroll redundancies removed.
-    """
+    """Remove duplicate children within scroll containers."""
     try:
         root = ET.fromstring(xml_string)
     except ET.ParseError as e:
@@ -237,14 +198,7 @@ def remove_redundancies(xml_string: str) -> str:
 
 
 def parse_to_html_xml(raw_xml: str) -> str:
-    """Full parse pipeline: reformat -> simplify -> remove empty bounds.
-
-    Args:
-        raw_xml: Raw uiautomator XML string.
-
-    Returns:
-        Parsed HTML-style XML with bounds preserved.
-    """
+    """Full parse pipeline: reformat -> simplify -> remove empty bounds."""
     reformatted = reformat_xml(raw_xml)
     if not reformatted:
         return ""
@@ -265,12 +219,6 @@ def encode_to_html_xml(raw_xml: str) -> str:
     """Parse and encode: removes bounds, important, class attributes.
 
     Returns encoded HTML-style XML suitable for LLM consumption.
-
-    Args:
-        raw_xml: Raw uiautomator XML string.
-
-    Returns:
-        Encoded HTML-style XML without positional/meta attributes.
     """
     parsed = parse_to_html_xml(raw_xml)
     if not parsed:
@@ -288,21 +236,12 @@ def encode_to_html_xml(raw_xml: str) -> str:
                 del element.attrib[attr]
 
     encoded = ET.tostring(tree, encoding="unicode")
-    # Remove redundancies in encoded version too
     encoded = remove_redundancies(encoded)
     return encoded
 
 
 def indent_xml(xml_string: str, indent: str = "  ") -> str:
-    """Pretty-print XML with indentation.
-
-    Args:
-        xml_string: Compact XML string.
-        indent: Indentation string per level.
-
-    Returns:
-        Indented XML string, or original on parse failure.
-    """
+    """Pretty-print XML with indentation."""
     try:
         root = ET.fromstring(xml_string)
         ET.indent(root, space=indent)

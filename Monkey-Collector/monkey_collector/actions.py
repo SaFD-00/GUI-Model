@@ -1,17 +1,9 @@
-"""Action space definitions for Android GUI interactions.
-
-Defines a set of dataclass-based action types that model all supported
-interactions with an Android device. Each action serializes to/from
-a JSON-compatible dict for storage and replay.
-
-Ported from MobileForge (server/explorer/action_space.py).
-"""
+"""Action space definitions for Android GUI interactions."""
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, fields
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Type
 
 
 @dataclass
@@ -19,7 +11,7 @@ class Action:
     """Base class for all Android GUI actions."""
 
     action_type: str = "unknown"
-    timestamp: float = 0.0
+    element_index: int = -1
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {}
@@ -44,7 +36,6 @@ class Tap(Action):
     action_type: str = "tap"
     x: int = 0
     y: int = 0
-    element_id: Optional[str] = None
 
 
 @dataclass
@@ -65,7 +56,6 @@ class InputText(Action):
 
     action_type: str = "input_text"
     text: str = ""
-    element_id: Optional[str] = None
 
 
 @dataclass
@@ -90,7 +80,6 @@ class LongPress(Action):
     x: int = 0
     y: int = 0
     duration_ms: int = 1000
-    element_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
