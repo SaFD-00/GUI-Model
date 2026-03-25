@@ -5,11 +5,11 @@ import uuid
 
 from loguru import logger
 
-from monkey_collector.adb import AdbClient
-from monkey_collector.xml_parser import UITree
-from monkey_collector.explorer import SmartExplorer
-from monkey_collector.server import CollectionServer
-from monkey_collector.storage import DataWriter
+from server.adb import AdbClient
+from server.xml_parser import UITree
+from server.explorer import SmartExplorer
+from server.server import CollectionServer
+from server.storage import DataWriter
 
 
 class Collector:

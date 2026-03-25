@@ -44,15 +44,15 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 | Module | Role |
 |--------|------|
-| `monkey_collector/collector.py` | 메인 수집 오케스트레이션 루프 |
-| `monkey_collector/server.py` | TCP 서버, 바이너리 프로토콜 파싱 |
-| `monkey_collector/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%) |
-| `monkey_collector/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 |
-| `monkey_collector/xml_encoder.py` | XML → HTML-style 변환 파이프라인 (reformat→simplify→remove bounds→encode) |
-| `monkey_collector/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
-| `monkey_collector/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색) |
-| `monkey_collector/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{session_id}/`) |
-| `monkey_collector/actions.py` | Action 데이터클래스 (Tap, Swipe, InputText, LongPress, PressBack, PressHome) |
+| `server/collector.py` | 메인 수집 오케스트레이션 루프 |
+| `server/server.py` | TCP 서버, 바이너리 프로토콜 파싱 |
+| `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%) |
+| `server/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 |
+| `server/xml_encoder.py` | XML → HTML-style 변환 파이프라인 (reformat→simplify→remove bounds→encode) |
+| `server/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
+| `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색) |
+| `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{session_id}/`) |
+| `server/actions.py` | Action 데이터클래스 (Tap, Swipe, InputText, LongPress, PressBack, PressHome) |
 
 ## Android App (Kotlin)
 

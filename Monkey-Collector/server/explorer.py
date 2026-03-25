@@ -15,9 +15,9 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from monkey_collector.adb import AdbClient
-from monkey_collector.xml_parser import UITree
-from monkey_collector.actions import (
+from server.adb import AdbClient
+from server.xml_parser import UITree
+from server.actions import (
     Action, Tap, Swipe, InputText, PressBack, PressHome, LongPress,
 )
 

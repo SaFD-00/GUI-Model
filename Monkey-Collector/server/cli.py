@@ -8,11 +8,11 @@ from loguru import logger
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Run data collection with App+Server architecture."""
-    from monkey_collector.adb import AdbClient
-    from monkey_collector.explorer import SmartExplorer
-    from monkey_collector.server import CollectionServer
-    from monkey_collector.storage import DataWriter
-    from monkey_collector.collector import Collector
+    from server.adb import AdbClient
+    from server.explorer import SmartExplorer
+    from server.server import CollectionServer
+    from server.storage import DataWriter
+    from server.collector import Collector
 
     adb = AdbClient(device_serial=args.device)
     explorer = SmartExplorer(
@@ -39,7 +39,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_convert(args: argparse.Namespace) -> None:
     """Convert a single session to JSONL."""
-    from monkey_collector.converter import Converter
+    from server.converter import Converter
 
     converter = Converter(
         output_path=args.output,
@@ -51,7 +51,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
 
 def cmd_convert_all(args: argparse.Namespace) -> None:
     """Convert all sessions in a directory to JSONL."""
-    from monkey_collector.converter import Converter
+    from server.converter import Converter
 
     converter = Converter(
         output_path=args.output,

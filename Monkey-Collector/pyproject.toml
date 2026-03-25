@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["monkey_collector*"]
+include = ["server*"]
 
 [project.scripts]
-monkey-collect = "monkey_collector.cli:main"
+monkey-collect = "server.cli:main"

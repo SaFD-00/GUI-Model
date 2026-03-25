@@ -44,7 +44,7 @@ Monkey-Collector/
 │           ├── values/strings.xml
 │           └── xml/accessibility_config.xml
 │
-├── monkey_collector/                      # Python Server
+├── server/                                # Python Server
 │   ├── cli.py              # CLI 진입점 (run, convert, convert-all)
 │   ├── server.py            # TCP 서버 (S/X/E/F 프로토콜)
 │   ├── collector.py         # 메인 수집 루프 (Server 기반)
