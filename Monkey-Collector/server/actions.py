@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import Any, Dict, Type
+from typing import Any
 
 
 @dataclass
@@ -13,15 +13,15 @@ class Action:
     action_type: str = "unknown"
     element_index: int = -1
 
-    def to_dict(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
         for f in fields(self):
             value = getattr(self, f.name)
             result[f.name] = value
         return result
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "Action":
+    def from_dict(cls, d: dict[str, Any]) -> Action:
         action_type = d.get("action_type", "unknown")
         target_cls = ACTION_REGISTRY.get(action_type, cls)
         valid_keys = {f.name for f in fields(target_cls)}
@@ -56,6 +56,8 @@ class InputText(Action):
 
     action_type: str = "input_text"
     text: str = ""
+    x: int = 0
+    y: int = 0
 
 
 @dataclass
@@ -86,7 +88,7 @@ class LongPress(Action):
 # Registry & factory
 # ---------------------------------------------------------------------------
 
-ACTION_REGISTRY: Dict[str, Type[Action]] = {
+ACTION_REGISTRY: dict[str, type[Action]] = {
     "tap": Tap,
     "swipe": Swipe,
     "input_text": InputText,
@@ -96,7 +98,7 @@ ACTION_REGISTRY: Dict[str, Type[Action]] = {
 }
 
 
-def action_from_dict(d: Dict[str, Any]) -> Action:
+def action_from_dict(d: dict[str, Any]) -> Action:
     """Factory function: create the appropriate Action subclass from *d*."""
     if not d:
         raise ValueError("Cannot create an action from an empty dict")

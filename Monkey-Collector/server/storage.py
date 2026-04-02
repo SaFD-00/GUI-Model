@@ -3,7 +3,6 @@
 import json
 import os
 from datetime import datetime
-from typing import Optional
 
 from loguru import logger
 
@@ -21,7 +20,7 @@ class DataWriter:
 
     def __init__(self, base_dir: str = "data/raw"):
         self.base_dir = base_dir
-        self.session_dir: Optional[str] = None
+        self.session_dir: str | None = None
         self.step_count = 0
 
     def init_session(self, session_id: str, app_package: str):
@@ -74,7 +73,7 @@ class DataWriter:
         """Finalize session metadata."""
         meta_path = os.path.join(self.session_dir, "metadata.json")
         if os.path.exists(meta_path):
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
             meta["completed_at"] = datetime.now().isoformat()
             meta["total_steps"] = self.step_count
@@ -89,7 +88,7 @@ class DataWriter:
     def _increment_metadata(self, key: str):
         meta_path = os.path.join(self.session_dir, "metadata.json")
         if os.path.exists(meta_path):
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
             meta[key] = meta.get(key, 0) + 1
             self._write_metadata(meta)

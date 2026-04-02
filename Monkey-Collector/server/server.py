@@ -3,8 +3,8 @@
 import json
 import socket
 import threading
-from queue import Queue, Empty
-from typing import Callable, Optional
+from collections.abc import Callable
+from queue import Empty, Queue
 
 from loguru import logger
 
@@ -29,10 +29,10 @@ class CollectionServer:
         self,
         host: str = "0.0.0.0",
         port: int = 12345,
-        on_screenshot: Optional[Callable] = None,
-        on_xml: Optional[Callable] = None,
-        on_external_app: Optional[Callable] = None,
-        on_finish: Optional[Callable] = None,
+        on_screenshot: Callable | None = None,
+        on_xml: Callable | None = None,
+        on_external_app: Callable | None = None,
+        on_finish: Callable | None = None,
     ):
         self.host = host
         self.port = port
@@ -40,17 +40,17 @@ class CollectionServer:
         self.on_xml = on_xml
         self.on_external_app = on_external_app
         self.on_finish = on_finish
-        self._server_socket: Optional[socket.socket] = None
+        self._server_socket: socket.socket | None = None
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._client: Optional[socket.socket] = None
+        self._thread: threading.Thread | None = None
+        self._client: socket.socket | None = None
         # SmartExplorer synchronization
         self._xml_event = threading.Event()
-        self._latest_xml: Optional[str] = None
-        self._latest_xml_meta: Optional[dict] = None
+        self._latest_xml: str | None = None
+        self._latest_xml_meta: dict | None = None
         # Package name from client
         self._package_event = threading.Event()
-        self._target_package: Optional[str] = None
+        self._target_package: str | None = None
         # Signal queue for change detection (XML or no-change)
         self._signal_queue: Queue = Queue()
 
@@ -78,6 +78,21 @@ class CollectionServer:
             self._thread.join(timeout=5)
         logger.info("Collection server stopped")
 
+    def reset_for_new_session(self):
+        """Reset server state for a new collection session.
+
+        Clears package event, signal queue, XML state, and client reference.
+        The server socket and accept loop remain active.
+        """
+        self._package_event.clear()
+        self._target_package = None
+        self._xml_event.clear()
+        self._latest_xml = None
+        self._latest_xml_meta = None
+        self._client = None
+        self.clear_signal_queue()
+        logger.debug("Server state reset for new session")
+
     def is_client_connected(self) -> bool:
         return self._client is not None
 
@@ -96,7 +111,7 @@ class CollectionServer:
 
     def wait_for_xml(
         self, timeout: float = 15.0
-    ) -> Optional[tuple[str, dict]]:
+    ) -> tuple[str, dict] | None:
         """Block until the next XML is received from the Android app.
 
         Returns (xml_string, meta_dict) or None on timeout.
@@ -109,7 +124,7 @@ class CollectionServer:
 
     def wait_for_change_signal(
         self, timeout: float = 15.0
-    ) -> Optional[tuple[str, Optional[str], Optional[dict]]]:
+    ) -> tuple[str, str | None, dict | None] | None:
         """Block until XML or no-change signal is received.
 
         Returns:
@@ -124,7 +139,7 @@ class CollectionServer:
 
     def get_latest_signal(
         self, timeout: float = 15.0
-    ) -> Optional[tuple[str, Optional[str], Optional[dict]]]:
+    ) -> tuple[str, str | None, dict | None] | None:
         """Drain stale signals and return the latest one.
 
         If multiple signals are queued, skips all but the last.
@@ -171,7 +186,7 @@ class CollectionServer:
                 self._client = client
                 logger.info(f"Client connected from {addr[0]}:{addr[1]}")
                 self._handle_client(client)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -182,11 +197,12 @@ class CollectionServer:
             while self._running:
                 try:
                     msg_type = client.recv(1)
-                except socket.timeout:
+                except TimeoutError:
                     continue
 
                 if not msg_type:
                     logger.info("Client disconnected")
+                    self._signal_queue.put(("finish", None, None))
                     break
 
                 msg_type = msg_type.decode("ascii")
@@ -204,6 +220,7 @@ class CollectionServer:
                     self._handle_external_app(client)
                 elif msg_type == "F":
                     logger.info("Received finish signal from client")
+                    self._signal_queue.put(("finish", None, None))
                     if self.on_finish:
                         self.on_finish()
                     break
@@ -211,7 +228,7 @@ class CollectionServer:
                     logger.warning(f"Unknown message type: {msg_type!r}")
         except (ConnectionResetError, BrokenPipeError) as e:
             logger.warning(f"Client disconnected: {e}")
-        except socket.timeout:
+        except TimeoutError:
             logger.warning("Client connection timed out")
         finally:
             client.close()
@@ -228,7 +245,7 @@ class CollectionServer:
                     break
                 data += chunk
             return data.decode("utf-8").strip()
-        except socket.timeout:
+        except TimeoutError:
             logger.warning("Timeout receiving text line")
             raise
         finally:
@@ -247,7 +264,7 @@ class CollectionServer:
             remaining -= len(chunk)
         return data
 
-    def wait_for_package(self, timeout: float = 120.0) -> Optional[str]:
+    def wait_for_package(self, timeout: float = 120.0) -> str | None:
         """Block until the client sends target package name via P message."""
         if self._package_event.wait(timeout):
             return self._target_package

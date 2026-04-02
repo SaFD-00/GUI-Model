@@ -12,11 +12,21 @@ Monkey-Collector는 GUI world model 학습용 Android UI 데이터 수집 파이
 # Python 패키지 설치
 pip install -e .
 
-# 서버 시작 (클라이언트에서 타겟 앱 선택)
+# 환경 변수 설정 (LLM 기반 텍스트 입력 사용 시)
+cp .env.example .env
+# .env 파일에 OPENAI_API_KEY 설정
+
+# 서버 시작 (기본: 다중 세션 모드, Ctrl+C로 종료)
 monkey-collect run --steps 100 --port 12345
 
-# 또는 서버에서 타겟 앱 지정
+# 서버에서 타겟 앱 지정
 monkey-collect run --app <package> --steps 100
+
+# 단일 세션 모드 (1회 수집 후 서버 자동 종료)
+monkey-collect run --single --steps 100
+
+# 하드코딩 랜덤 텍스트 사용 (API 키 불필요)
+monkey-collect run --steps 100 --input-mode random
 
 # 단일 세션 변환 (raw → JSONL)
 monkey-collect convert --session <dir> --output <path> --images-dir <dir>
@@ -28,9 +38,11 @@ monkey-collect convert-all --raw-dir <dir> --output <path> --images-dir <dir>
 Android 앱은 `app/` 디렉토리에서 Gradle로 빌드 (compileSdk 34, minSdk 28).
 
 ### 수집 플로우
-1. 터미널: `monkey-collect run` (서버 대기)
+1. 터미널: `monkey-collect run` (서버 대기, 기본 다중 세션)
 2. 에뮬레이터: MonkeyCollector 앱 → 설정(IP/Port) → Save & Ready → 권한 허용
 3. 에뮬레이터: 타겟 앱 열기 → 플로팅 ▶ 버튼 클릭 → foreground 앱 자동 감지 → 수집 시작
+4. ■ 버튼으로 세션 종료 → 다른 앱 열기 → ▶ 버튼 → 새 세션 자동 시작 (서버 재시작 불필요)
+5. Ctrl+C로 서버 종료
 
 ## Architecture
 
@@ -39,8 +51,9 @@ Android App (Kotlin)  ←TCP→  Python Server
   CollectorService           CollectionServer (+ signal queue)
   FloatingCollectorButton    Collector (orchestration + no-change retry + external_app recovery)
   ScreenStabilizer           SmartExplorer (weighted selection + element exclusion)
-  TcpClient (P/S/X/E/N/F)   AdbClient (action execution)
-  MainActivity               DataWriter (session storage)
+  TcpClient (P/S/X/E/N/F)   TextGenerator (LLM/Random input text strategy)
+  MainActivity               AdbClient (action execution)
+                             DataWriter (session storage)
                              Converter (raw → ShareGPT JSONL)
 ```
 
@@ -52,9 +65,10 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 | Module | Role |
 |--------|------|
-| `server/collector.py` | 메인 수집 오케스트레이션 루프. no-change 재시도 (max 3), first screen 보호, external_app 능동 복구 (return_to_app/recover, max 10) |
-| `server/server.py` | TCP 서버, 바이너리 프로토콜 파싱. Queue 기반 change signal 대기 |
-| `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%). element exclusion, first screen에서 back 비활성화. `has_left_app()` / `return_to_app()` / `recover()` — 앱 이탈 감지 및 복구 |
+| `server/collector.py` | 메인 수집 오케스트레이션. `run()` 단일 세션, `run_multi()` 다중 세션 (서버 유지). no-change 재시도 (max 3), first screen 보호, external_app 능동 복구 (return_to_app/recover, max 10) |
+| `server/server.py` | TCP 서버, 바이너리 프로토콜 파싱. Queue 기반 change signal 대기. `reset_for_new_session()` 세션 간 상태 초기화 |
+| `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%). element exclusion, first screen에서 back 비활성화. TextGenerator 주입으로 input_text 생성 전략 교체 가능. `has_left_app()` / `return_to_app()` / `recover()` — 앱 이탈 감지 및 복구 |
+| `server/text_generator.py` | InputText 생성 전략. `RandomTextGenerator` (하드코딩 랜덤), `LLMTextGenerator` (OpenAI gpt-5-nano Responses API, reasoning: minimal, verbosity: low). API 실패 시 자동 fallback |
 | `server/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 |
 | `server/xml_encoder.py` | XML → HTML-style 변환 파이프라인 (reformat→simplify→remove bounds→encode) |
 | `server/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
@@ -80,7 +94,7 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 **Raw 세션 구조**:
 ```
-data/raw/{session_id}/
+data/raw/{package}_{YYYY-MM-DD_HH-MM-SS}/
 ├── metadata.json
 ├── screenshots/0000.png, 0001.png, ...
 ├── xml/0000.xml, 0001.xml, ...
@@ -91,4 +105,4 @@ data/raw/{session_id}/
 
 ## Dependencies
 
-Python: `loguru`, `Pillow` (그 외 ADB/TCP/XML은 stdlib). Python ≥3.10 필요.
+Python: `loguru`, `Pillow`, `openai`, `python-dotenv` (그 외 ADB/TCP/XML은 stdlib). Python ≥3.10 필요.

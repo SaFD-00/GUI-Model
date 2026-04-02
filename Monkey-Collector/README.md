@@ -63,6 +63,7 @@ Monkey-Collector/
 │   ├── collector.py         # 메인 수집 루프 (Server 기반)
 │   ├── storage.py           # DataWriter (세션 디렉토리 관리)
 │   ├── explorer.py          # SmartExplorer (가중 랜덤 action 선택)
+│   ├── text_generator.py    # InputText 생성 전략 (LLM / 랜덤)
 │   ├── actions.py           # Action dataclass (Tap, Swipe, Input, ...)
 │   ├── adb.py               # ADB 명령어 래핑 (action 실행)
 │   ├── xml_parser.py        # UIElement/UITree 파싱
@@ -72,6 +73,7 @@ Monkey-Collector/
 ├── data/
 │   └── raw/                               # 수집된 세션 데이터
 │
+├── .env.example                           # 환경 변수 템플릿
 ├── pyproject.toml
 └── README.md
 ```
@@ -84,6 +86,10 @@ Monkey-Collector/
 conda create -n monkey-collector python=3.11 -y
 conda activate monkey-collector
 pip install -e .
+
+# LLM 기반 텍스트 입력 사용 시 환경 변수 설정
+cp .env.example .env
+# .env 파일에 OPENAI_API_KEY 설정
 ```
 
 **요구사항**: ADB가 PATH에 있거나 `ANDROID_HOME` 환경변수 설정 필요.
@@ -112,16 +118,22 @@ monkey-collect run --app <package> [옵션]
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
 | `--app` | - | 대상 앱 패키지명 (미지정 시 클라이언트가 자동 감지) |
-| `--steps` | 100 | 최대 step 수 |
+| `--steps` | 100 | 최대 step 수 (세션 단위) |
 | `--seed` | 42 | 랜덤 시드 |
 | `--delay` | 1000 | action 간 대기 (ms) |
 | `--port` | 12345 | TCP 서버 포트 |
 | `--output` | `data/raw` | 저장 디렉토리 |
 | `--device` | - | ADB 디바이스 시리얼 |
+| `--input-mode` | `api` | 텍스트 입력 모드: `api` (LLM) / `random` (하드코딩) |
+| `--single` | - | 단일 세션 모드: 1회 수집 후 서버 종료 (기본: 다중 세션) |
 
 ```bash
-# 예시
-monkey-collect run --app com.android.calculator2 --steps 50
+# 기본 (다중 세션 — 여러 앱 연속 수집, Ctrl+C로 종료)
+monkey-collect run --steps 100
+# → 앱에서 ■ 버튼으로 세션 종료 → 다른 앱 열기 → ▶ 버튼 → 새 세션 자동 시작
+
+# 단일 세션 (1회 수집 후 서버 자동 종료)
+monkey-collect run --single --app com.android.calculator2 --steps 50
 ```
 
 ### 2. JSONL 변환
@@ -240,5 +252,7 @@ data/raw/<session_id>/
 - Python >= 3.10
 - loguru >= 0.7
 - Pillow >= 10.0
+- openai >= 1.0
+- python-dotenv >= 1.0
 - Android SDK (ADB)
 - Android 디바이스/에뮬레이터 (API 28+, minSdk 28)

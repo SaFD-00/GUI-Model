@@ -9,18 +9,21 @@ from loguru import logger
 def cmd_run(args: argparse.Namespace) -> None:
     """Run data collection with App+Server architecture."""
     from server.adb import AdbClient
+    from server.collector import Collector
     from server.explorer import SmartExplorer
     from server.server import CollectionServer
     from server.storage import DataWriter
-    from server.collector import Collector
+    from server.text_generator import create_text_generator
 
     adb = AdbClient(device_serial=args.device)
+    text_gen = create_text_generator(mode=args.input_mode, seed=args.seed)
     explorer = SmartExplorer(
         adb,
         config={
             "seed": args.seed,
             "action_delay_ms": args.delay,
         },
+        text_generator=text_gen,
     )
     server = CollectionServer(host="0.0.0.0", port=args.port)
     writer = DataWriter(base_dir=args.output)
@@ -33,8 +36,15 @@ def cmd_run(args: argparse.Namespace) -> None:
         action_delay=args.delay / 1000.0,
     )
 
-    session_id = collector.run(args.app)
-    logger.info(f"Session saved: {args.output}/{session_id}")
+    if args.single:
+        session_id = collector.run(args.app)
+        if session_id:
+            logger.info(f"Session saved: {args.output}/{session_id}")
+    else:
+        session_ids = collector.run_multi(args.app)
+        logger.info(f"All sessions complete ({len(session_ids)} total)")
+        for sid in session_ids:
+            logger.info(f"  {args.output}/{sid}")
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
@@ -76,6 +86,18 @@ def main() -> None:
     p.add_argument("--port", type=int, default=12345, help="TCP server port")
     p.add_argument("--output", default="data/raw", help="Output directory")
     p.add_argument("--device", default=None, help="ADB device serial")
+    p.add_argument(
+        "--input-mode",
+        choices=["api", "random"],
+        default="api",
+        help="Input text generation mode: 'api' (LLM) or 'random' (hardcoded)",
+    )
+    p.add_argument(
+        "--single",
+        action="store_true",
+        default=False,
+        help="Single-session mode: stop server after one session (default: multi-session)",
+    )
 
     # convert
     p = sub.add_parser("convert", help="Convert session to JSONL")

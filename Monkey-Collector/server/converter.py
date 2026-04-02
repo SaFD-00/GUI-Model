@@ -9,9 +9,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from server.xml_parser import UIElement, parse_uiautomator_xml
 from server.xml_encoder import encode_to_html_xml, indent_xml
-
+from server.xml_parser import UIElement, parse_uiautomator_xml
 
 SYSTEM_PROMPT = (
     "You are a mobile UI transition predictor.\n"

@@ -11,18 +11,25 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from loguru import logger
 
-from server.adb import AdbClient
-from server.xml_parser import UITree
 from server.actions import (
-    Action, Tap, Swipe, InputText, PressBack, PressHome, LongPress,
+    Action,
+    InputText,
+    LongPress,
+    PressBack,
+    PressHome,
+    Swipe,
+    Tap,
 )
+from server.adb import AdbClient
+from server.text_generator import TextGenerator
+from server.xml_parser import UITree
 
 # Default action weights
-DEFAULT_WEIGHTS: Dict[str, float] = {
+DEFAULT_WEIGHTS: dict[str, float] = {
     "tap": 0.60,
     "press_back": 0.10,
     "swipe": 0.10,
@@ -52,7 +59,8 @@ class SmartExplorer:
     def __init__(
         self,
         adb: AdbClient,
-        config: Dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+        text_generator: TextGenerator | None = None,
     ):
         config = config or {}
         self.adb = adb
@@ -64,6 +72,8 @@ class SmartExplorer:
         self.sample_texts = config.get("sample_texts", SAMPLE_TEXTS)
         self._rng = random.Random(self.seed)
         self._excluded_elements: set[int] = set()
+        self._text_generator = text_generator
+        self._last_raw_xml: str | None = None
 
     def exclude_element(self, element_index: int) -> None:
         """Mark an element as tried (no screen change). Excluded from future selection."""
@@ -76,6 +86,10 @@ class SmartExplorer:
 
     def get_excluded_count(self) -> int:
         return len(self._excluded_elements)
+
+    def set_raw_xml(self, raw_xml: str) -> None:
+        """Store the latest raw XML for LLM-based text generation."""
+        self._last_raw_xml = raw_xml
 
     def select_action(self, ui_tree: UITree, step: int = -1, is_first_screen: bool = False) -> Action:
         """Select an action based on UI state and weights."""
@@ -138,6 +152,10 @@ class SmartExplorer:
                 action.x1, action.y1, action.x2, action.y2, action.duration_ms
             )
         elif isinstance(action, InputText):
+            if action.x or action.y:
+                self.adb.tap(action.x, action.y)
+                time.sleep(0.3)
+            self.adb.clear_text_field()
             self.adb.input_text(action.text)
         elif isinstance(action, PressBack):
             self.adb.press_back()
@@ -193,13 +211,15 @@ class SmartExplorer:
             return Tap(x=cx, y=cy, element_index=elem.index)
 
         if action_type == "input_text" and editable:
-            elem = self._rng.choice(editable)
+            empty = [e for e in editable if not e.text.strip()]
+            pool = empty if empty else editable
+            elem = self._rng.choice(pool)
             cx, cy = elem.center
-            # First tap to focus the field
-            self.adb.tap(cx, cy)
-            time.sleep(0.3)
-            text = self._rng.choice(self.sample_texts)
-            return InputText(text=text, element_index=elem.index)
+            if self._text_generator and self._last_raw_xml:
+                text = self._text_generator.generate(elem, self._last_raw_xml)
+            else:
+                text = self._rng.choice(self.sample_texts)
+            return InputText(text=text, x=cx, y=cy, element_index=elem.index)
 
         if action_type == "swipe":
             if scrollable:
@@ -241,7 +261,7 @@ class SmartExplorer:
             y=self._rng.randint(200, self.screen_height - 200),
         )
 
-    def _weighted_choice(self, weights: Dict[str, float]) -> str:
+    def _weighted_choice(self, weights: dict[str, float]) -> str:
         """Weighted random selection from action types."""
         items = list(weights.items())
         values = [w for _, w in items]

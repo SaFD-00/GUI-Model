@@ -5,7 +5,6 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Optional
 
 from loguru import logger
 
@@ -40,7 +39,7 @@ def _escape_text_for_adb(text: str) -> str:
 class AdbClient:
     """Wrapper for ADB shell commands."""
 
-    def __init__(self, device_serial: Optional[str] = None):
+    def __init__(self, device_serial: str | None = None):
         self.device_serial = device_serial
         self._adb = _find_adb()
 
@@ -49,7 +48,7 @@ class AdbClient:
             return [self._adb, "-s", self.device_serial]
         return [self._adb]
 
-    def shell(self, command: str, timeout: Optional[int] = None) -> str:
+    def shell(self, command: str, timeout: int | None = None) -> str:
         """Run an ADB shell command and return stdout."""
         cmd = self._cmd_prefix() + ["shell", command]
         logger.debug(f"ADB: {' '.join(cmd)}")
@@ -112,6 +111,12 @@ class AdbClient:
             return ""
         escaped = _escape_text_for_adb(text)
         return self.shell(f"input text {escaped}")
+
+    def clear_text_field(self) -> str:
+        """Select all text in the focused field and delete it."""
+        self.shell("input keyevent KEYCODE_MOVE_END")
+        self.shell("input keycombination 113 29")  # Ctrl+A
+        return self.shell("input keyevent KEYCODE_DEL")
 
     def long_press(self, x: int, y: int, duration_ms: int = 1000) -> str:
         """Long-press at (x, y) via a zero-movement swipe."""
