@@ -17,6 +17,7 @@ class CollectorService : AccessibilityService() {
     companion object {
         private const val TAG = "CollectorService"
         private const val DEBOUNCE_MS = 300L
+        private const val MIN_CAPTURE_INTERVAL_MS = 2000L
         private const val NOTIFICATION_CHANNEL_ID = "MonkeyCollector_Channel"
         private const val NOTIFICATION_ID = 1
 
@@ -36,6 +37,7 @@ class CollectorService : AccessibilityService() {
     private var lastEventTime: Long = 0
     private var consecutiveBackCount: Int = 0
     private var isCollecting: Boolean = false
+    @Volatile private var lastCaptureTime: Long = 0
     private var screenStabilizer: ScreenStabilizer? = null
     private var floatingButton: FloatingCollectorButton? = null
 
@@ -127,6 +129,11 @@ class CollectorService : AccessibilityService() {
                     val stabilized = stabilizer.waitForStable()
                     if (!stabilized) {
                         Log.w(TAG, "Screen stabilization timeout, capturing anyway")
+                        // Stabilization 실패 시 최소 캡처 간격 보장 (폭주 방지)
+                        val elapsed = System.currentTimeMillis() - lastCaptureTime
+                        if (elapsed < MIN_CAPTURE_INTERVAL_MS) {
+                            return@Thread
+                        }
                     }
 
                     // Step 2: Check for actual visual change
@@ -168,6 +175,7 @@ class CollectorService : AccessibilityService() {
                 }
 
                 stepCount++
+                lastCaptureTime = System.currentTimeMillis()
                 Log.d(TAG, "Step $stepCount captured for $topPackage")
 
             } catch (e: Exception) {
@@ -218,6 +226,8 @@ class CollectorService : AccessibilityService() {
                 MediaProjectionHelper.resultCode,
                 MediaProjectionHelper.resultData!!
             )
+            // VirtualDisplay가 첫 프레임을 렌더링할 시간 확보
+            Thread.sleep(500)
             Log.i(TAG, "ScreenStabilizer initialized (${screenWidth}x${screenHeight})")
         } else {
             Log.w(TAG, "MediaProjection not granted, running without visual stabilization")

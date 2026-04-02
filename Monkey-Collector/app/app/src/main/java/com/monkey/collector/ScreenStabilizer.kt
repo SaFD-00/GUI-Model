@@ -106,6 +106,11 @@ class ScreenStabilizer(
             null
         )
 
+        if (virtualDisplay == null) {
+            Log.e(TAG, "VirtualDisplay creation failed! MediaProjection may be invalid.")
+            return
+        }
+
         Log.i(TAG, "Capture session started (${targetWidth}x${targetHeight})")
     }
 
@@ -174,14 +179,15 @@ class ScreenStabilizer(
 
     private fun doWaitForStable(): Boolean {
         var stableCount = 0
-        var bitmapA = takeComparisonScreenshot()
+        var bitmapA: Bitmap? = null
 
-        if (bitmapA == null) {
-            Thread.sleep(200)
+        for (retry in 0..2) {
             bitmapA = takeComparisonScreenshot()
+            if (bitmapA != null) break
+            Thread.sleep(500)
         }
         if (bitmapA == null) {
-            Log.w(TAG, "Initial capture failed, skipping stabilization")
+            Log.w(TAG, "Initial capture failed after 3 retries, skipping stabilization")
             return true
         }
 
