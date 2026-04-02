@@ -14,7 +14,7 @@ App (Kotlin, AccessibilityService)       TCP        Server (Python)
 │   │   └── BitmapComparator         ──E(external)────→    └── wait_for_xml()
 │   ├── XmlDumper (A11y tree)        ──N(no-change)───→          ↓
 │   ├── ScreenCapture (MediaProj.)   ──F(finish)──────→    collector.py
-│   └── FloatingCollectorButton                            ├── explorer.py (action 선택)
+│   └── FloatingCollectorButton                            ├── explorer.py (action 선택 + 앱 복귀)
 ├── TcpClient                        ←──action JSON────    └── adb.py (action 실행)
 └── MainActivity (설정 UI)
 ```
@@ -32,6 +32,10 @@ App (Kotlin, AccessibilityService)       TCP        Server (Python)
 
 **No-Change Retry + Element Exclusion** — 화면 변화 없음 재시도:
 - 화면 변화 없으면 해당 element를 제외하고 다른 element로 최대 3회 재시도
+
+**External App Recovery** — 타겟 앱 이탈 복구:
+- Client: 런처 감지(`LAUNCHER_PACKAGES`) 또는 back 3회 연속 시 `getLaunchIntentForPackage()`로 재실행
+- Server: `external_app` signal 수신 시 능동 복구 — `return_to_app` (1-3회) → `recover` (4+회) → 세션 종료 (10+회)
 
 ## 프로젝트 구조
 
@@ -147,15 +151,16 @@ App 측:
   ④ 전환 시: 고해상도 screenshot + XML dump → TCP 전송 (first screen 여부 플래그 포함)
 
 Server 측:
-  ① server.wait_for_xml() → App에서 screenshot + XML 수신
+  ① server.get_latest_signal() → App에서 screenshot + XML 수신 (stale signal 드레인)
   ② xml_parser.UITree → 파싱 (clickable, scrollable, editable 추출)
   ③ SmartExplorer: 가중 랜덤 action 선택
      tap: 60% | swipe: 10% | input: 10% | back: 10% | long_press: 5% | home: 0%
      (기본 가중치, 정규화 후 적용)
      ※ 첫 화면에서는 press_back 비활성화
-  ④ ADB로 action 실행
+  ④ ADB로 action 실행 → clear_signal_queue()
   ⑤ storage에 screenshot / XML / event 저장
   ⑥ no-change 시: element 제외 후 재시도 (최대 3회), 초과 시 first screen이면 tap, 아니면 back
+  ⑦ external_app 시: return_to_app (1-3회) → recover (4+회) → 세션 종료 (10+회)
 ```
 
 ## TCP 프로토콜
