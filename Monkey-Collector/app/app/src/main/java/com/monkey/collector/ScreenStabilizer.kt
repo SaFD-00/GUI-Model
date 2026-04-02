@@ -32,6 +32,7 @@ class ScreenStabilizer(
         private const val TAG = "ScreenStabilizer"
         const val TARGET_WIDTH = 100
         const val STABILITY_THRESHOLD = 0.02f   // 2% pixel difference
+        const val FIRST_SCREEN_THRESHOLD = 0.05f // 5% — more lenient for first screen comparison
         const val REQUIRED_STABLE_FRAMES = 3     // 3 consecutive stable frames
         const val MAX_ATTEMPTS = 30              // ~15 seconds max
         const val CHECK_INTERVAL_MS = 500L       // 500ms between checks
@@ -42,6 +43,7 @@ class ScreenStabilizer(
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var lastStableFrame: Bitmap? = null
+    private var firstScreenFrame: Bitmap? = null
     private val isStabilizing = AtomicBoolean(false)
 
     private val targetWidth: Int = TARGET_WIDTH
@@ -64,15 +66,25 @@ class ScreenStabilizer(
             return
         }
 
+        // Release VirtualDisplay/ImageReader but keep MediaProjection alive
         stopCaptureSession()
 
-        mediaProjection = mediaProjectionManager!!.getMediaProjection(resultCode, data)
-        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                Log.w(TAG, "MediaProjection stopped externally")
-                stopCaptureSession()
+        // Only acquire new projection if we don't have one
+        if (mediaProjection == null) {
+            try {
+                mediaProjection = mediaProjectionManager!!.getMediaProjection(resultCode, data)
+                mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        Log.w(TAG, "MediaProjection stopped externally")
+                        mediaProjection = null
+                    }
+                }, null)
+            } catch (e: SecurityException) {
+                Log.e(TAG, "MediaProjection token expired: ${e.message}")
+                mediaProjection = null
+                return
             }
-        }, null)
+        }
 
         if (targetHeight <= 0) {
             Log.e(TAG, "Invalid target height: $targetHeight")
@@ -102,11 +114,22 @@ class ScreenStabilizer(
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
-        mediaProjection?.stop()
-        mediaProjection = null
         lastStableFrame?.recycle()
         lastStableFrame = null
+        firstScreenFrame?.recycle()
+        firstScreenFrame = null
         Log.d(TAG, "Capture session stopped")
+    }
+
+    /**
+     * Full cleanup including MediaProjection.
+     * Call only when the service is being destroyed.
+     */
+    fun release() {
+        stopCaptureSession()
+        mediaProjection?.stop()
+        mediaProjection = null
+        Log.d(TAG, "ScreenStabilizer fully released")
     }
 
     /**
@@ -223,6 +246,37 @@ class ScreenStabilizer(
             Log.d(TAG, "No visual change (diff=${String.format("%.4f", diff)})")
         }
         return changed
+    }
+
+    /**
+     * Save the current frame as the first screen reference.
+     * Called once when the very first screen capture is about to be sent.
+     */
+    fun saveFirstScreen() {
+        val frame = takeComparisonScreenshot() ?: return
+        firstScreenFrame?.recycle()
+        firstScreenFrame = frame
+        Log.i(TAG, "First screen saved for back-button protection")
+    }
+
+    /**
+     * Check if the current screen visually matches the first screen.
+     * Uses a more lenient threshold (5%) than stability checks
+     * to tolerate minor dynamic content (clock, badges).
+     *
+     * @return true if current screen matches first screen, false otherwise.
+     *         Returns false if first screen was never saved.
+     */
+    fun isFirstScreen(): Boolean {
+        val reference = firstScreenFrame ?: return false
+        val current = takeComparisonScreenshot() ?: return false
+        val diff = BitmapComparator.compare(reference, current)
+        current.recycle()
+        val isFirst = diff < FIRST_SCREEN_THRESHOLD
+        if (isFirst) {
+            Log.d(TAG, "Current screen matches first screen (diff=${String.format("%.4f", diff)})")
+        }
+        return isFirst
     }
 
     /**

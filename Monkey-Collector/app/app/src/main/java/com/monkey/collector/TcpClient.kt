@@ -91,7 +91,7 @@ class TcpClient(
         }
     }
 
-    fun sendXml(xml: String, topPackage: String, targetPackage: String): Boolean {
+    fun sendXml(xml: String, topPackage: String, targetPackage: String, isFirstScreen: Boolean = false): Boolean {
         if (!connected) return false
         return try {
             val xmlBytes = xml.toByteArray(StandardCharsets.UTF_8)
@@ -101,6 +101,7 @@ class TcpClient(
                 out.writeByte('X'.code)
                 out.write("$topPackage\n".toByteArray(StandardCharsets.UTF_8))
                 out.write("$targetPackage\n".toByteArray(StandardCharsets.UTF_8))
+                out.write("${if (isFirstScreen) "1" else "0"}\n".toByteArray(StandardCharsets.UTF_8))
                 out.write("${xmlBytes.size}\n".toByteArray(StandardCharsets.UTF_8))
                 out.write(xmlBytes)
                 out.flush()
@@ -177,6 +178,26 @@ class TcpClient(
             false
         } catch (e: Exception) {
             Log.e(TAG, "sendFinish error: ${e.message}")
+            false
+        }
+    }
+
+    fun sendNoChange(): Boolean {
+        if (!connected) return false
+        return try {
+            synchronized(writeLock) {
+                val out = dos ?: return false
+                out.writeByte('N'.code)
+                out.flush()
+            }
+            Log.d(TAG, "NoChange signal sent")
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "sendNoChange failed: ${e.message}")
+            connected = false
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "sendNoChange error: ${e.message}")
             false
         }
     }

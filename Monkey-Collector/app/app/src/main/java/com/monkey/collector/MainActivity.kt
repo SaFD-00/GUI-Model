@@ -17,7 +17,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var etServerIp: EditText
     private lateinit var etServerPort: EditText
-    private lateinit var etTargetPackage: EditText
     private lateinit var tvStatus: TextView
     private lateinit var btnSave: Button
     private lateinit var btnAccessibility: Button
@@ -53,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         tvStatus = TextView(this).apply {
-            text = "Status: Configure settings and tap Save & Ready"
+            text = "Status: Configure server and tap Save & Ready"
             textSize = 18f
         }
         layout.addView(tvStatus)
@@ -74,11 +73,12 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(etServerPort)
 
-        etTargetPackage = EditText(this).apply {
-            hint = "Target Package (e.g., com.android.calculator2)"
-            setText(prefs.getString("target_package", "com.android.calculator2"))
-        }
-        layout.addView(etTargetPackage)
+        // Info text
+        layout.addView(TextView(this).apply {
+            text = "Target app is auto-detected when you press the floating ▶ button."
+            textSize = 14f
+            setPadding(0, 16, 0, 16)
+        })
 
         btnAccessibility = Button(this).apply {
             text = "Open Accessibility Settings"
@@ -106,18 +106,16 @@ class MainActivity : AppCompatActivity() {
 
         val ip = etServerIp.text.toString().trim()
         val port = etServerPort.text.toString().trim().toIntOrNull() ?: 12345
-        val pkg = etTargetPackage.text.toString().trim()
 
-        if (ip.isEmpty() || pkg.isEmpty()) {
-            Toast.makeText(this, "Fill in all fields", Toast.LENGTH_SHORT).show()
+        if (ip.isEmpty()) {
+            Toast.makeText(this, "Enter server IP", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // Save settings to SharedPreferences
+        // Save server settings to SharedPreferences
         getSharedPreferences("collector_settings", MODE_PRIVATE).edit()
             .putString("server_ip", ip)
             .putInt("server_port", port)
-            .putString("target_package", pkg)
             .apply()
 
         tvStatus.text = "Status: Requesting permission..."

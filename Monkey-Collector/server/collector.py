@@ -7,10 +7,13 @@ from typing import Optional
 from loguru import logger
 
 from server.adb import AdbClient
+from server.actions import Action
 from server.xml_parser import UITree
 from server.explorer import SmartExplorer
 from server.server import CollectionServer
 from server.storage import DataWriter
+
+MAX_NO_CHANGE_RETRIES = 3
 
 
 class Collector:
@@ -21,9 +24,10 @@ class Collector:
       2. Receive target package name from client (P message)
       3. Loop:
          a. App detects screen change → sends screenshot + XML via TCP
+            (or sends N signal if no visual change)
          b. Server receives → parses XML → selects action
          c. Server executes action via ADB
-         d. Saves screenshot/XML/event to disk
+         d. Saves screenshot/XML/event to disk (skipped on no-change)
       4. Finalize session
     """
 
@@ -104,20 +108,28 @@ class Collector:
         total_actions = 0
         timeout_count = 0
         max_timeouts = 5
+        no_change_retries = 0
+        last_action: Optional[Action] = None
+        last_ui_tree: Optional[UITree] = None
+        is_first_screen = False
 
         for step in range(self.max_steps):
             try:
-                # Wait for XML from App (App sends after transition detected)
-                result = self.server.wait_for_xml(timeout=self.xml_timeout)
+                # Wait for latest signal (skips stale queued signals)
+                result = self.server.get_latest_signal(
+                    timeout=self.xml_timeout
+                )
+
                 if result is None:
+                    # True timeout (no signal at all)
                     timeout_count += 1
                     logger.warning(
-                        f"Step {step}: XML timeout ({timeout_count}/{max_timeouts})"
+                        f"Step {step}: signal timeout "
+                        f"({timeout_count}/{max_timeouts})"
                     )
                     if timeout_count >= max_timeouts:
                         logger.error("Too many timeouts, ending session")
                         break
-                    # Tap screen center to trigger a new accessibility event
                     try:
                         w, h = self.adb.get_device_resolution()
                         self.adb.tap(w // 2, h // 2)
@@ -125,15 +137,96 @@ class Collector:
                         pass
                     continue
 
+                signal_type = result[0]
+
+                if signal_type == "no_change":
+                    # Screen did not change after last action
+                    no_change_retries += 1
+                    logger.info(
+                        f"Step {step}: no visual change "
+                        f"(retry {no_change_retries}/{MAX_NO_CHANGE_RETRIES})"
+                    )
+
+                    # Exclude the element that was just tried
+                    if last_action is not None and last_action.element_index >= 0:
+                        self.explorer.exclude_element(
+                            last_action.element_index
+                        )
+
+                    if no_change_retries >= MAX_NO_CHANGE_RETRIES:
+                        if is_first_screen:
+                            logger.warning(
+                                f"Step {step}: {MAX_NO_CHANGE_RETRIES} "
+                                f"no-change retries, on first screen — tap instead of back"
+                            )
+                            self._tap_random_fallback()
+                        else:
+                            logger.warning(
+                                f"Step {step}: {MAX_NO_CHANGE_RETRIES} "
+                                f"no-change retries, pressing back"
+                            )
+                            self.adb.press_back()
+                        self.server.clear_signal_queue()
+                        no_change_retries = 0
+                        self.explorer.clear_excluded()
+                        last_action = None
+                        last_ui_tree = None
+                        time.sleep(self.action_delay)
+                        continue
+
+                    # Try a different element on the same screen
+                    if last_ui_tree is not None and len(last_ui_tree) > 0:
+                        action = self.explorer.select_action(last_ui_tree, step, is_first_screen=is_first_screen)
+                        logger.info(
+                            f"Step {step}: retry {action.action_type} "
+                            f"(element_index={action.element_index})"
+                        )
+                        self.explorer.execute_action(action)
+                        last_action = action
+                        total_actions += 1
+
+                        # Log retry event (no screenshot/xml saved)
+                        event = action.to_dict()
+                        event["step"] = step
+                        event["no_change_retry"] = True
+                        self.writer.log_event(event)
+
+                        time.sleep(self.action_delay)
+                    else:
+                        if is_first_screen:
+                            logger.info(f"Step {step}: no UI tree, on first screen — tap instead of back")
+                            self._tap_random_fallback()
+                        else:
+                            self.adb.press_back()
+                        no_change_retries = 0
+                        self.explorer.clear_excluded()
+                        last_action = None
+                        time.sleep(self.action_delay)
+                    continue
+
+                if signal_type == "external_app":
+                    logger.info(
+                        f"Step {step}: external app detected, "
+                        f"waiting for client-side recovery"
+                    )
+                    continue
+
+                # signal_type == "xml" — screen changed
                 timeout_count = 0
-                xml_str, meta = result
+                no_change_retries = 0
+                self.explorer.clear_excluded()
+
+                _, xml_str, meta = result
                 top_package = meta.get("top_package", "")
                 target_package = meta.get("target_package", package)
+                is_first_screen = meta.get("is_first_screen", False)
 
-                # Check for app escape
+                # Check for app escape (client handles recovery via back press)
                 if top_package and top_package != package:
-                    logger.warning(f"Step {step}: external app {top_package}, recovering")
-                    self.explorer.return_to_app(package)
+                    logger.info(
+                        f"Step {step}: stale XML from {top_package} "
+                        f"(expected {package}), skipping"
+                    )
                     continue
 
                 # Save received data
@@ -145,12 +238,22 @@ class Collector:
                 # Parse UI tree
                 ui_tree = UITree.from_xml_string(xml_str)
                 if len(ui_tree) == 0:
-                    logger.warning(f"Step {step}: no UI elements, pressing back")
-                    self.adb.press_back()
+                    if is_first_screen:
+                        logger.warning(
+                            f"Step {step}: no UI elements, on first screen — tap instead of back"
+                        )
+                        self._tap_random_fallback()
+                    else:
+                        logger.warning(
+                            f"Step {step}: no UI elements, pressing back"
+                        )
+                        self.adb.press_back()
+                    last_ui_tree = None
+                    last_action = None
                     continue
 
                 # Select action
-                action = self.explorer.select_action(ui_tree)
+                action = self.explorer.select_action(ui_tree, step, is_first_screen=is_first_screen)
                 logger.info(
                     f"Step {step}: {action.action_type} "
                     f"(element_index={action.element_index})"
@@ -159,6 +262,13 @@ class Collector:
                 # Execute action via ADB
                 self.explorer.execute_action(action)
                 total_actions += 1
+
+                # Clear stale signals accumulated during action execution
+                self.server.clear_signal_queue()
+
+                # Track for potential retry
+                last_action = action
+                last_ui_tree = ui_tree
 
                 # Log event
                 event = action.to_dict()
@@ -184,6 +294,14 @@ class Collector:
             f"steps={self.writer.step_count}, actions={total_actions}"
         )
         return session_id
+
+    def _tap_random_fallback(self):
+        """Tap center of screen as a fallback when back is suppressed on first screen."""
+        try:
+            w, h = self.adb.get_device_resolution()
+            self.adb.tap(w // 2, h // 2)
+        except Exception:
+            pass
 
     def _on_screenshot(self, image_data: bytes):
         """Callback: store latest screenshot for saving with next XML."""

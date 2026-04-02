@@ -92,12 +92,19 @@ class FloatingCollectorButton(private val service: CollectorService) {
         val prefs = service.getSharedPreferences("collector_settings", Context.MODE_PRIVATE)
         val ip = prefs.getString("server_ip", "") ?: ""
         val port = prefs.getInt("server_port", 12345)
-        val pkg = prefs.getString("target_package", "") ?: ""
 
-        if (ip.isEmpty() || pkg.isEmpty()) {
-            Log.w(TAG, "Settings not configured. Open MonkeyCollector app first.")
+        if (ip.isEmpty()) {
+            Log.w(TAG, "Server IP not configured. Open MonkeyCollector app first.")
             return
         }
+
+        // Auto-detect current foreground app as target
+        val pkg = service.getCurrentForegroundPackage()
+        if (pkg == null) {
+            Log.w(TAG, "No foreground app detected. Open the target app first.")
+            return
+        }
+        Log.i(TAG, "Auto-detected target app: $pkg")
 
         val metrics = service.resources.displayMetrics
 

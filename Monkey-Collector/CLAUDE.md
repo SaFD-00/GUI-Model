@@ -29,32 +29,32 @@ Android 앱은 `app/` 디렉토리에서 Gradle로 빌드 (compileSdk 34, minSdk
 
 ### 수집 플로우
 1. 터미널: `monkey-collect run` (서버 대기)
-2. 에뮬레이터: MonkeyCollector 앱 → 설정(IP/Port/Package) → Save & Ready → 권한 허용
-3. 에뮬레이터: 타겟 앱 열기 → 플로팅 ▶ 버튼 클릭 → 수집 시작
+2. 에뮬레이터: MonkeyCollector 앱 → 설정(IP/Port) → Save & Ready → 권한 허용
+3. 에뮬레이터: 타겟 앱 열기 → 플로팅 ▶ 버튼 클릭 → foreground 앱 자동 감지 → 수집 시작
 
 ## Architecture
 
 ```
 Android App (Kotlin)  ←TCP→  Python Server
-  CollectorService           CollectionServer
-  ScreenStabilizer           Collector (orchestration loop)
-  TcpClient (S/X/E/F)       SmartExplorer (weighted action selection)
-                             AdbClient (action execution)
-                             DataWriter (session storage)
+  CollectorService           CollectionServer (+ signal queue)
+  FloatingCollectorButton    Collector (orchestration + no-change retry)
+  ScreenStabilizer           SmartExplorer (weighted selection + element exclusion)
+  TcpClient (P/S/X/E/N/F)   AdbClient (action execution)
+  MainActivity               DataWriter (session storage)
                              Converter (raw → ShareGPT JSONL)
 ```
 
-**수집 루프**: App이 A11y 이벤트 감지 → ScreenStabilizer로 전환 확정 → 스크린샷+XML을 서버로 전송 → SmartExplorer가 액션 선택 → ADB로 실행 → 저장 → 반복
+**수집 루프**: App이 A11y 이벤트 감지 → ScreenStabilizer로 전환 확정 → 스크린샷+XML을 서버로 전송 → SmartExplorer가 액션 선택 → ADB로 실행 → 저장 → 반복. 화면 변화 없으면 N signal 전송 → no-change retry (max 3, element exclusion). first screen 보호: back 비활성화, tap으로 대체.
 
-**TCP 프로토콜 (App→Server)**: `P`(타겟 패키지명), `S`(스크린샷 JPEG), `X`(XML+패키지 정보), `E`(외부 앱 감지), `F`(종료). 바이너리 데이터는 크기 prefixed.
+**TCP 프로토콜 (App→Server)**: `P`(타겟 패키지명), `S`(스크린샷 JPEG), `X`(XML+패키지+is_first_screen), `E`(외부 앱 감지), `N`(화면 변화 없음), `F`(종료). 바이너리 데이터는 크기 prefixed.
 
 ## Key Modules
 
 | Module | Role |
 |--------|------|
-| `server/collector.py` | 메인 수집 오케스트레이션 루프 |
-| `server/server.py` | TCP 서버, 바이너리 프로토콜 파싱 |
-| `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%) |
+| `server/collector.py` | 메인 수집 오케스트레이션 루프. no-change 재시도 (max 3), first screen 보호 |
+| `server/server.py` | TCP 서버, 바이너리 프로토콜 파싱. Queue 기반 change signal 대기 |
+| `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%). element exclusion, first screen에서 back 비활성화 |
 | `server/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 |
 | `server/xml_encoder.py` | XML → HTML-style 변환 파이프라인 (reformat→simplify→remove bounds→encode) |
 | `server/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
@@ -66,11 +66,15 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 `app/app/src/main/java/com/monkey/collector/` 하위:
 
-- **CollectorService**: AccessibilityService. WINDOW_STATE/CONTENT_CHANGED 이벤트 디바운스(300ms) 후 ScreenStabilizer로 전환 확정. 플로팅 버튼 관리
-- **FloatingCollectorButton**: TYPE_ACCESSIBILITY_OVERLAY 플로팅 START/STOP 버튼. 타겟 앱 foreground 유지
-- **ScreenStabilizer**: 저해상도(100px) 프레임 비교로 안정화 감지 (2% 임계값, 3연속 안정 프레임)
-- **TcpClient**: P/S/X/E/F 프로토콜 구현, synchronized write, 3회 재시도
-- **MainActivity**: 설정(IP/Port/Package) 저장 + MediaProjection 권한 요청 전용
+- **CollectorService**: AccessibilityService. WINDOW_STATE/CONTENT_CHANGED 이벤트 디바운스(300ms) 후 ScreenStabilizer로 전환 확정. 플로팅 버튼 관리. first screen 플래그 전송
+- **FloatingCollectorButton**: TYPE_ACCESSIBILITY_OVERLAY 플로팅 START/STOP 버튼. foreground 앱을 타겟으로 자동 감지
+- **ScreenStabilizer**: 저해상도(100px) 프레임 비교로 안정화 감지 (2% 임계값, 3연속 안정 프레임). first screen 감지 (5% 임계값)
+- **TcpClient**: P/S/X/E/N/F 프로토콜 구현, synchronized write, 3회 재시도
+- **ScreenCapture**: API 30+ AccessibilityService.takeScreenshot() 래퍼. 5초 타임아웃 동기 캡처
+- **BitmapComparator**: 픽셀 단위 비트맵 비교. 차이 비율(0.0~1.0) 반환
+- **XmlDumper**: AccessibilityNodeInfo 트리 → uiautomator XML 변환
+- **MediaProjectionHelper**: MediaProjection 권한 결과 싱글톤 브릿지 (Activity→Service)
+- **MainActivity**: 설정(IP/Port) 저장 + MediaProjection 권한 요청 전용. 타겟 앱은 플로팅 버튼에서 자동 감지
 
 ## Data Format
 

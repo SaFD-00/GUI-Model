@@ -3,6 +3,7 @@
 import json
 import socket
 import threading
+from queue import Queue, Empty
 from typing import Callable, Optional
 
 from loguru import logger
@@ -15,8 +16,9 @@ class CollectionServer:
 
     Protocol (App → Server):
       S + size_line + binary_data   = Screenshot
-      X + top_pkg + target_pkg + size_line + xml_data = XML hierarchy
+      X + top_pkg + target_pkg + is_first_screen("0"/"1") + size_line + xml_data = XML hierarchy
       E + json_line                 = External app detection
+      N                             = No visual change detected
       F                             = Session finish
 
     Protocol (Server → App):
@@ -49,6 +51,8 @@ class CollectionServer:
         # Package name from client
         self._package_event = threading.Event()
         self._target_package: Optional[str] = None
+        # Signal queue for change detection (XML or no-change)
+        self._signal_queue: Queue = Queue()
 
     def start(self):
         """Start the server in a background thread."""
@@ -103,6 +107,56 @@ class CollectionServer:
             return self._latest_xml, meta
         return None
 
+    def wait_for_change_signal(
+        self, timeout: float = 15.0
+    ) -> Optional[tuple[str, Optional[str], Optional[dict]]]:
+        """Block until XML or no-change signal is received.
+
+        Returns:
+            ("xml", xml_string, meta_dict) on screen change
+            ("no_change", None, None) on no visual change
+            None on timeout
+        """
+        try:
+            return self._signal_queue.get(timeout=timeout)
+        except Empty:
+            return None
+
+    def get_latest_signal(
+        self, timeout: float = 15.0
+    ) -> Optional[tuple[str, Optional[str], Optional[dict]]]:
+        """Drain stale signals and return the latest one.
+
+        If multiple signals are queued, skips all but the last.
+        If the queue is empty, blocks up to `timeout` for a new signal.
+        """
+        latest = None
+        while True:
+            try:
+                latest = self._signal_queue.get_nowait()
+            except Empty:
+                break
+
+        if latest is not None:
+            return latest
+
+        try:
+            return self._signal_queue.get(timeout=timeout)
+        except Empty:
+            return None
+
+    def clear_signal_queue(self):
+        """Discard all queued signals."""
+        discarded = 0
+        while True:
+            try:
+                self._signal_queue.get_nowait()
+                discarded += 1
+            except Empty:
+                break
+        if discarded:
+            logger.debug(f"Cleared {discarded} stale signals from queue")
+
     def _run(self):
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -143,6 +197,9 @@ class CollectionServer:
                     self._handle_screenshot(client)
                 elif msg_type == "X":
                     self._handle_xml(client)
+                elif msg_type == "N":
+                    self._signal_queue.put(("no_change", None, None))
+                    logger.debug("Received no-change signal from client")
                 elif msg_type == "E":
                     self._handle_external_app(client)
                 elif msg_type == "F":
@@ -192,7 +249,6 @@ class CollectionServer:
 
     def wait_for_package(self, timeout: float = 120.0) -> Optional[str]:
         """Block until the client sends target package name via P message."""
-        self._package_event.clear()
         if self._package_event.wait(timeout):
             return self._target_package
         return None
@@ -213,9 +269,12 @@ class CollectionServer:
     def _handle_xml(self, client: socket.socket):
         top_package = self._recv_text_line(client)
         target_package = self._recv_text_line(client)
+        is_first_screen_str = self._recv_text_line(client)
         xml_data = self._recv_binary(client)
         raw_xml = xml_data.decode("utf-8").strip()
         raw_xml = raw_xml.replace('class=""', 'class="unknown"')
+
+        is_first_screen = is_first_screen_str == "1"
 
         if self.on_xml:
             self.on_xml(raw_xml, top_package, target_package)
@@ -224,8 +283,10 @@ class CollectionServer:
         self._latest_xml_meta = {
             "top_package": top_package,
             "target_package": target_package,
+            "is_first_screen": is_first_screen,
         }
         self._xml_event.set()
+        self._signal_queue.put(("xml", raw_xml, self._latest_xml_meta))
         logger.debug(
             f"Received XML: top={top_package}, target={target_package}, "
             f"size={len(raw_xml)} bytes"
@@ -240,4 +301,5 @@ class CollectionServer:
 
         if self.on_external_app:
             self.on_external_app(payload)
+        self._signal_queue.put(("external_app", None, payload))
         logger.warning(f"External app detected: {payload}")

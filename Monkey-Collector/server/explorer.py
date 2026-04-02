@@ -63,15 +63,38 @@ class SmartExplorer:
         self.seed = config.get("seed", 42)
         self.sample_texts = config.get("sample_texts", SAMPLE_TEXTS)
         self._rng = random.Random(self.seed)
+        self._excluded_elements: set[int] = set()
 
-    def select_action(self, ui_tree: UITree) -> Action:
+    def exclude_element(self, element_index: int) -> None:
+        """Mark an element as tried (no screen change). Excluded from future selection."""
+        if element_index >= 0:
+            self._excluded_elements.add(element_index)
+
+    def clear_excluded(self) -> None:
+        """Reset excluded elements. Call when screen actually changes."""
+        self._excluded_elements.clear()
+
+    def get_excluded_count(self) -> int:
+        return len(self._excluded_elements)
+
+    def select_action(self, ui_tree: UITree, step: int = -1, is_first_screen: bool = False) -> Action:
         """Select an action based on UI state and weights."""
         clickable = ui_tree.get_clickable_elements()
         editable = ui_tree.get_editable_elements()
         scrollable = ui_tree.get_scrollable_elements()
 
+        # Filter out elements that were tried but produced no screen change
+        if self._excluded_elements:
+            clickable = [e for e in clickable if e.index not in self._excluded_elements]
+            editable = [e for e in editable if e.index not in self._excluded_elements]
+            scrollable = [e for e in scrollable if e.index not in self._excluded_elements]
+
         # Build available actions with adjusted weights
         weights = dict(self.action_weights)
+
+        # 첫 화면에서는 press_back 금지 (앱 종료 방지)
+        if is_first_screen:
+            weights["press_back"] = 0.0
 
         # If there are editable fields, boost input_text weight
         if editable:
@@ -88,6 +111,15 @@ class SmartExplorer:
         # Normalize weights
         total = sum(weights.values())
         if total == 0:
+            if is_first_screen:
+                if clickable:
+                    elem = self._rng.choice(clickable)
+                    cx, cy = elem.center
+                    return Tap(x=cx, y=cy, element_index=elem.index)
+                return Tap(
+                    x=self._rng.randint(100, self.screen_width - 100),
+                    y=self._rng.randint(200, self.screen_height - 200),
+                )
             return PressBack()
 
         normalized = {k: v / total for k, v in weights.items()}

@@ -131,9 +131,18 @@ class CollectorService : AccessibilityService() {
 
                     // Step 2: Check for actual visual change
                     if (!stabilizer.hasVisualChange()) {
-                        Log.d(TAG, "No visual change detected, skipping capture")
+                        Log.d(TAG, "No visual change detected, sending N signal")
+                        tcpClient?.sendNoChange()
                         return@Thread
                     }
+                }
+
+                // Step 2.5: First screen detection
+                val isFirstScreen = if (stabilizer != null) {
+                    if (stepCount == 0) stabilizer.saveFirstScreen()
+                    stabilizer.isFirstScreen()
+                } else {
+                    false
                 }
 
                 // Step 3: Hide floating button, take screenshot, show again
@@ -153,7 +162,7 @@ class CollectorService : AccessibilityService() {
                     bitmap.recycle()
                 }
 
-                val xmlSent = tcpClient?.sendXml(xml, topPackage, targetPackage) ?: false
+                val xmlSent = tcpClient?.sendXml(xml, topPackage, targetPackage, isFirstScreen) ?: false
                 if (!xmlSent) {
                     Log.w(TAG, "Failed to send XML at step $stepCount")
                 }
@@ -177,6 +186,8 @@ class CollectorService : AccessibilityService() {
         super.onDestroy()
         instance = null
         stopCollection()
+        screenStabilizer?.release()
+        screenStabilizer = null
         floatingButton?.remove()
         floatingButton = null
     }
@@ -196,15 +207,17 @@ class CollectorService : AccessibilityService() {
         // Start foreground service (required before MediaProjection on API 29+)
         startForegroundService()
 
-        // Initialize screen stabilizer with MediaProjection
+        // Initialize screen stabilizer with MediaProjection (reuse if exists)
         if (MediaProjectionHelper.isGranted) {
-            val stabilizer = ScreenStabilizer(screenWidth, screenHeight, screenDensityDpi)
-            stabilizer.initProjection(this)
-            stabilizer.startCaptureSession(
+            if (screenStabilizer == null) {
+                val stabilizer = ScreenStabilizer(screenWidth, screenHeight, screenDensityDpi)
+                stabilizer.initProjection(this)
+                screenStabilizer = stabilizer
+            }
+            screenStabilizer!!.startCaptureSession(
                 MediaProjectionHelper.resultCode,
                 MediaProjectionHelper.resultData!!
             )
-            screenStabilizer = stabilizer
             Log.i(TAG, "ScreenStabilizer initialized (${screenWidth}x${screenHeight})")
         } else {
             Log.w(TAG, "MediaProjection not granted, running without visual stabilization")
@@ -227,9 +240,8 @@ class CollectorService : AccessibilityService() {
     fun stopCollection() {
         isCollecting = false
 
-        // Stop screen stabilizer
+        // Pause screen stabilizer (keep MediaProjection alive for reuse)
         screenStabilizer?.stopCaptureSession()
-        screenStabilizer = null
 
         // Send finish and disconnect
         tcpClient?.sendFinish()
@@ -312,6 +324,26 @@ class CollectorService : AccessibilityService() {
             null
         } catch (e: Exception) {
             Log.e(TAG, "getTopInteractableRoot error: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Get the package name of the current foreground app (public, for FloatingButton).
+     */
+    fun getCurrentForegroundPackage(): String? {
+        return try {
+            val windowList = windows ?: return null
+            for (w in windowList) {
+                if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                val root = w.root ?: continue
+                val pkg = root.packageName?.toString() ?: continue
+                root.recycle()
+                if (pkg in EXCLUDED_PACKAGES) continue
+                return pkg
+            }
+            null
+        } catch (e: Exception) {
             null
         }
     }
