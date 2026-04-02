@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
@@ -26,6 +27,21 @@ class CollectorService : AccessibilityService() {
             "com.android.permissioncontroller",
             "com.monkey.collector"
         )
+
+        private val LAUNCHER_PACKAGES = setOf(
+            "com.google.android.apps.nexuslauncher",
+            "com.android.launcher3",
+            "com.android.launcher",
+            "com.sec.android.app.launcher",
+            "com.huawei.android.launcher",
+            "com.miui.home",
+            "com.oppo.launcher",
+            "com.vivo.launcher",
+        )
+
+        private fun isLauncher(pkg: String): Boolean {
+            return pkg in LAUNCHER_PACKAGES || pkg.contains("launcher", ignoreCase = true)
+        }
 
         var instance: CollectorService? = null
             private set
@@ -102,12 +118,20 @@ class CollectorService : AccessibilityService() {
 
             consecutiveBackCount++
 
-            if (consecutiveBackCount >= 3) {
+            if (consecutiveBackCount >= 3 || isLauncher(topPackage)) {
                 try {
-                    Runtime.getRuntime().exec(
-                        arrayOf("am", "start", "-n",
-                            "$targetPackage/${getMainActivity(targetPackage)}")
-                    )
+                    val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(launchIntent)
+                    } else {
+                        Runtime.getRuntime().exec(
+                            arrayOf("am", "start",
+                                "-a", "android.intent.action.MAIN",
+                                "-c", "android.intent.category.LAUNCHER",
+                                targetPackage)
+                        )
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Force launch failed: ${e.message}")
                 }
@@ -358,12 +382,4 @@ class CollectorService : AccessibilityService() {
         }
     }
 
-    private fun getMainActivity(packageName: String): String {
-        return try {
-            val intent = packageManager.getLaunchIntentForPackage(packageName)
-            intent?.component?.className ?: ""
-        } catch (e: Exception) {
-            ""
-        }
-    }
 }

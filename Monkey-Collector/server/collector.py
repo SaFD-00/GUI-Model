@@ -14,6 +14,7 @@ from server.server import CollectionServer
 from server.storage import DataWriter
 
 MAX_NO_CHANGE_RETRIES = 3
+MAX_EXTERNAL_APP_RETRIES = 10
 
 
 class Collector:
@@ -105,15 +106,17 @@ class Collector:
         logger.info(f"Target app: {package}, max_steps: {self.max_steps}")
 
         # 4. Collection loop
+        step = 0
         total_actions = 0
         timeout_count = 0
         max_timeouts = 5
         no_change_retries = 0
+        external_app_count = 0
         last_action: Optional[Action] = None
         last_ui_tree: Optional[UITree] = None
         is_first_screen = False
 
-        for step in range(self.max_steps):
+        while step < self.max_steps:
             try:
                 # Wait for latest signal (skips stale queued signals)
                 result = self.server.get_latest_signal(
@@ -135,6 +138,7 @@ class Collector:
                         self.adb.tap(w // 2, h // 2)
                     except Exception:
                         pass
+                    step += 1
                     continue
 
                 signal_type = result[0]
@@ -166,12 +170,17 @@ class Collector:
                                 f"no-change retries, pressing back"
                             )
                             self.adb.press_back()
+                            time.sleep(0.5)
+                            if self.explorer.has_left_app(package):
+                                logger.warning("press_back caused app exit, recovering")
+                                self.explorer.return_to_app(package)
                         self.server.clear_signal_queue()
                         no_change_retries = 0
                         self.explorer.clear_excluded()
                         last_action = None
                         last_ui_tree = None
                         time.sleep(self.action_delay)
+                        step += 1
                         continue
 
                     # Try a different element on the same screen
@@ -198,22 +207,41 @@ class Collector:
                             self._tap_random_fallback()
                         else:
                             self.adb.press_back()
+                            time.sleep(0.5)
+                            if self.explorer.has_left_app(package):
+                                logger.warning("press_back caused app exit, recovering")
+                                self.explorer.return_to_app(package)
                         no_change_retries = 0
                         self.explorer.clear_excluded()
                         last_action = None
                         time.sleep(self.action_delay)
+                    step += 1
                     continue
 
                 if signal_type == "external_app":
-                    logger.info(
-                        f"Step {step}: external app detected, "
-                        f"waiting for client-side recovery"
+                    external_app_count += 1
+                    logger.warning(
+                        f"Step {step}: external app detected "
+                        f"({external_app_count}/{MAX_EXTERNAL_APP_RETRIES})"
                     )
+                    if external_app_count >= MAX_EXTERNAL_APP_RETRIES:
+                        logger.error("Too many external app detections, ending session")
+                        break
+                    try:
+                        if external_app_count <= 3:
+                            self.explorer.return_to_app(package)
+                        else:
+                            self.explorer.recover(package)
+                    except Exception as e:
+                        logger.error(f"Recovery attempt failed: {e}")
+                    self.server.clear_signal_queue()
+                    time.sleep(self.action_delay)
                     continue
 
                 # signal_type == "xml" — screen changed
                 timeout_count = 0
                 no_change_retries = 0
+                external_app_count = 0
                 self.explorer.clear_excluded()
 
                 _, xml_str, meta = result
@@ -227,6 +255,7 @@ class Collector:
                         f"Step {step}: stale XML from {top_package} "
                         f"(expected {package}), skipping"
                     )
+                    step += 1
                     continue
 
                 # Save received data
@@ -248,8 +277,13 @@ class Collector:
                             f"Step {step}: no UI elements, pressing back"
                         )
                         self.adb.press_back()
+                        time.sleep(0.5)
+                        if self.explorer.has_left_app(package):
+                            logger.warning("press_back caused app exit, recovering")
+                            self.explorer.return_to_app(package)
                     last_ui_tree = None
                     last_action = None
+                    step += 1
                     continue
 
                 # Select action
@@ -277,6 +311,7 @@ class Collector:
 
                 # Wait before next action
                 time.sleep(self.action_delay)
+                step += 1
 
             except Exception as e:
                 logger.error(f"Step {step}: error - {e}")
@@ -284,6 +319,7 @@ class Collector:
                     self.explorer.recover(package)
                 except Exception:
                     pass
+                step += 1
 
         # Finalize
         self.writer.finalize_session()
