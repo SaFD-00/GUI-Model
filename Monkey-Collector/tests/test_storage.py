@@ -1,6 +1,7 @@
 """Tests for server.storage — DataWriter session data storage."""
 
 import json
+import os
 
 import pytest
 
@@ -112,3 +113,40 @@ class TestMultipleSteps:
         xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
         assert len(list(screenshots_dir.iterdir())) == 3
         assert len(list(xml_dir.iterdir())) == 3
+
+
+class TestFinalizeNoMetadata:
+    def test_no_crash(self, tmp_path):
+        """finalize_session when metadata.json doesn't exist -> no crash."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.session_dir = str(tmp_path / "nonexistent_session")
+        os.makedirs(w.session_dir, exist_ok=True)
+        # No metadata.json exists
+        w.finalize_session()  # should not raise
+
+
+class TestReinitSession:
+    def test_reinit_resets_state(self, tmp_path):
+        """Re-initializing session resets step_count."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("session_1", "com.test.app")
+        w.save_xml("<xml>a</xml>")
+        w.save_xml("<xml>b</xml>")
+        assert w.step_count == 2
+
+        w.init_session("session_2", "com.test.app")
+        assert w.step_count == 0
+        assert "session_2" in w.session_dir
+
+
+class TestIncrementMetadata:
+    def test_increment_twice(self, tmp_path):
+        """_increment_metadata twice -> value is 2."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("test_session", "com.test.app")
+        w._increment_metadata("external_app_events")
+        w._increment_metadata("external_app_events")
+
+        meta_path = tmp_path / "test_session" / "metadata.json"
+        meta = json.loads(meta_path.read_text())
+        assert meta["external_app_events"] == 2

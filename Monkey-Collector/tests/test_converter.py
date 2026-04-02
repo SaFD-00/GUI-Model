@@ -186,3 +186,20 @@ class TestConverterSession:
         converter = Converter(str(output_path), str(tmp_path / "images"))
         total = converter.convert_all(str(raw_dir))
         assert total >= 2  # at least 1 per session
+
+
+class TestFindEventByIndex:
+    def test_out_of_range(self):
+        """Index beyond events -> empty dict."""
+        result = Converter._find_event_by_index({0: {"step": 0}}, index=5)
+        assert result == {}
+
+
+class TestConvertAllEmpty:
+    def test_empty_dir(self, tmp_path):
+        """Empty directory (no valid sessions) -> 0."""
+        output = tmp_path / "output.jsonl"
+        images = tmp_path / "images"
+        converter = Converter(str(output), str(images))
+        result = converter.convert_all(str(tmp_path))
+        assert result == 0

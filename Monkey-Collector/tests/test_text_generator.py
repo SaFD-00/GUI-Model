@@ -91,6 +91,22 @@ class TestLLMTextGenerator:
         result = gen.generate(dummy_element, DUMMY_XML)
         assert result == "Hello World"
 
+    def test_none_output_text_fallback(self, dummy_element):
+        """output_text=None -> falls back to SAMPLE_TEXTS."""
+        gen = LLMTextGenerator(api_key="fake-key", rng=random.Random(42))
+        gen._client = self._make_mock_client(None)
+        gen._client.responses.create.return_value.output_text = None
+        result = gen.generate(dummy_element, DUMMY_XML)
+        assert result in SAMPLE_TEXTS
+
+    def test_empty_raw_xml(self, dummy_element):
+        """Empty raw_xml -> API still called, text returned."""
+        gen = LLMTextGenerator(api_key="fake-key")
+        gen._client = self._make_mock_client("Search query")
+        result = gen.generate(dummy_element, "")
+        assert result == "Search query"
+        gen._client.responses.create.assert_called_once()
+
 
 class TestCreateTextGenerator:
     def test_random_mode(self):
@@ -108,3 +124,13 @@ class TestCreateTextGenerator:
         with patch("dotenv.load_dotenv", return_value=None):
             gen = create_text_generator("api")
         assert isinstance(gen, RandomTextGenerator)
+
+    def test_api_mode_dotenv_unavailable(self, monkeypatch):
+        """When python-dotenv not installed, still creates generator from env."""
+        import sys
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key-456")
+        # Setting module to None in sys.modules causes ImportError on import
+        monkeypatch.setitem(sys.modules, "dotenv", None)
+        gen = create_text_generator("api")
+        assert isinstance(gen, LLMTextGenerator)

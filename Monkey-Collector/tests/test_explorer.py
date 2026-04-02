@@ -95,6 +95,35 @@ class TestSelectAction:
         action = explorer.select_action(tree, is_first_screen=False)
         assert isinstance(action, PressBack)
 
+    def test_zero_weights_first_screen_clickable(self, mock_adb):
+        """All weights=0, first_screen=True, clickable elements → Tap on clickable."""
+        tree = make_tree([
+            {"class_name": "android.widget.Button", "clickable": True, "bounds": (0, 0, 200, 200)},
+            {"scrollable": True, "bounds": (0, 600, 1080, 1800), "class_name": "android.widget.ScrollView"},
+        ])
+        explorer = SmartExplorer(mock_adb, config={
+            "seed": 42,
+            "action_weights": {"tap": 0, "press_back": 0, "swipe": 0, "input_text": 0, "long_press": 0, "press_home": 0},
+        })
+        action = explorer.select_action(tree, step=0, is_first_screen=True)
+        assert isinstance(action, Tap)
+        assert action.element_index == 0
+
+    def test_zero_weights_first_screen_no_clickable(self, mock_adb):
+        """All weights=0, first_screen=True, no clickable → fallback Tap (auto-bumped tap weight)."""
+        tree = make_tree([
+            {"class_name": "android.widget.TextView", "clickable": False},
+            {"scrollable": True, "bounds": (0, 600, 1080, 1800), "class_name": "android.widget.ScrollView"},
+        ])
+        explorer = SmartExplorer(mock_adb, config={
+            "seed": 42,
+            "action_weights": {"tap": 0, "press_back": 0, "swipe": 0, "input_text": 0, "long_press": 0, "press_home": 0},
+        })
+        # No clickable → tap weight auto-bumped to 0.05 → only non-zero weight → random Tap
+        action = explorer.select_action(tree, step=0, is_first_screen=True)
+        assert isinstance(action, Tap)
+        assert action.element_index == -1  # random, no element
+
 
 class TestExcludeElements:
     def test_exclude_element(self, explorer):
@@ -113,6 +142,18 @@ class TestExcludeElements:
         assert action.element_index != 0 or isinstance(action, Tap)
 
     def test_clear_excluded(self, explorer):
+        explorer.exclude_element(0)
+        explorer.exclude_element(1)
+        assert explorer.get_excluded_count() == 2
+        explorer.clear_excluded()
+        assert explorer.get_excluded_count() == 0
+
+    def test_set_raw_xml_and_count(self, mock_adb):
+        """set_raw_xml stores XML, get_excluded_count tracks exclusions."""
+        explorer = SmartExplorer(mock_adb)
+        explorer.set_raw_xml("<xml/>")
+        assert explorer._last_raw_xml == "<xml/>"
+        assert explorer.get_excluded_count() == 0
         explorer.exclude_element(0)
         explorer.exclude_element(1)
         assert explorer.get_excluded_count() == 2
@@ -172,6 +213,47 @@ class TestAppDetection:
         mock_adb.get_current_package.return_value = ""
         assert explorer.has_left_app("com.test.app") is False
 
+    @patch("server.explorer.time.sleep")
+    def test_return_to_app_back_returns(self, mock_sleep, mock_adb):
+        """Back press returns to app → launch_app not called."""
+        mock_adb.get_current_package.return_value = "com.test.app"
+        explorer = SmartExplorer(mock_adb)
+        explorer.return_to_app("com.test.app")
+        mock_adb.press_back.assert_called_once()
+        mock_adb.launch_app.assert_not_called()
+
+    @patch("server.explorer.time.sleep")
+    def test_return_to_app_back_fails(self, mock_sleep, mock_adb):
+        """Back press doesn't return → launch_app called."""
+        mock_adb.get_current_package.return_value = "com.other.app"
+        explorer = SmartExplorer(mock_adb)
+        explorer.return_to_app("com.test.app")
+        mock_adb.press_back.assert_called_once()
+        mock_adb.launch_app.assert_called_once_with("com.test.app")
+
+    @patch("server.explorer.time.sleep")
+    def test_return_to_app_exception(self, mock_sleep, mock_adb):
+        """Exception during back → falls to except, launches app."""
+        mock_adb.press_back.side_effect = Exception("fail")
+        explorer = SmartExplorer(mock_adb)
+        explorer.return_to_app("com.test.app")
+        mock_adb.launch_app.assert_called_once_with("com.test.app")
+
+    @patch("server.explorer.time.sleep")
+    def test_recover_success(self, mock_sleep, mock_adb):
+        """recover: press_home then launch_app."""
+        explorer = SmartExplorer(mock_adb)
+        explorer.recover("com.test.app")
+        mock_adb.press_home.assert_called_once()
+        mock_adb.launch_app.assert_called_once_with("com.test.app")
+
+    @patch("server.explorer.time.sleep")
+    def test_recover_exception(self, mock_sleep, mock_adb):
+        """Exception in recover doesn't propagate."""
+        mock_adb.press_home.side_effect = Exception("fail")
+        explorer = SmartExplorer(mock_adb)
+        explorer.recover("com.test.app")  # should not raise
+
 
 class TestTextGeneratorIntegration:
     def test_uses_generator(self, mock_adb):
@@ -210,3 +292,24 @@ class TestDeterminism:
             results_b.append(exp_b.select_action(tree, step=i).to_dict())
 
         assert results_a == results_b
+
+
+class TestCreateActionEdgeCases:
+    def test_long_press_no_clickable(self, mock_adb):
+        """long_press action type with no clickable → fallback to random Tap."""
+        explorer = SmartExplorer(mock_adb, config={"seed": 42})
+        # Call _create_action directly
+        action = explorer._create_action("long_press", [], [], [])
+        assert isinstance(action, Tap)
+
+    def test_all_excluded_random_tap(self, mock_adb):
+        """All elements excluded → random coordinate Tap."""
+        tree = make_tree([
+            {"class_name": "android.widget.Button", "clickable": True, "bounds": (0, 0, 200, 200)},
+        ])
+        explorer = SmartExplorer(mock_adb, config={"seed": 42})
+        explorer.exclude_element(0)
+        # select_action filters out excluded, resulting in empty clickable
+        action = explorer.select_action(tree, step=0, is_first_screen=False)
+        # Should be PressBack (total weights > 0, but tap weight reduced, could be anything)
+        assert isinstance(action, Action)

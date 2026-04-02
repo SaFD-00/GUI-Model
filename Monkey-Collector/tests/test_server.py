@@ -204,6 +204,93 @@ class TestProtocolViaSocketpair:
             client_sock.close()
             server_sock.close()
 
+    def test_package_message(self, srv):
+        """P message sets target package via _handle_package_name."""
+        client_sock, server_sock = socket.socketpair()
+        try:
+            package_line = b"com.test.app\n"
+            client_sock.sendall(package_line)
+
+            def handle():
+                srv._handle_package_name(server_sock)
+
+            t = threading.Thread(target=handle)
+            t.start()
+            t.join(timeout=5)
+
+            result = srv.wait_for_package(timeout=1.0)
+            assert result == "com.test.app"
+        finally:
+            client_sock.close()
+            server_sock.close()
+
+    def test_external_app_valid_json(self, srv):
+        """E message with valid JSON → signal queue + callback."""
+        client_sock, server_sock = socket.socketpair()
+        received = []
+        srv.on_external_app = lambda p: received.append(p)
+        try:
+            payload = json.dumps({"detected_package": "com.other"}) + "\n"
+            client_sock.sendall(payload.encode("utf-8"))
+
+            def handle():
+                srv._handle_external_app(server_sock)
+
+            t = threading.Thread(target=handle)
+            t.start()
+            t.join(timeout=5)
+
+            signal = srv._signal_queue.get(timeout=1.0)
+            assert signal[0] == "external_app"
+            assert signal[2]["detected_package"] == "com.other"
+            assert len(received) == 1
+        finally:
+            client_sock.close()
+            server_sock.close()
+
+    def test_external_app_invalid_json(self, srv):
+        """E message with non-JSON → payload wraps in {"raw": ...}."""
+        client_sock, server_sock = socket.socketpair()
+        try:
+            client_sock.sendall(b"not-valid-json\n")
+
+            def handle():
+                srv._handle_external_app(server_sock)
+
+            t = threading.Thread(target=handle)
+            t.start()
+            t.join(timeout=5)
+
+            signal = srv._signal_queue.get(timeout=1.0)
+            assert signal[0] == "external_app"
+            assert signal[2] == {"raw": "not-valid-json"}
+        finally:
+            client_sock.close()
+            server_sock.close()
+
+    def test_no_change_and_finish(self, srv):
+        """N and F messages produce correct signals via _handle_client."""
+        client_sock, server_sock = socket.socketpair()
+        try:
+            srv._running = True
+            # Send N then F
+            client_sock.sendall(b"NF")
+
+            def handle():
+                srv._handle_client(server_sock)
+
+            t = threading.Thread(target=handle)
+            t.start()
+            t.join(timeout=5)
+
+            sig1 = srv._signal_queue.get(timeout=1.0)
+            assert sig1[0] == "no_change"
+            sig2 = srv._signal_queue.get(timeout=1.0)
+            assert sig2[0] == "finish"
+        finally:
+            client_sock.close()
+            server_sock.close()
+
 
 class TestStartStopLifecycle:
     def test_start_and_stop(self):
@@ -219,3 +306,48 @@ class TestStartStopLifecycle:
         assert srv._thread is not None
         srv.stop()
         assert srv._running is False
+
+
+class TestWaitForXml:
+    def test_success(self, srv):
+        """wait_for_xml returns (xml_str, meta) when xml_event is set."""
+        def set_xml():
+            import time
+            time.sleep(0.1)
+            srv._latest_xml = "<hierarchy />"
+            srv._latest_xml_meta = {"top_package": "com.test"}
+            srv._xml_event.set()
+
+        t = threading.Thread(target=set_xml)
+        t.start()
+        result = srv.wait_for_xml(timeout=2.0)
+        t.join()
+        assert result is not None
+        assert result[0] == "<hierarchy />"
+        assert result[1]["top_package"] == "com.test"
+
+    def test_timeout(self, srv):
+        result = srv.wait_for_xml(timeout=0.1)
+        assert result is None
+
+
+class TestClientDisconnection:
+    def test_disconnect_puts_finish(self, srv):
+        """Client disconnect (empty recv) puts finish signal."""
+        client_sock, server_sock = socket.socketpair()
+        try:
+            srv._running = True
+            # Close client immediately → server recv returns b""
+            client_sock.close()
+
+            def handle():
+                srv._handle_client(server_sock)
+
+            t = threading.Thread(target=handle)
+            t.start()
+            t.join(timeout=5)
+
+            signal = srv._signal_queue.get(timeout=1.0)
+            assert signal[0] == "finish"
+        finally:
+            server_sock.close()

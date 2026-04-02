@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 
 class TestRunArgsParsing:
     def test_defaults(self):
@@ -85,3 +87,26 @@ class TestConvertAllArgsParsing:
             assert args.raw_dir == "/data/raw"
             assert args.output == "/data/output.jsonl"
             assert args.images_dir == "/data/images"
+
+
+class TestNoCommand:
+    def test_no_command_exits(self):
+        """No command -> SystemExit(1)."""
+        from server.cli import main
+
+        with patch("sys.argv", ["monkey-collect"]), pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+
+class TestRunArgsDefaults:
+    def test_default_output_device(self):
+        """Default output and device values."""
+        from server.cli import main
+
+        with patch("sys.argv", ["monkey-collect", "run"]), patch("server.cli.cmd_run") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.output == "data/raw"
+            assert args.device is None
+            assert args.delay == 1000
