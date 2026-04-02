@@ -69,7 +69,7 @@ def main() -> None:
 
     # run (App+Server mode)
     p = sub.add_parser("run", help="Collect GUI data (App+Server mode)")
-    p.add_argument("--app", required=True, help="Target app package name")
+    p.add_argument("--app", default=None, help="Target app package (optional: received from client if omitted)")
     p.add_argument("--steps", type=int, default=100, help="Max steps per session")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--delay", type=int, default=1000, help="Action delay in ms")

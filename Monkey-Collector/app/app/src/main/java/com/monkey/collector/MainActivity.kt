@@ -6,7 +6,6 @@ import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.provider.Settings
-import android.util.DisplayMetrics
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -20,23 +19,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etServerPort: EditText
     private lateinit var etTargetPackage: EditText
     private lateinit var tvStatus: TextView
-    private lateinit var btnStart: Button
-    private lateinit var btnStop: Button
+    private lateinit var btnSave: Button
     private lateinit var btnAccessibility: Button
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
-
-    // Pending collection params (saved before MediaProjection request)
-    private var pendingIp: String = ""
-    private var pendingPort: Int = 12345
-    private var pendingPkg: String = ""
 
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             MediaProjectionHelper.saveResult(result.resultCode, result.data)
-            launchCollection()
+            Toast.makeText(
+                this,
+                "Ready! Open the target app and tap the floating ▶ button to start.",
+                Toast.LENGTH_LONG
+            ).show()
+            finish()
         } else {
             Toast.makeText(this, "MediaProjection permission denied", Toast.LENGTH_LONG).show()
             tvStatus.text = "Status: Permission denied"
@@ -55,27 +53,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         tvStatus = TextView(this).apply {
-            text = "Status: Idle"
+            text = "Status: Configure settings and tap Save & Ready"
             textSize = 18f
         }
         layout.addView(tvStatus)
 
+        // Load saved settings
+        val prefs = getSharedPreferences("collector_settings", MODE_PRIVATE)
+
         etServerIp = EditText(this).apply {
             hint = "Server IP (e.g., 10.0.2.2)"
-            setText("10.0.2.2")
+            setText(prefs.getString("server_ip", "10.0.2.2"))
         }
         layout.addView(etServerIp)
 
         etServerPort = EditText(this).apply {
             hint = "Server Port"
-            setText("12345")
+            setText(prefs.getInt("server_port", 12345).toString())
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
         }
         layout.addView(etServerPort)
 
         etTargetPackage = EditText(this).apply {
             hint = "Target Package (e.g., com.android.calculator2)"
-            setText("com.android.calculator2")
+            setText(prefs.getString("target_package", "com.android.calculator2"))
         }
         layout.addView(etTargetPackage)
 
@@ -87,23 +88,16 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(btnAccessibility)
 
-        btnStart = Button(this).apply {
-            text = "Start Collection"
-            setOnClickListener { startCollection() }
+        btnSave = Button(this).apply {
+            text = "Save & Ready"
+            setOnClickListener { saveAndReady() }
         }
-        layout.addView(btnStart)
-
-        btnStop = Button(this).apply {
-            text = "Stop Collection"
-            isEnabled = false
-            setOnClickListener { stopCollection() }
-        }
-        layout.addView(btnStop)
+        layout.addView(btnSave)
 
         setContentView(layout)
     }
 
-    private fun startCollection() {
+    private fun saveAndReady() {
         val service = CollectorService.instance
         if (service == null) {
             Toast.makeText(this, "Enable Accessibility Service first", Toast.LENGTH_LONG).show()
@@ -119,43 +113,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Save params and request MediaProjection permission
-        pendingIp = ip
-        pendingPort = port
-        pendingPkg = pkg
+        // Save settings to SharedPreferences
+        getSharedPreferences("collector_settings", MODE_PRIVATE).edit()
+            .putString("server_ip", ip)
+            .putInt("server_port", port)
+            .putString("target_package", pkg)
+            .apply()
 
         tvStatus.text = "Status: Requesting permission..."
         mediaProjectionLauncher.launch(
             mediaProjectionManager.createScreenCaptureIntent()
         )
-    }
-
-    private fun launchCollection() {
-        val service = CollectorService.instance ?: return
-
-        // Get screen metrics
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getMetrics(metrics)
-
-        service.startCollection(
-            serverIp = pendingIp,
-            serverPort = pendingPort,
-            targetPkg = pendingPkg,
-            screenWidth = metrics.widthPixels,
-            screenHeight = metrics.heightPixels,
-            screenDensityDpi = metrics.densityDpi
-        )
-
-        tvStatus.text = "Status: Collecting ($pendingPkg)"
-        btnStart.isEnabled = false
-        btnStop.isEnabled = true
-    }
-
-    private fun stopCollection() {
-        CollectorService.instance?.stopCollection()
-        tvStatus.text = "Status: Stopped"
-        btnStart.isEnabled = true
-        btnStop.isEnabled = false
     }
 }

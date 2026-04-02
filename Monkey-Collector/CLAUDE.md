@@ -12,8 +12,11 @@ Monkey-Collector는 GUI world model 학습용 Android UI 데이터 수집 파이
 # Python 패키지 설치
 pip install -e .
 
-# 데이터 수집
-monkey-collect run --app <package> --steps 100 --port 12345
+# 서버 시작 (클라이언트에서 타겟 앱 선택)
+monkey-collect run --steps 100 --port 12345
+
+# 또는 서버에서 타겟 앱 지정
+monkey-collect run --app <package> --steps 100
 
 # 단일 세션 변환 (raw → JSONL)
 monkey-collect convert --session <dir> --output <path> --images-dir <dir>
@@ -23,6 +26,11 @@ monkey-collect convert-all --raw-dir <dir> --output <path> --images-dir <dir>
 ```
 
 Android 앱은 `app/` 디렉토리에서 Gradle로 빌드 (compileSdk 34, minSdk 28).
+
+### 수집 플로우
+1. 터미널: `monkey-collect run` (서버 대기)
+2. 에뮬레이터: MonkeyCollector 앱 → 설정(IP/Port/Package) → Save & Ready → 권한 허용
+3. 에뮬레이터: 타겟 앱 열기 → 플로팅 ▶ 버튼 클릭 → 수집 시작
 
 ## Architecture
 
@@ -38,7 +46,7 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 **수집 루프**: App이 A11y 이벤트 감지 → ScreenStabilizer로 전환 확정 → 스크린샷+XML을 서버로 전송 → SmartExplorer가 액션 선택 → ADB로 실행 → 저장 → 반복
 
-**TCP 프로토콜 (App→Server)**: `S`(스크린샷 JPEG), `X`(XML+패키지 정보), `E`(외부 앱 감지), `F`(종료). 바이너리 데이터는 크기 prefixed.
+**TCP 프로토콜 (App→Server)**: `P`(타겟 패키지명), `S`(스크린샷 JPEG), `X`(XML+패키지 정보), `E`(외부 앱 감지), `F`(종료). 바이너리 데이터는 크기 prefixed.
 
 ## Key Modules
 
@@ -58,10 +66,11 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 `app/app/src/main/java/com/monkey/collector/` 하위:
 
-- **CollectorService**: AccessibilityService. WINDOW_STATE/CONTENT_CHANGED 이벤트 디바운스(300ms) 후 ScreenStabilizer로 전환 확정
+- **CollectorService**: AccessibilityService. WINDOW_STATE/CONTENT_CHANGED 이벤트 디바운스(300ms) 후 ScreenStabilizer로 전환 확정. 플로팅 버튼 관리
+- **FloatingCollectorButton**: TYPE_ACCESSIBILITY_OVERLAY 플로팅 START/STOP 버튼. 타겟 앱 foreground 유지
 - **ScreenStabilizer**: 저해상도(100px) 프레임 비교로 안정화 감지 (2% 임계값, 3연속 안정 프레임)
-- **TcpClient**: S/X/E/F 프로토콜 구현, synchronized write, 3회 재시도
-- **MainActivity**: 서버 IP/포트/패키지 설정 UI, MediaProjection 권한 요청
+- **TcpClient**: P/S/X/E/F 프로토콜 구현, synchronized write, 3회 재시도
+- **MainActivity**: 설정(IP/Port/Package) 저장 + MediaProjection 권한 요청 전용
 
 ## Data Format
 

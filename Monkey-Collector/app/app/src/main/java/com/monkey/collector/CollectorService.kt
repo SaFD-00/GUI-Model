@@ -37,6 +37,7 @@ class CollectorService : AccessibilityService() {
     private var consecutiveBackCount: Int = 0
     private var isCollecting: Boolean = false
     private var screenStabilizer: ScreenStabilizer? = null
+    private var floatingButton: FloatingCollectorButton? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -51,6 +52,9 @@ class CollectorService : AccessibilityService() {
                     AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             notificationTimeout = DEBOUNCE_MS
         }
+
+        floatingButton = FloatingCollectorButton(this)
+        floatingButton?.addToWindow()
 
         Log.i(TAG, "Service connected")
     }
@@ -132,8 +136,10 @@ class CollectorService : AccessibilityService() {
                     }
                 }
 
-                // Step 3: Take high-res screenshot (existing logic)
+                // Step 3: Hide floating button, take screenshot, show again
+                floatingButton?.dismiss()
                 val bitmap = ScreenCapture.takeSync(this)
+                floatingButton?.show()
 
                 // Step 4: Dump XML (existing logic)
                 val xml = XmlDumper.dumpNodeTree(root)
@@ -171,6 +177,8 @@ class CollectorService : AccessibilityService() {
         super.onDestroy()
         instance = null
         stopCollection()
+        floatingButton?.remove()
+        floatingButton = null
     }
 
     fun startCollection(
@@ -202,16 +210,16 @@ class CollectorService : AccessibilityService() {
             Log.w(TAG, "MediaProjection not granted, running without visual stabilization")
         }
 
-        // Connect TCP client
+        // Connect TCP client and send target package
         tcpClient = TcpClient(serverIp, serverPort)
         Thread {
             val connected = tcpClient?.connect() ?: false
             if (connected) {
+                tcpClient?.sendPackageName(targetPackage)
                 isCollecting = true
                 Log.i(TAG, "Collection started: target=$targetPkg, server=$serverIp:$serverPort")
             } else {
                 Log.e(TAG, "TCP connection failed, collection NOT started")
-                // isCollecting remains false — no data will be captured
             }
         }.start()
     }
@@ -233,6 +241,9 @@ class CollectorService : AccessibilityService() {
 
         // Stop foreground
         stopForeground(STOP_FOREGROUND_REMOVE)
+
+        // Update floating button state
+        floatingButton?.onCollectionStopped()
 
         Log.i(TAG, "Collection stopped. Steps: $stepCount")
     }

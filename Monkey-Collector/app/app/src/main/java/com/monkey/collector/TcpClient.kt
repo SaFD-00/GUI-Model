@@ -140,6 +140,27 @@ class TcpClient(
         }
     }
 
+    fun sendPackageName(targetPackage: String): Boolean {
+        if (!connected) return false
+        return try {
+            synchronized(writeLock) {
+                val out = dos ?: return false
+                out.writeByte('P'.code)
+                out.write("$targetPackage\n".toByteArray(StandardCharsets.UTF_8))
+                out.flush()
+            }
+            Log.d(TAG, "PackageName sent: $targetPackage")
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "sendPackageName failed: ${e.message}")
+            connected = false
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "sendPackageName error: ${e.message}")
+            false
+        }
+    }
+
     fun sendFinish(): Boolean {
         if (!connected) return false
         return try {

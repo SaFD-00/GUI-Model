@@ -61,9 +61,20 @@ class AdbClient:
         return result.stdout.strip()
 
     def launch_app(self, package: str) -> str:
-        """Launch an app via adb shell monkey (simplest way to launch)."""
+        """Launch an app's main launcher activity via am start."""
+        resolve_output = self.shell(
+            f"cmd package resolve-activity --brief "
+            f"-a android.intent.action.MAIN "
+            f"-c android.intent.category.LAUNCHER {package}"
+        )
+        for line in reversed(resolve_output.strip().split("\n")):
+            line = line.strip()
+            if "/" in line:
+                return self.shell(f"am start -n {line}")
+        # Fallback: let Android resolve the intent (no random events)
         return self.shell(
-            f"monkey -p {package} -c android.intent.category.LAUNCHER 1"
+            f"am start -a android.intent.action.MAIN "
+            f"-c android.intent.category.LAUNCHER {package}"
         )
 
     def force_stop(self, package: str) -> str:

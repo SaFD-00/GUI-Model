@@ -46,6 +46,9 @@ class CollectionServer:
         self._xml_event = threading.Event()
         self._latest_xml: Optional[str] = None
         self._latest_xml_meta: Optional[dict] = None
+        # Package name from client
+        self._package_event = threading.Event()
+        self._target_package: Optional[str] = None
 
     def start(self):
         """Start the server in a background thread."""
@@ -134,7 +137,9 @@ class CollectionServer:
 
                 msg_type = msg_type.decode("ascii")
 
-                if msg_type == "S":
+                if msg_type == "P":
+                    self._handle_package_name(client)
+                elif msg_type == "S":
                     self._handle_screenshot(client)
                 elif msg_type == "X":
                     self._handle_xml(client)
@@ -184,6 +189,20 @@ class CollectionServer:
             data += chunk
             remaining -= len(chunk)
         return data
+
+    def wait_for_package(self, timeout: float = 120.0) -> Optional[str]:
+        """Block until the client sends target package name via P message."""
+        self._package_event.clear()
+        if self._package_event.wait(timeout):
+            return self._target_package
+        return None
+
+    def _handle_package_name(self, client: socket.socket):
+        """Receive target package name from client."""
+        package_name = self._recv_text_line(client)
+        self._target_package = package_name
+        self._package_event.set()
+        logger.info(f"Target package received: {package_name}")
 
     def _handle_screenshot(self, client: socket.socket):
         image_data = self._recv_binary(client)
