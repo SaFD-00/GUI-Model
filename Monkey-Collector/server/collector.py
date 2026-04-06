@@ -349,7 +349,9 @@ class Collector:
 
                     # Record activity coverage
                     if self._activity_tracker is not None:
-                        activity_name = self.adb.get_current_activity()
+                        activity_name = meta.get("activity_name", "")
+                        if not activity_name:
+                            activity_name = self.adb.get_current_activity()
                         entry = self._activity_tracker.record(activity_name, step)
                         logger.debug(
                             f"Activity coverage: {entry['coverage']:.2%} "

@@ -16,7 +16,7 @@ class CollectionServer:
 
     Protocol (App → Server):
       S + size_line + binary_data   = Screenshot
-      X + top_pkg + target_pkg + is_first_screen("0"/"1") + size_line + xml_data = XML hierarchy
+      X + top_pkg + activity_name + target_pkg + is_first_screen("0"/"1") + size_line + xml_data = XML hierarchy
       E + json_line                 = External app detection
       N                             = No visual change detected
       F                             = Session finish
@@ -285,6 +285,7 @@ class CollectionServer:
 
     def _handle_xml(self, client: socket.socket):
         top_package = self._recv_text_line(client)
+        activity_name = self._recv_text_line(client)
         target_package = self._recv_text_line(client)
         is_first_screen_str = self._recv_text_line(client)
         xml_data = self._recv_binary(client)
@@ -299,14 +300,15 @@ class CollectionServer:
         self._latest_xml = raw_xml
         self._latest_xml_meta = {
             "top_package": top_package,
+            "activity_name": activity_name,
             "target_package": target_package,
             "is_first_screen": is_first_screen,
         }
         self._xml_event.set()
         self._signal_queue.put(("xml", raw_xml, self._latest_xml_meta))
         logger.debug(
-            f"Received XML: top={top_package}, target={target_package}, "
-            f"size={len(raw_xml)} bytes"
+            f"Received XML: top={top_package}, activity={activity_name}, "
+            f"target={target_package}, size={len(raw_xml)} bytes"
         )
 
     def _handle_external_app(self, client: socket.socket):

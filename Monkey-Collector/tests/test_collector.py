@@ -10,9 +10,10 @@ from server.collector import Collector
 from tests.fixtures.xml_samples import MINIMAL_XML, SIMPLE_XML
 
 
-def _make_xml_signal(xml=SIMPLE_XML, pkg="com.test.app", is_first=False):
+def _make_xml_signal(xml=SIMPLE_XML, pkg="com.test.app", is_first=False, activity="com.test.app/.MainActivity"):
     return ("xml", xml, {
         "top_package": pkg,
+        "activity_name": activity,
         "target_package": pkg,
         "is_first_screen": is_first,
     })
@@ -340,7 +341,7 @@ class TestNoChangeNoUITree:
         """no-change with no UI tree (not first screen) → back."""
         # First signal is xml with empty tree (MINIMAL_XML), then no-change
         signals = [
-            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "target_package": "com.test.app", "is_first_screen": False}),
+            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "activity_name": "com.test.app/.MainActivity", "target_package": "com.test.app", "is_first_screen": False}),
             ("no_change", None, None),  # last_ui_tree=None (set to None after empty tree), hits line 277
             ("finish", None, None),
         ]
@@ -354,7 +355,7 @@ class TestNoChangeNoUITree:
     def test_no_tree_first_screen_tap(self, mock_sleep, mock_adb):
         """no-change with no UI tree + first screen → tap fallback."""
         signals = [
-            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "target_package": "com.test.app", "is_first_screen": True}),
+            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "activity_name": "com.test.app/.MainActivity", "target_package": "com.test.app", "is_first_screen": True}),
             ("no_change", None, None),
             ("finish", None, None),
         ]
@@ -404,6 +405,7 @@ class TestXmlEdgeCases:
         signals = [
             ("xml", SIMPLE_XML, {
                 "top_package": "com.other.app",  # doesn't match target
+                "activity_name": "com.other.app/.OtherActivity",
                 "target_package": "com.test.app",
                 "is_first_screen": False,
             }),
@@ -420,7 +422,7 @@ class TestXmlEdgeCases:
     def test_empty_tree_recovery(self, mock_sleep, mock_adb):
         """Empty UI tree + not first screen + has_left_app → recovery."""
         signals = [
-            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "target_package": "com.test.app", "is_first_screen": False}),
+            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "activity_name": "com.test.app/.MainActivity", "target_package": "com.test.app", "is_first_screen": False}),
             ("finish", None, None),
         ]
         collector, explorer, server, writer = _make_collector(mock_adb, signals)

@@ -10,7 +10,7 @@ Android App (AccessibilityService) + Python Server (TCP) 아키텍처로 UI 상�
 App (Kotlin, AccessibilityService)       TCP        Server (Python)
 ├── CollectorService                 ──P(package)────→  server.py
 │   ├── AccessibilityEvent 감지      ──S(screenshot)──→    ├── 데이터 수신
-│   ├── ScreenStabilizer             ──X(XML)─────────→    ├── storage.py (저장)
+│   ├── ScreenStabilizer             ──X(XML+Activity)─→    ├── storage.py (저장)
 │   │   └── BitmapComparator         ──E(external)────→    └── wait_for_xml()
 │   ├── XmlDumper (A11y tree)        ──N(no-change)───→          ↓
 │   ├── ScreenCapture (MediaProj.)   ──F(finish)──────→    collector.py
@@ -162,7 +162,7 @@ App 측:
   ② ScreenStabilizer: low-res 캡처 (100px) → BitmapComparator 비교
   ③ 3프레임 연속 안정 확인 → 의미 있는 전환인지 판정
   ③-1 전환 없음 시: N 신호 전송 → Server에서 다른 element로 재시도
-  ④ 전환 시: 고해상도 screenshot + XML dump → TCP 전송 (first screen 여부 플래그 포함)
+  ④ 전환 시: 고해상도 screenshot + XML dump → TCP 전송 (Activity명 + first screen 여부 플래그 포함)
 
 Server 측:
   ① server.get_latest_signal() → App에서 screenshot + XML 수신 (stale signal 드레인)
@@ -185,7 +185,7 @@ Server 측:
 |--------|--------|------|
 | `P` | `P` + `{package}\n` | 타겟 패키지명 |
 | `S` | `S` + `{size}\n` + `[JPEG bytes]` | Screenshot (JPEG 90%) |
-| `X` | `X` + `{top_pkg}\n` + `{target_pkg}\n` + `{is_first("0"/"1")}\n` + `{size}\n` + `[XML bytes]` | UI hierarchy + 메타데이터 |
+| `X` | `X` + `{top_pkg}\n` + `{activity_name}\n` + `{target_pkg}\n` + `{is_first("0"/"1")}\n` + `{size}\n` + `[XML bytes]` | UI hierarchy + 메타데이터 (Activity명 포함) |
 | `E` | `E` + `{json}\n` | External app 감지 |
 | `N` | `N` | 화면 변화 없음 |
 | `F` | `F` | 세션 종료 |

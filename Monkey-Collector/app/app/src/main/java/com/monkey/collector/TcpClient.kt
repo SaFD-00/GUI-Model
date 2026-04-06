@@ -91,7 +91,7 @@ class TcpClient(
         }
     }
 
-    fun sendXml(xml: String, topPackage: String, targetPackage: String, isFirstScreen: Boolean = false): Boolean {
+    fun sendXml(xml: String, topPackage: String, activityName: String, targetPackage: String, isFirstScreen: Boolean = false): Boolean {
         if (!connected) return false
         return try {
             val xmlBytes = xml.toByteArray(StandardCharsets.UTF_8)
@@ -100,13 +100,14 @@ class TcpClient(
                 val out = dos ?: return false
                 out.writeByte('X'.code)
                 out.write("$topPackage\n".toByteArray(StandardCharsets.UTF_8))
+                out.write("$activityName\n".toByteArray(StandardCharsets.UTF_8))
                 out.write("$targetPackage\n".toByteArray(StandardCharsets.UTF_8))
                 out.write("${if (isFirstScreen) "1" else "0"}\n".toByteArray(StandardCharsets.UTF_8))
                 out.write("${xmlBytes.size}\n".toByteArray(StandardCharsets.UTF_8))
                 out.write(xmlBytes)
                 out.flush()
             }
-            Log.d(TAG, "XML sent: ${xmlBytes.size} bytes (top=$topPackage)")
+            Log.d(TAG, "XML sent: ${xmlBytes.size} bytes (top=$topPackage, activity=$activityName)")
             true
         } catch (e: IOException) {
             Log.e(TAG, "sendXml failed: ${e.message}")

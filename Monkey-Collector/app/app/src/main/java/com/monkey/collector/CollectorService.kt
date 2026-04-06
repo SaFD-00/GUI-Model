@@ -49,6 +49,7 @@ class CollectorService : AccessibilityService() {
 
     private var tcpClient: TcpClient? = null
     private var targetPackage: String = ""
+    private var currentActivityName: String = ""
     private var stepCount: Int = 0
     private var lastEventTime: Long = 0
     private var consecutiveBackCount: Int = 0
@@ -78,7 +79,21 @@ class CollectorService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || !isCollecting) return
+        if (event == null) return
+
+        // Track Activity name from WINDOW_STATE_CHANGED (even before isCollecting check)
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val pkg = event.packageName?.toString()
+            val cls = event.className?.toString()
+            if (pkg != null && cls != null && pkg !in EXCLUDED_PACKAGES
+                && cls.contains(".") && !cls.startsWith("android.widget.")
+            ) {
+                currentActivityName = "$pkg/$cls"
+                Log.d(TAG, "Activity changed: $currentActivityName")
+            }
+        }
+
+        if (!isCollecting) return
 
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -193,7 +208,8 @@ class CollectorService : AccessibilityService() {
                     bitmap.recycle()
                 }
 
-                val xmlSent = tcpClient?.sendXml(xml, topPackage, targetPackage, isFirstScreen) ?: false
+                val activityAtCapture = currentActivityName
+                val xmlSent = tcpClient?.sendXml(xml, topPackage, activityAtCapture, targetPackage, isFirstScreen) ?: false
                 if (!xmlSent) {
                     Log.w(TAG, "Failed to send XML at step $stepCount")
                 }
@@ -233,6 +249,7 @@ class CollectorService : AccessibilityService() {
         screenDensityDpi: Int
     ) {
         targetPackage = targetPkg
+        currentActivityName = ""
         stepCount = 0
         consecutiveBackCount = 0
 

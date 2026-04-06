@@ -80,12 +80,15 @@ App: A11y 이벤트 감지 (debounce 300ms)
 
 AccessibilityService 핵심 서비스. Singleton pattern (`instance` property)으로 관리되며, `WINDOW_STATE_CHANGED`와 `WINDOW_CONTENT_CHANGED` 이벤트를 수신하고 300ms debounce로 중복 이벤트를 필터링한다.
 
+**Activity 추적**: `TYPE_WINDOW_STATE_CHANGED` 이벤트에서 `event.packageName + "/" + event.className`으로 현재 Activity 클래스명을 추적한다 (`currentActivityName` 필드). `EXCLUDED_PACKAGES` 및 `android.widget.*` 클래스는 필터링. X 메시지 전송 시 현재 Activity명을 포함하여 서버 측 Activity 커버리지 추적에 사용.
+
 이벤트 처리 사이클:
-1. 이벤트 수신 및 debounce 필터링
-2. TCP 연결 상태 확인
-3. `getTopInteractableRoot()`로 최상위 인터랙터블 윈도우의 root node 및 package name 획득
-4. 외부 앱 감지 시: `E` signal 전송 + `performGlobalAction(BACK)`. `consecutiveBackCount`로 연속 back 횟수 추적, 3회 연속 또는 런처 감지(`LAUNCHER_PACKAGES` set + `isLauncher()`) 시 `packageManager.getLaunchIntentForPackage()`로 타겟 앱 재실행 (실패 시 `am start -a MAIN -c LAUNCHER` fallback)
-5. Worker thread에서: ScreenStabilizer 안정화 대기 → 시각적 변화 검사 → 스크린샷/XML 캡처 → TCP 전송
+1. Activity 추적 (`TYPE_WINDOW_STATE_CHANGED`에서 className 캡처, isCollecting 여부와 무관)
+2. 이벤트 수신 및 debounce 필터링
+3. TCP 연결 상태 확인
+4. `getTopInteractableRoot()`로 최상위 인터랙터블 윈도우의 root node 및 package name 획득
+5. 외부 앱 감지 시: `E` signal 전송 + `performGlobalAction(BACK)`. `consecutiveBackCount`로 연속 back 횟수 추적, 3회 연속 또는 런처 감지(`LAUNCHER_PACKAGES` set + `isLauncher()`) 시 `packageManager.getLaunchIntentForPackage()`로 타겟 앱 재실행 (실패 시 `am start -a MAIN -c LAUNCHER` fallback)
+6. Worker thread에서: ScreenStabilizer 안정화 대기 → 시각적 변화 검사 → 스크린샷/XML 캡처 → TCP 전송 (Activity명 포함)
 
 `EXCLUDED_PACKAGES`로 `com.android.systemui`, `com.android.permissioncontroller`, `com.monkey.collector` 를 필터링한다.
 
@@ -141,6 +144,7 @@ API 30+ `AccessibilityService.takeScreenshot()` 래퍼. `HardwareBuffer`에서 `
 #### TcpClient (`TcpClient.kt`)
 
 P/S/X/E/N/F 프로토콜 구현체.
+- X 메시지: top_pkg, activity_name, target_pkg, is_first_screen, xml_data 전송
 - 스크린샷: JPEG 90% quality 압축 후 전송
 - Thread safety: `synchronized(writeLock)`으로 모든 write 연산 보호
 - 연결: 3회 재시도, 2초 간격
@@ -342,7 +346,7 @@ Raw 세션 → ShareGPT 형식 JSONL 변환.
 
 #### ActivityCoverageTracker (`activity_coverage.py`)
 
-세션별 Activity 방문 커버리지를 CSV로 추적한다. `adb shell dumpsys package`로 앱의 전체 선언 Activity를 조회하고, 매 step마다 `adb shell dumpsys activity activities`로 현재 Activity를 기록한다.
+세션별 Activity 방문 커버리지를 CSV로 추적한다. `adb shell dumpsys package`로 앱의 전체 선언 Activity를 조회하고, 매 step마다 Android 앱이 TCP X 메시지로 전송한 Activity명을 기록한다 (앱이 전송하지 않는 경우 `adb shell dumpsys activity activities`로 fallback).
 
 CSV 컬럼: `timestamp_sec`, `step`, `activity`, `unique_visited`, `total_activities`, `coverage`
 
@@ -408,7 +412,7 @@ while step < max_steps:
     if signal_type == "xml":        # 화면 전환 발생
         reset retry/timeout counters
         clear excluded_elements
-        record activity_coverage (get_current_activity → CSV)
+        record activity_coverage (meta.activity_name → CSV, ADB fallback)
         update text_generator step (for cost tracking)
         check app_escape (top_pkg != target_pkg → skip)
         save screenshot + xml
@@ -443,7 +447,7 @@ while step < max_steps:
 |--------|--------|-------------|
 | `P` | `P` + `{package}\n` | 타겟 패키지명 전송 (연결 직후 1회) |
 | `S` | `S` + `{size}\n` + `[JPEG bytes]` | Screenshot (JPEG 90% quality) |
-| `X` | `X` + `{top_pkg}\n` + `{target_pkg}\n` + `{is_first("0"/"1")}\n` + `{size}\n` + `[XML bytes]` | UI hierarchy XML + 메타데이터 |
+| `X` | `X` + `{top_pkg}\n` + `{activity_name}\n` + `{target_pkg}\n` + `{is_first("0"/"1")}\n` + `{size}\n` + `[XML bytes]` | UI hierarchy XML + 메타데이터 (Activity명 포함) |
 | `E` | `E` + `{json}\n` | 외부 앱 감지 알림 |
 | `N` | `N` | 화면 변화 없음 신호 |
 | `F` | `F` | 세션 종료 |

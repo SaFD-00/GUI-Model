@@ -154,13 +154,14 @@ class TestProtocolViaSocketpair:
 
             # Build X message data
             top_pkg = b"com.test.app\n"
+            activity_name = b"com.test.app/.MainActivity\n"
             target_pkg = b"com.test.app\n"
             is_first = b"0\n"
             xml_data = b"<hierarchy><node /></hierarchy>"
             size_line = f"{len(xml_data)}\n".encode()
 
             # Send from client side
-            client_sock.sendall(top_pkg + target_pkg + is_first + size_line + xml_data)
+            client_sock.sendall(top_pkg + activity_name + target_pkg + is_first + size_line + xml_data)
 
             t = threading.Thread(target=handle)
             t.start()
@@ -171,6 +172,7 @@ class TestProtocolViaSocketpair:
             assert result[0] == "xml"
             assert "<hierarchy>" in result[1]
             assert result[2]["top_package"] == "com.test.app"
+            assert result[2]["activity_name"] == "com.test.app/.MainActivity"
             assert result[2]["is_first_screen"] is False
         finally:
             client_sock.close()
