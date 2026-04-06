@@ -8,15 +8,21 @@ from loguru import logger
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Run data collection with App+Server architecture."""
+    from server.activity_coverage import ActivityCoverageTracker
     from server.adb import AdbClient
     from server.collector import Collector
+    from server.cost_tracker import CostTracker
     from server.explorer import SmartExplorer
     from server.server import CollectionServer
     from server.storage import DataWriter
     from server.text_generator import create_text_generator
 
     adb = AdbClient(device_serial=args.device)
-    text_gen = create_text_generator(mode=args.input_mode, seed=args.seed)
+    activity_tracker = ActivityCoverageTracker()
+    cost_tracker = CostTracker()
+    text_gen = create_text_generator(
+        mode=args.input_mode, seed=args.seed, cost_tracker=cost_tracker,
+    )
     explorer = SmartExplorer(
         adb,
         config={
@@ -34,6 +40,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         writer=writer,
         max_steps=args.steps,
         action_delay=args.delay / 1000.0,
+        activity_coverage_tracker=activity_tracker,
+        cost_tracker=cost_tracker,
+        text_generator=text_gen,
     )
 
     if args.single:

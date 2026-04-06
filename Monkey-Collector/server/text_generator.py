@@ -11,11 +11,15 @@ from __future__ import annotations
 import os
 import random
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from server.xml_encoder import encode_to_html_xml
 from server.xml_parser import UIElement
+
+if TYPE_CHECKING:
+    from server.cost_tracker import CostTracker
 
 # Default sample texts (same as explorer.SAMPLE_TEXTS)
 SAMPLE_TEXTS = [
@@ -88,12 +92,19 @@ class LLMTextGenerator(TextGenerator):
         model: str = "gpt-5-nano",
         fallback_texts: list[str] | None = None,
         rng: random.Random | None = None,
+        cost_tracker: CostTracker | None = None,
     ):
         self._api_key = api_key
         self._model = model
         self._fallback_texts = fallback_texts or SAMPLE_TEXTS
         self._rng = rng or random.Random()
         self._client = None  # lazy-init
+        self._cost_tracker = cost_tracker
+        self._current_step: int = 0
+
+    def set_step(self, step: int) -> None:
+        """Set the current exploration step for cost tracking."""
+        self._current_step = step
 
     def _get_client(self):
         if self._client is None:
@@ -122,6 +133,14 @@ class LLMTextGenerator(TextGenerator):
                 text={"verbosity": "low"},
             )
 
+            if self._cost_tracker and hasattr(response, "usage") and response.usage:
+                self._cost_tracker.record(
+                    model=self._model,
+                    input_tokens=getattr(response.usage, "input_tokens", 0) or 0,
+                    output_tokens=getattr(response.usage, "output_tokens", 0) or 0,
+                    step=self._current_step,
+                )
+
             text = (response.output_text or "").strip().strip('"').strip("'")
             if text:
                 logger.debug(f"LLM generated text: {text!r}")
@@ -139,6 +158,7 @@ def create_text_generator(
     mode: str,
     seed: int = 42,
     sample_texts: list[str] | None = None,
+    cost_tracker: CostTracker | None = None,
 ) -> TextGenerator:
     """Factory: create a TextGenerator based on *mode*.
 
@@ -173,4 +193,5 @@ def create_text_generator(
         model="gpt-5-nano",
         fallback_texts=sample_texts or SAMPLE_TEXTS,
         rng=rng,
+        cost_tracker=cost_tracker,
     )

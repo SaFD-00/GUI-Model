@@ -6,10 +6,13 @@ from datetime import datetime
 from loguru import logger
 
 from server.actions import Action
+from server.activity_coverage import ActivityCoverageTracker
 from server.adb import AdbClient
+from server.cost_tracker import CostTracker
 from server.explorer import SmartExplorer
 from server.server import CollectionServer
 from server.storage import DataWriter
+from server.text_generator import TextGenerator
 from server.xml_parser import UITree
 
 MAX_NO_CHANGE_RETRIES = 3
@@ -40,6 +43,9 @@ class Collector:
         max_steps: int = 100,
         action_delay: float = 1.0,
         xml_timeout: float = 15.0,
+        activity_coverage_tracker: ActivityCoverageTracker | None = None,
+        cost_tracker: CostTracker | None = None,
+        text_generator: TextGenerator | None = None,
     ):
         self.adb = adb
         self.explorer = explorer
@@ -49,6 +55,9 @@ class Collector:
         self.action_delay = action_delay
         self.xml_timeout = xml_timeout
         self._latest_screenshot: bytes | None = None
+        self._activity_tracker = activity_coverage_tracker
+        self._cost_tracker = cost_tracker
+        self._text_generator = text_generator
 
     def run(self, package: str | None = None) -> str:
         """Run a single collection session.
@@ -165,6 +174,13 @@ class Collector:
         session_id = f"{package}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
         self.server.on_external_app = lambda payload: self.writer.log_external_app(payload)
         self.writer.init_session(session_id, package)
+
+        # Initialize trackers (session_dir now available)
+        if self._activity_tracker is not None:
+            total_activities = self.adb.get_declared_activities(package)
+            self._activity_tracker.initialize(self.writer.session_dir, total_activities)
+        if self._cost_tracker is not None:
+            self._cost_tracker.initialize(self.writer.session_dir)
 
         logger.info(f"Starting session: {session_id}")
         logger.info(f"Target app: {package}, max_steps: {self.max_steps}")
@@ -330,6 +346,19 @@ class Collector:
                         )
                         step += 1
                         continue
+
+                    # Record activity coverage
+                    if self._activity_tracker is not None:
+                        activity_name = self.adb.get_current_activity()
+                        entry = self._activity_tracker.record(activity_name, step)
+                        logger.debug(
+                            f"Activity coverage: {entry['coverage']:.2%} "
+                            f"({entry['unique_visited']}/{entry['total_activities']})"
+                        )
+
+                    # Update step for cost tracking
+                    if self._text_generator and hasattr(self._text_generator, "set_step"):
+                        self._text_generator.set_step(step)
 
                     # Save received data
                     if self._latest_screenshot:

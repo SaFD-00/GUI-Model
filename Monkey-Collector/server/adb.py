@@ -141,6 +141,55 @@ class AdbClient:
             return activity
         return ""
 
+    def get_current_activity(self) -> str:
+        """Return the full activity component name of the foreground activity.
+
+        Returns a string like ``com.test.app/.MainActivity`` or empty string
+        on failure.
+        """
+        output = self.shell(
+            "dumpsys activity activities | grep mResumedActivity"
+        )
+        match = re.search(r'(\S+/\S+)', output)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def get_declared_activities(self, package: str) -> list[str]:
+        """Return all declared Activity component names for *package*.
+
+        Parses the Activity Resolver Table from ``dumpsys package``.
+        Returns sorted list of component strings.
+        """
+        try:
+            output = self.shell(f"dumpsys package {package}", timeout=15)
+        except Exception as e:
+            logger.warning(f"Failed to get declared activities: {e}")
+            return []
+
+        activities: set[str] = set()
+        in_activity_section = False
+        activity_pattern = re.compile(
+            rf'({re.escape(package)}/\S+)'
+        )
+
+        for line in output.splitlines():
+            stripped = line.strip()
+            if "Activity Resolver Table:" in stripped:
+                in_activity_section = True
+                continue
+            if in_activity_section and stripped.startswith(
+                ("Receiver Resolver", "Service Resolver",
+                 "Provider Resolver", "Permissions:")
+            ):
+                break
+            if in_activity_section:
+                match = activity_pattern.search(stripped)
+                if match:
+                    activities.add(match.group(1))
+
+        return sorted(activities)
+
     def wait_for_idle(self, timeout: float = 2.0) -> None:
         """Wait for the UI to settle after an action."""
         time.sleep(min(timeout, 1.0))

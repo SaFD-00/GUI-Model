@@ -52,8 +52,10 @@ Android App (Kotlin)  ←TCP→  Python Server
   FloatingCollectorButton    Collector (orchestration + no-change retry + external_app recovery)
   ScreenStabilizer           SmartExplorer (weighted selection + element exclusion)
   TcpClient (P/S/X/E/N/F)   TextGenerator (LLM/Random input text strategy)
-  MainActivity               AdbClient (action execution)
+  MainActivity               AdbClient (action execution + activity discovery)
                              DataWriter (session storage)
+                             ActivityCoverageTracker (activity coverage CSV)
+                             CostTracker (LLM cost CSV)
                              Converter (raw → ShareGPT JSONL)
 ```
 
@@ -72,8 +74,10 @@ Android App (Kotlin)  ←TCP→  Python Server
 | `server/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 |
 | `server/xml_encoder.py` | XML → HTML-style 변환 파이프라인 (reformat→simplify→remove bounds→encode) |
 | `server/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
-| `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색) |
+| `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색). `get_current_activity()`, `get_declared_activities()` — Activity 커버리지용 |
 | `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{session_id}/`) |
+| `server/activity_coverage.py` | 앱별 Activity 방문 커버리지 추적. 세션별 `activity_coverage.csv` 생성 |
+| `server/cost_tracker.py` | LLM API 토큰 사용량/비용 추적. 세션별 `cost.csv` 생성. `MODEL_PRICING` 딕셔너리 |
 | `server/actions.py` | Action 데이터클래스 (Tap, Swipe, InputText, LongPress, PressBack, PressHome) |
 
 ## Android App (Kotlin)
@@ -98,7 +102,9 @@ data/raw/{package}_{YYYY-MM-DD_HH-MM-SS}/
 ├── metadata.json
 ├── screenshots/0000.png, 0001.png, ...
 ├── xml/0000.xml, 0001.xml, ...
-└── events.jsonl
+├── events.jsonl
+├── activity_coverage.csv
+└── cost.csv
 ```
 
 **변환 출력**: ShareGPT 형식 JSONL. 연속 XML 쌍(before/after) + 액션으로 학습 예제 생성.

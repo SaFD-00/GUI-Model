@@ -64,6 +64,8 @@ Monkey-Collector/
 │   ├── storage.py           # DataWriter (세션 디렉토리 관리)
 │   ├── explorer.py          # SmartExplorer (가중 랜덤 action 선택)
 │   ├── text_generator.py    # InputText 생성 전략 (LLM / 랜덤)
+│   ├── activity_coverage.py # Activity 커버리지 추적 (CSV)
+│   ├── cost_tracker.py      # LLM API 비용 추적 (CSV)
 │   ├── actions.py           # Action dataclass (Tap, Swipe, Input, ...)
 │   ├── adb.py               # ADB 명령어 래핑 (action 실행)
 │   ├── xml_parser.py        # UIElement/UITree 파싱
@@ -209,7 +211,9 @@ data/raw/<session_id>/
 │   ├── 0000.xml
 │   ├── 0001.xml
 │   └── ...
-└── events.jsonl            # 전체 action 로그
+├── events.jsonl            # 전체 action 로그
+├── activity_coverage.csv   # Activity 커버리지 (step별 방문 Activity, 누적 커버리지)
+└── cost.csv                # LLM API 비용 (step별 토큰 사용량, 누적 비용 USD)
 ```
 
 ### gui-model_stage1.jsonl (World Modeling)

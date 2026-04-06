@@ -133,3 +133,37 @@ class TestAdbCommands:
     def test_clear_text_field(self, adb_client, mock_subprocess):
         adb_client.clear_text_field()
         assert mock_subprocess.call_count == 3  # MOVE_END + Ctrl+A + DEL
+
+    def test_get_current_activity(self, adb_client, mock_subprocess):
+        mock_subprocess.return_value.stdout = (
+            "    mResumedActivity: ActivityRecord{abc123 u0 com.test.app/.MainActivity t42}"
+        )
+        result = adb_client.get_current_activity()
+        assert result == "com.test.app/.MainActivity"
+
+    def test_get_current_activity_empty(self, adb_client, mock_subprocess):
+        mock_subprocess.return_value.stdout = ""
+        assert adb_client.get_current_activity() == ""
+
+    def test_get_declared_activities(self, adb_client, mock_subprocess):
+        mock_subprocess.return_value.stdout = (
+            "Activity Resolver Table:\n"
+            "  Non-Data Actions:\n"
+            "      android.intent.action.MAIN:\n"
+            "        abc1234 com.test.app/.MainActivity filter abc\n"
+            "        def5678 com.test.app/.SettingsActivity filter def\n"
+            "  Receiver Resolver Table:\n"
+            "      some.action:\n"
+        )
+        result = adb_client.get_declared_activities("com.test.app")
+        assert result == ["com.test.app/.MainActivity", "com.test.app/.SettingsActivity"]
+
+    def test_get_declared_activities_empty(self, adb_client, mock_subprocess):
+        mock_subprocess.return_value.stdout = ""
+        result = adb_client.get_declared_activities("com.test.app")
+        assert result == []
+
+    def test_get_declared_activities_exception(self, adb_client, mock_subprocess):
+        mock_subprocess.side_effect = Exception("timeout")
+        result = adb_client.get_declared_activities("com.test.app")
+        assert result == []

@@ -108,6 +108,50 @@ class TestLLMTextGenerator:
         gen._client.responses.create.assert_called_once()
 
 
+class TestLLMCostTracking:
+    def _make_mock_client(self, output_text="Generated text", input_tokens=100, output_tokens=20):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.output_text = output_text
+        mock_response.usage.input_tokens = input_tokens
+        mock_response.usage.output_tokens = output_tokens
+        mock_client.responses.create.return_value = mock_response
+        return mock_client
+
+    def test_cost_recorded_on_success(self, dummy_element):
+        mock_tracker = MagicMock()
+        mock_tracker.record.return_value = {}
+        gen = LLMTextGenerator(api_key="fake-key", cost_tracker=mock_tracker)
+        gen._client = self._make_mock_client("Hello")
+        gen.set_step(5)
+        gen.generate(dummy_element, DUMMY_XML)
+        mock_tracker.record.assert_called_once_with(
+            model="gpt-5-nano",
+            input_tokens=100,
+            output_tokens=20,
+            step=5,
+        )
+
+    def test_no_cost_on_api_failure(self, dummy_element):
+        mock_tracker = MagicMock()
+        gen = LLMTextGenerator(api_key="fake-key", cost_tracker=mock_tracker, rng=random.Random(42))
+        gen._client = MagicMock()
+        gen._client.responses.create.side_effect = Exception("API down")
+        gen.generate(dummy_element, DUMMY_XML)
+        mock_tracker.record.assert_not_called()
+
+    def test_no_tracker_no_error(self, dummy_element):
+        gen = LLMTextGenerator(api_key="fake-key")
+        gen._client = self._make_mock_client("Result")
+        result = gen.generate(dummy_element, DUMMY_XML)
+        assert result == "Result"
+
+    def test_set_step(self):
+        gen = LLMTextGenerator(api_key="fake-key")
+        gen.set_step(42)
+        assert gen._current_step == 42
+
+
 class TestCreateTextGenerator:
     def test_random_mode(self):
         gen = create_text_generator("random")

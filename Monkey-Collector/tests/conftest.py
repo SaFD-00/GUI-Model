@@ -94,4 +94,9 @@ def mock_adb():
     adb.long_press.return_value = ""
     adb.clear_text_field.return_value = ""
     adb.launch_app.return_value = ""
+    adb.get_current_activity.return_value = "com.test.app/.MainActivity"
+    adb.get_declared_activities.return_value = [
+        "com.test.app/.MainActivity",
+        "com.test.app/.SettingsActivity",
+    ]
     return adb
