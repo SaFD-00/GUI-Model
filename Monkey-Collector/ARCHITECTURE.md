@@ -48,11 +48,13 @@ Client-side 감지로 네트워크 트래픽과 서버 처리량을 최소화하
 │    ├─ XmlDumper                          │      │    │   └─ TextGenerator (LLM/Random)   │
 │    └─ TcpClient (P/S/X/E/N/F)           │      │    ├─ AdbClient (action execution)     │
 │                                          │      │    ├─ DataWriter (session storage)     │
+│                                          │      │    ├─ PageGraph (page map builder)     │
+│                                          │      │    ├─ GraphVisualizer (PyVis HTML)     │
 │                                          │      │    ├─ ActivityCoverageTracker (CSV)    │
 │                                          │      │    └─ CostTracker (CSV)               │
 │                                          │      │                                       │
 │  MediaProjectionHelper (singleton)       │      │  Converter (raw → JSONL)               │
-└──────────────────────────────────────────┘      │  xml_parser, xml_encoder               │
+└──────────────────────────────────────────┘      │  xml_parser, parser/ (StructuredXmlParser) │
                                                   └───────────────────────────────────────┘
 ```
 
@@ -282,7 +284,7 @@ ADB 명령어 래퍼. `PATH`, `ANDROID_HOME`, `~/Library/Android/sdk` 순서로 
 
 #### DataWriter (`storage.py`)
 
-세션별 디렉토리 구조 관리. incremental step counter로 파일 네이밍.
+세션별 디렉토리 구조 관리. incremental step counter로 파일 네이밍. `save_xml()`은 raw XML과 함께 4종의 파싱된 XML 변형을 자동 생성한다.
 
 구조:
 ```
@@ -290,6 +292,11 @@ data/raw/{package}_{YYYY-MM-DD_HH-MM-SS}/
 ├── metadata.json
 ├── screenshots/
 ├── xml/
+│   ├── 0000.xml                # raw uiautomator dump
+│   ├── 0000_parsed.xml         # semantic HTML tags + bounds + index
+│   ├── 0000_hierarchy.xml      # 구조만 (text/bounds/index 제거)
+│   ├── 0000_encoded.xml        # bounds 제거, index만 (LLM 입력용)
+│   └── 0000_pretty.xml         # encoded의 pretty-print
 ├── events.jsonl
 ├── activity_coverage.csv
 └── cost.csv
@@ -313,21 +320,20 @@ uiautomator XML을 flat list로 파싱. `UIElement`는 17개 attribute를 가진
 
 Factory: `UITree.from_xml_string(xml_str)` — XML 문자열에서 직접 UITree 생성
 
-#### xml_encoder (`xml_encoder.py`)
+#### StructuredXmlParser (`server/parser/`)
 
-raw XML → LLM 친화적 HTML-style XML 변환 파이프라인.
+raw XML → LLM 친화적 HTML-style XML 변환 파이프라인. 3파일 구성: `base.py` (추상 Parser), `structured_parser.py` (구현체), `__init__.py`.
 
-**파싱 파이프라인** (`parse_to_html_xml()`):
-1. **reformat_xml**: 의미론적 태그 변환 (EditText → `input`, checkable → `checker`, clickable → `button`, Layout → `div`, ImageView → `img`, TextView → `p`, scrollable → `scroll`). 빈 leaf node 가지치기
-2. **simplify_structure**: wrapper 축소 (단일 자식 컨테이너 제거, button/checker 보존)
-3. **remove_nodes_with_empty_bounds**: `[0,0][0,0]` bounds 노드 제거
+**5단계 파이프라인** (`parse()`):
+1. **_reformat**: 시맨틱 태그 변환. Android 클래스 → 중간 태그(Button, TextField, Image, Scroll, Checker). `resource-id` → `id` (패키지 prefix 제거). `content-desc` → `description`. 빈 leaf node 가지치기
+2. **_simplify**: 반복적 구조 축소. meaningless leaf 제거 + 단일 자식 wrapper 축소 (수렴까지 반복). Button/Checker 보존
+3. **_clean**: HTML 태그 정규화 (Button→button, TextField→p, Image→img, Scroll→div[data-scroll], Checker→input[type=checkbox]). `[0,0][0,0]` bounds 제거. attribute whitelist 적용 (tag별 허용 속성). scroll 컨테이너 내 중복 자식 제거 (bounds/index 제외한 구조 비교)
+4. **_renumber**: 순차 인덱스 재할당 (pre-order traversal)
+5. **pretty_xml**: XML 들여쓰기
 
-**인코딩 파이프라인** (`encode_to_html_xml()`):
-4. `parse_to_html_xml()` 실행 (1~3단계)
-5. **encode**: bounds, important, class 속성 제거 (LLM 소비용)
-6. **remove_redundancies**: scroll 컨테이너 내 중복 자식 제거
+**bounds 관리**: `_clear_bounds()` — bounds를 `bounds_cache`에 저장 후 XML에서 제거. `get_bounds(index)` / `find_element_by_index()` / `find_element_by_bounds()`로 조회.
 
-**정렬**: `indent_xml()` — XML pretty-print
+**편의 함수**: `parse_to_html_xml()` (bounds 포함), `encode_to_html_xml()` (bounds 제거), `hierarchy_parse()` (구조만), `indent_xml()` (정렬)
 
 #### Converter (`converter.py`)
 
@@ -481,8 +487,12 @@ data/raw/{package}_{YYYY-MM-DD_HH-MM-SS}/
 ├── screenshots/            # 전환 감지된 step의 스크린샷
 │   ├── 0000.png
 │   └── ...
-├── xml/                    # 전환 감지된 step의 UI hierarchy XML
-│   ├── 0000.xml
+├── xml/                    # 전환 감지된 step의 UI hierarchy XML (5종)
+│   ├── 0000.xml            # raw uiautomator dump
+│   ├── 0000_parsed.xml     # semantic HTML tags + bounds + index
+│   ├── 0000_hierarchy.xml  # 구조만 (text/bounds/index 제거)
+│   ├── 0000_encoded.xml    # bounds 제거, index만 (LLM 입력용)
+│   ├── 0000_pretty.xml     # encoded의 pretty-print
 │   └── ...
 ├── events.jsonl            # 전체 action 로그 (step별 JSON line)
 ├── activity_coverage.csv   # Activity 커버리지 추적 (step별 방문 Activity 기록)
@@ -503,11 +513,10 @@ data/raw/{package}_{YYYY-MM-DD_HH-MM-SS}/
 
 **Event 필터링**: events.jsonl에서 `transition: false` 이벤트 (no-change retry)는 건너뛴다. encoded XML이 before/after 동일한 경우도 제외된다.
 
-**XML encoding pipeline**:
+**XML encoding pipeline** (`server/parser/structured_parser.py`):
 ```
-raw XML → reformat_xml() → simplify_structure() → remove_nodes_with_empty_bounds()
-       → encode_to_html_xml() (bounds/important/class 제거) → remove_redundancies()
-       → indent_xml()
+raw XML → _reformat() → _simplify() → _clean() → _renumber() → pretty_xml()
+       → _clear_bounds() (bounds 제거) → indent_xml()
 ```
 
 **Action mapping**: Collector의 action type을 GUI-Model format으로 변환
@@ -567,3 +576,9 @@ raw XML → reformat_xml() → simplify_structure() → remove_nodes_with_empty_
 - **Why**: 스크린샷, XML 등 대용량 페이로드의 효율적 전송
 - **How**: Single-byte header + text metadata lines + size-prefixed binary
 - **Benefit**: 직렬화 오버헤드 없음, 구현이 단순하며, 스트리밍 지원 가능
+
+### Page Map (UI State Graph)
+
+- **Why**: 수집된 데이터에서 앱의 페이지 구조와 전환 관계를 자동으로 파악하기 위함. MobileGPT-V2의 subtask_graph에 대응
+- **How**: 2단계 페이지 식별 — Activity name (primary) + XML 구조 fingerprint (secondary). fingerprint는 parser 전처리(_reformat+_simplify) 후 `(tag, id, depth)` 튜플 집합의 MD5 해시. 시맨틱 태그(Button, TextField, Scroll 등) 사용으로 커스텀 클래스명 변경에 강건, wrapper 축소로 depth 변화에 안정적. scrollable 자식은 3개로 제한. 같은 Activity 내에서 Jaccard 유사도 ≥ 0.85이면 같은 페이지. 전환 그래프는 `(from_page, to_page, action_type)` dedup key로 중복 필터링, self-loop 제외. 실시간(수집 중) + 사후(저장된 세션에서) 모두 빌드 가능. PyVis로 인터랙티브 HTML 시각화 (Activity별 노드 색상, 전환 빈도별 엣지 너비)
+- **Benefit**: 앱 탐색 커버리지 시각적 확인, 전환 패턴 분석, world model 학습 데이터 품질 검증

@@ -58,7 +58,7 @@ Monkey-Collector/
 │           └── xml/accessibility_config.xml
 │
 ├── server/                                # Python Server
-│   ├── cli.py              # CLI 진입점 (run, convert, convert-all)
+│   ├── cli.py              # CLI 진입점 (run, convert, convert-all, page-map)
 │   ├── server.py            # TCP 서버 (P/S/X/E/N/F 프로토콜)
 │   ├── collector.py         # 메인 수집 루프 (Server 기반)
 │   ├── storage.py           # DataWriter (세션 디렉토리 관리)
@@ -68,9 +68,14 @@ Monkey-Collector/
 │   ├── cost_tracker.py      # LLM API 비용 추적 (CSV)
 │   ├── actions.py           # Action dataclass (Tap, Swipe, Input, ...)
 │   ├── adb.py               # ADB 명령어 래핑 (action 실행)
-│   ├── xml_parser.py        # UIElement/UITree 파싱
-│   ├── xml_encoder.py       # Raw XML → HTML-style XML 변환
-│   └── converter.py         # Raw 데이터 → gui-model_stage1.jsonl 변환
+│   ├── xml_parser.py        # UIElement/UITree 파싱 (SmartExplorer용)
+│   ├── parser/              # 구조적 XML 파서 (5단계 파이프라인)
+│   │   ├── __init__.py
+│   │   ├── base.py          # 추상 Parser 베이스 클래스
+│   │   └── structured_parser.py  # StructuredXmlParser (HTML-like 변환)
+│   ├── converter.py         # Raw 데이터 → gui-model_stage1.jsonl 변환
+│   ├── page_graph.py        # 페이지 맵 빌드 (parser 전처리 + fingerprint)
+│   └── graph_visualizer.py  # 페이지 맵 PyVis HTML 시각화
 │
 ├── data/
 │   └── raw/                               # 수집된 세션 데이터
@@ -154,6 +159,25 @@ monkey-collect convert-all \
   --images-dir ./data/images/
 ```
 
+### 3. 페이지 맵 빌드
+
+수집 시 자동 생성되며, 기존 세션에서 사후 재구축도 가능:
+
+```bash
+# 단일 세션 페이지 맵 빌드 + 시각화
+monkey-collect page-map --session data/raw/<session_id>
+
+# 유사도 임계값 조정 (기본 0.85, 1.0이면 정확 일치만)
+monkey-collect page-map --session data/raw/<session_id> --threshold 0.9
+
+# 전체 세션 일괄 빌드
+monkey-collect page-map-all --raw-dir data/raw
+```
+
+**페이지 식별**: Activity name + XML 구조 fingerprint (class, resource-id, depth 기반 해시). 같은 Activity에서 Jaccard 유사도 ≥ threshold이면 같은 페이지로 판정.
+
+**중복 필터링**: 같은 (출발 페이지, 도착 페이지, action_type) 전환은 1개만 유지, count로 빈도 추적.
+
 ## 데이터 수집 흐름
 
 ```
@@ -207,13 +231,18 @@ data/raw/<session_id>/
 │   ├── 0000.png
 │   ├── 0001.png
 │   └── ...
-├── xml/                    # 전환 감지된 step의 UI hierarchy XML
-│   ├── 0000.xml
-│   ├── 0001.xml
+├── xml/                    # 전환 감지된 step의 UI hierarchy XML (5종)
+│   ├── 0000.xml            # raw uiautomator dump
+│   ├── 0000_parsed.xml     # semantic HTML tags + bounds + index
+│   ├── 0000_hierarchy.xml  # 구조만 (text/bounds/index 제거)
+│   ├── 0000_encoded.xml    # bounds 제거, index만 (LLM 입력용)
+│   ├── 0000_pretty.xml     # encoded의 pretty-print
 │   └── ...
 ├── events.jsonl            # 전체 action 로그
 ├── activity_coverage.csv   # Activity 커버리지 (step별 방문 Activity, 누적 커버리지)
-└── cost.csv                # LLM API 비용 (step별 토큰 사용량, 누적 비용 USD)
+├── cost.csv                # LLM API 비용 (step별 토큰 사용량, 누적 비용 USD)
+├── page_graph.json         # 페이지 전환 그래프 (nodes + edges, 중복 필터링됨)
+└── page_graph.html         # 인터랙티브 시각화 (PyVis, 브라우저에서 열기)
 ```
 
 ### gui-model_stage1.jsonl (World Modeling)
@@ -258,5 +287,6 @@ data/raw/<session_id>/
 - Pillow >= 10.0
 - openai >= 1.0
 - python-dotenv >= 1.0
+- pyvis >= 0.3
 - Android SDK (ADB)
 - Android 디바이스/에뮬레이터 (API 28+, minSdk 28)

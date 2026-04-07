@@ -1,0 +1,250 @@
+"""Tests for page_graph module: fingerprinting, PageGraph, and post-hoc build."""
+
+import json
+
+import pytest
+
+from server.page_graph import (
+    PageGraph,
+    _extract_structural_tuples,
+    build_graph_from_session,
+    compute_xml_fingerprint,
+)
+from tests.fixtures.session_fixtures import create_mock_session
+from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML
+
+
+# ── Fingerprinting ──
+
+
+class TestComputeXmlFingerprint:
+    def test_same_xml_same_fingerprint(self):
+        fp1 = compute_xml_fingerprint(SIMPLE_XML)
+        fp2 = compute_xml_fingerprint(SIMPLE_XML)
+        assert fp1 == fp2
+
+    def test_different_structure_different_fingerprint(self):
+        fp1 = compute_xml_fingerprint(SIMPLE_XML)
+        fp2 = compute_xml_fingerprint(COMPLEX_XML)
+        assert fp1 != fp2
+
+    def test_ignores_text_changes(self):
+        xml_a = SIMPLE_XML
+        xml_b = SIMPLE_XML.replace('text="Item title"', 'text="Different title"')
+        assert compute_xml_fingerprint(xml_a) == compute_xml_fingerprint(xml_b)
+
+    def test_ignores_bounds_changes(self):
+        xml_a = SIMPLE_XML
+        xml_b = SIMPLE_XML.replace(
+            'bounds="[900,24][1056,144]"', 'bounds="[800,20][1000,140]"'
+        )
+        assert compute_xml_fingerprint(xml_a) == compute_xml_fingerprint(xml_b)
+
+    def test_ignores_checked_state(self):
+        xml_a = COMPLEX_XML
+        xml_b = COMPLEX_XML.replace('checked="false"', 'checked="true"')
+        assert compute_xml_fingerprint(xml_a) == compute_xml_fingerprint(xml_b)
+
+    def test_empty_xml(self):
+        fp = compute_xml_fingerprint('<?xml version="1.0"?><hierarchy/>')
+        assert isinstance(fp, str)
+        assert len(fp) == 32  # MD5 hex
+
+    def test_malformed_xml(self):
+        fp = compute_xml_fingerprint("not xml at all")
+        assert isinstance(fp, str)
+        assert len(fp) == 32
+
+
+class TestExtractStructuralTuples:
+    def test_returns_frozenset(self):
+        result = _extract_structural_tuples(SIMPLE_XML)
+        assert isinstance(result, frozenset)
+
+    def test_simple_xml_has_tuples(self):
+        result = _extract_structural_tuples(SIMPLE_XML)
+        assert len(result) > 0
+
+    def test_malformed_returns_empty(self):
+        result = _extract_structural_tuples("<<<bad>>>")
+        assert result == frozenset()
+
+    def test_scrollable_children_limited(self):
+        """Scrollable container with many children should only keep first 3."""
+        children = "\n".join(
+            f'<node index="{i}" text="item {i}" resource-id="item_{i}" '
+            f'class="android.widget.TextView" content-desc="" '
+            f'checkable="false" checked="false" clickable="false" '
+            f'enabled="true" focusable="false" focused="false" scrollable="false" '
+            f'long-clickable="false" password="false" selected="false" '
+            f'bounds="[0,{i*100}][100,{i*100+80}]" package="com.test" '
+            f'visible-to-user="true" important="false" />'
+            for i in range(10)
+        )
+        xml = (
+            '<?xml version="1.0"?>'
+            '<hierarchy rotation="0">'
+            '<node index="0" text="" resource-id="" '
+            'class="android.widget.ScrollView" content-desc="" '
+            'checkable="false" checked="false" clickable="false" '
+            'enabled="true" focusable="false" focused="false" scrollable="true" '
+            'long-clickable="false" password="false" selected="false" '
+            'bounds="[0,0][100,1000]" package="com.test" '
+            'visible-to-user="true" important="false">'
+            f'{children}'
+            '</node>'
+            '</hierarchy>'
+        )
+        tuples = _extract_structural_tuples(xml)
+        # After preprocessing: hierarchy collapses, Scroll tag kept.
+        # TextViews become TextField after _reformat. Only first 3 kept.
+        text_tuples = [t for t in tuples if t[0] == "TextField"]
+        assert len(text_tuples) == 3
+
+
+# ── PageGraph ──
+
+
+class TestPageGraph:
+    def test_create_new_page(self):
+        g = PageGraph()
+        pid = g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        assert pid == 0
+        assert len(g.nodes) == 1
+        assert g.nodes[0].activity == "com.test/.Main"
+
+    def test_get_existing_page(self):
+        g = PageGraph()
+        pid1 = g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        pid2 = g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=1)
+        assert pid1 == pid2
+        assert len(g.nodes) == 1
+        assert g.nodes[0].visit_count == 2
+
+    def test_different_activity_different_page(self):
+        g = PageGraph()
+        pid1 = g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        pid2 = g.get_or_create_page("com.test/.Settings", SIMPLE_XML, step=1)
+        assert pid1 != pid2
+        assert len(g.nodes) == 2
+
+    def test_same_activity_different_xml_different_page(self):
+        g = PageGraph(threshold=1.0)  # strict: no fuzzy match
+        pid1 = g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        pid2 = g.get_or_create_page("com.test/.Main", COMPLEX_XML, step=1)
+        assert pid1 != pid2
+        assert len(g.nodes) == 2
+
+    def test_fuzzy_matching(self):
+        """Minor XML changes within same activity should match with default threshold."""
+        g = PageGraph(threshold=0.7)
+        pid1 = g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        # Change only text content — structural tuples remain mostly the same
+        xml_b = SIMPLE_XML.replace('text="Item title"', 'text="Other"')
+        pid2 = g.get_or_create_page("com.test/.Main", xml_b, step=1)
+        assert pid1 == pid2
+
+
+class TestTransitionDedup:
+    def test_add_new_transition(self):
+        g = PageGraph()
+        added = g.add_transition(0, 1, "tap", "button", step=0)
+        assert added is True
+        assert len(g.edges) == 1
+
+    def test_duplicate_transition_increments_count(self):
+        g = PageGraph()
+        g.add_transition(0, 1, "tap", "button", step=0)
+        added = g.add_transition(0, 1, "tap", "other_button", step=1)
+        assert added is False
+        assert len(g.edges) == 1
+        assert g.edges[0].count == 2
+
+    def test_same_pages_different_action_both_kept(self):
+        g = PageGraph()
+        g.add_transition(0, 1, "tap", "button", step=0)
+        added = g.add_transition(0, 1, "swipe", "scroll", step=1)
+        assert added is True
+        assert len(g.edges) == 2
+
+    def test_self_transition_skipped(self):
+        g = PageGraph()
+        added = g.add_transition(0, 0, "tap", "button", step=0)
+        assert added is False
+        assert len(g.edges) == 0
+
+
+class TestGraphSerialization:
+    def test_to_dict_roundtrip(self, tmp_path):
+        g = PageGraph(threshold=0.9)
+        g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        g.get_or_create_page("com.test/.Settings", COMPLEX_XML, step=1)
+        g.add_transition(0, 1, "tap", "settings_btn", step=1)
+
+        path = str(tmp_path / "graph.json")
+        g.save(path)
+
+        loaded = PageGraph.load(path)
+        assert len(loaded.nodes) == 2
+        assert len(loaded.edges) == 1
+        assert loaded.nodes[0].activity == "com.test/.Main"
+        assert loaded.edges[0].action_type == "tap"
+        assert loaded.threshold == 0.9
+
+    def test_to_dict_structure(self):
+        g = PageGraph()
+        g.get_or_create_page("com.test/.Main", SIMPLE_XML, step=0)
+        d = g.to_dict()
+        assert "nodes" in d
+        assert "edges" in d
+        assert "metadata" in d
+        assert d["metadata"]["total_pages"] == 1
+
+
+# ── Post-hoc build ──
+
+
+class TestBuildGraphFromSession:
+    def test_builds_from_mock_session(self, tmp_path):
+        session_dir = create_mock_session(tmp_path, num_steps=3)
+        # Add activity_coverage.csv
+        csv_content = (
+            "timestamp_sec,step,activity,unique_visited,total_activities,coverage\n"
+            "0.5,0,com.test.app/.MainActivity,1,2,0.5\n"
+            "1.0,1,com.test.app/.SettingsActivity,2,2,1.0\n"
+            "1.5,2,com.test.app/.MainActivity,2,2,1.0\n"
+        )
+        (session_dir / "activity_coverage.csv").write_text(csv_content)
+
+        graph = build_graph_from_session(str(session_dir))
+        assert len(graph.nodes) >= 2  # at least 2 different pages
+        assert len(graph.edges) >= 1  # at least 1 transition
+
+    def test_handles_missing_activity_csv(self, tmp_path):
+        session_dir = create_mock_session(tmp_path, num_steps=2)
+        # No activity_coverage.csv — should still work with empty activity
+        graph = build_graph_from_session(str(session_dir))
+        assert len(graph.nodes) >= 1
+
+    def test_handles_empty_session(self, tmp_path):
+        session_dir = tmp_path / "empty_session"
+        session_dir.mkdir()
+        (session_dir / "xml").mkdir()
+        graph = build_graph_from_session(str(session_dir))
+        assert len(graph.nodes) == 0
+        assert len(graph.edges) == 0
+
+    def test_no_change_retries_skipped(self, tmp_path):
+        session_dir = create_mock_session(tmp_path, num_steps=2)
+        # Overwrite events.jsonl with a no_change_retry event
+        events = [
+            {"action_type": "tap", "element_index": 0, "step": 0},
+            {"action_type": "tap", "element_index": 1, "step": 0, "no_change_retry": True},
+            {"action_type": "tap", "element_index": 2, "step": 1},
+        ]
+        (session_dir / "events.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n"
+        )
+        graph = build_graph_from_session(str(session_dir))
+        # no_change_retry events should be excluded from event mapping
+        assert len(graph.nodes) >= 1

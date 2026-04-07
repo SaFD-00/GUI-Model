@@ -12,6 +12,7 @@ dependencies = [
     "Pillow>=10.0",
     "openai>=1.0",
     "python-dotenv>=1.0",
+    "pyvis>=0.3",
 ]
 
 [tool.setuptools.packages.find]

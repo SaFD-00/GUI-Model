@@ -56,6 +56,39 @@ class TestSaveXml:
         content = (tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml" / "0001.xml").read_text()
         assert content == "<xml>second</xml>"
 
+    def test_saves_five_variants(self, writer, tmp_path):
+        """save_xml should produce 5 XML files for valid uiautomator input."""
+        from tests.fixtures.xml_samples import SIMPLE_XML
+
+        writer.save_xml(SIMPLE_XML)
+
+        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        assert (xml_dir / "0000.xml").exists()
+        assert (xml_dir / "0000_parsed.xml").exists()
+        assert (xml_dir / "0000_hierarchy.xml").exists()
+        assert (xml_dir / "0000_encoded.xml").exists()
+        assert (xml_dir / "0000_pretty.xml").exists()
+
+    def test_encoded_has_no_bounds(self, writer, tmp_path):
+        """Encoded XML should have no bounds attributes."""
+        import xml.etree.ElementTree as ET
+
+        from tests.fixtures.xml_samples import SIMPLE_XML
+
+        writer.save_xml(SIMPLE_XML)
+        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        encoded = (xml_dir / "0000_encoded.xml").read_text()
+        root = ET.fromstring(encoded)
+        for el in root.iter():
+            assert "bounds" not in el.attrib
+
+    def test_invalid_xml_still_saves_raw(self, writer, tmp_path):
+        """Invalid XML should still save raw file without crashing."""
+        writer.save_xml("<not valid!!!")
+        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        assert (xml_dir / "0000.xml").exists()
+        assert not (xml_dir / "0000_parsed.xml").exists()
+
 
 class TestLogEvent:
     def test_appends_jsonl(self, writer, tmp_path):
@@ -112,7 +145,9 @@ class TestMultipleSteps:
         screenshots_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "screenshots"
         xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
         assert len(list(screenshots_dir.iterdir())) == 3
-        assert len(list(xml_dir.iterdir())) == 3
+        # 3 raw files; parsed variants may or may not exist depending on XML validity
+        raw_files = [f for f in xml_dir.iterdir() if "_" not in f.stem]
+        assert len(raw_files) == 3
 
 
 class TestFinalizeNoMetadata:

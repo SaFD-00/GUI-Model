@@ -9,7 +9,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from server.xml_encoder import encode_to_html_xml, indent_xml
+from server.parser.structured_parser import encode_to_html_xml, indent_xml
 from server.xml_parser import UIElement, parse_uiautomator_xml
 
 SYSTEM_PROMPT = (
@@ -177,8 +177,8 @@ class Converter:
         screenshots_dir = session / "screenshots"
         events_path = session / "events.jsonl"
 
-        # Load XML files (sorted by name)
-        xml_files = sorted(xml_dir.glob("*.xml"))
+        # Load raw XML files only (exclude _parsed, _encoded, etc.)
+        xml_files = sorted(f for f in xml_dir.glob("*.xml") if "_" not in f.stem)
         if len(xml_files) < 2:
             logger.warning(f"Session {session_dir}: not enough XML files")
             return 0

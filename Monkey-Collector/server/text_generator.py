@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from server.xml_encoder import encode_to_html_xml
+from server.parser.structured_parser import encode_to_html_xml
 from server.xml_parser import UIElement
 
 if TYPE_CHECKING:

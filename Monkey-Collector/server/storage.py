@@ -2,6 +2,7 @@
 
 import json
 import os
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from loguru import logger
@@ -50,12 +51,65 @@ class DataWriter:
         return path
 
     def save_xml(self, xml_content: str) -> str:
-        """Save XML content and increment step count. Returns file path."""
-        path = os.path.join(self.session_dir, "xml", f"{self.step_count:04d}.xml")
-        with open(path, "w", encoding="utf-8") as f:
+        """Save raw XML and 4 parsed variants. Increments step count.
+
+        Files produced per step::
+
+            {step}.xml              raw uiautomator dump
+            {step}_parsed.xml       semantic HTML tags + bounds + index
+            {step}_hierarchy.xml    structure only (no text/bounds/index)
+            {step}_encoded.xml      bounds removed, index only (LLM input)
+            {step}_pretty.xml       pretty-printed encoded
+        """
+        xml_dir = os.path.join(self.session_dir, "xml")
+        step = self.step_count
+
+        # 1. raw
+        raw_path = os.path.join(xml_dir, f"{step:04d}.xml")
+        with open(raw_path, "w", encoding="utf-8") as f:
             f.write(xml_content)
+
+        # 2-5. parsed variants
+        try:
+            from server.parser.structured_parser import (
+                StructuredXmlParser,
+                hierarchy_parse,
+                indent_xml,
+            )
+
+            parser = StructuredXmlParser()
+            parsed = parser.parse(xml_content)
+
+            if parsed:
+                # 2. parsed (bounds + index)
+                parsed_path = os.path.join(xml_dir, f"{step:04d}_parsed.xml")
+                with open(parsed_path, "w", encoding="utf-8") as f:
+                    f.write(parsed)
+
+                # 3. hierarchy (structure only)
+                hierarchy = hierarchy_parse(xml_content)
+                if hierarchy:
+                    hierarchy_path = os.path.join(xml_dir, f"{step:04d}_hierarchy.xml")
+                    with open(hierarchy_path, "w", encoding="utf-8") as f:
+                        f.write(hierarchy)
+
+                # 4. encoded (bounds removed)
+                encoded = parser._clear_bounds(parser.views)
+                encoded_str = ET.tostring(ET.fromstring(encoded), encoding="unicode")
+                encoded_path = os.path.join(xml_dir, f"{step:04d}_encoded.xml")
+                with open(encoded_path, "w", encoding="utf-8") as f:
+                    f.write(encoded_str)
+
+                # 5. pretty (encoded pretty-print)
+                pretty = indent_xml(encoded_str)
+                pretty_path = os.path.join(xml_dir, f"{step:04d}_pretty.xml")
+                with open(pretty_path, "w", encoding="utf-8") as f:
+                    f.write(pretty)
+        except Exception as e:
+            logger.warning(f"XML parsing failed for step {step}: {e}")
+
         self.step_count += 1
-        return path
+        return raw_path
 
     def log_event(self, event: dict):
         """Append an event to the events JSONL file."""
@@ -84,6 +138,13 @@ class DataWriter:
         meta_path = os.path.join(self.session_dir, "metadata.json")
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
+
+    def save_page_graph(self, graph_data: dict) -> str:
+        """Save page graph JSON. Returns file path."""
+        path = os.path.join(self.session_dir, "page_graph.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(graph_data, f, indent=2, ensure_ascii=False)
+        return path
 
     def _increment_metadata(self, key: str):
         meta_path = os.path.join(self.session_dir, "metadata.json")

@@ -68,6 +68,57 @@ def cmd_convert(args: argparse.Namespace) -> None:
     logger.info(f"Generated {count} examples -> {args.output}")
 
 
+def cmd_page_map(args: argparse.Namespace) -> None:
+    """Build page map from a saved session."""
+    import os
+
+    from server.graph_visualizer import visualize_session
+    from server.page_graph import build_graph_from_session
+
+    graph = build_graph_from_session(args.session, threshold=args.threshold)
+    graph.save(os.path.join(args.session, "page_graph.json"))
+    html = visualize_session(
+        args.session, output_path=args.output, open_browser=not args.no_open,
+    )
+    logger.info(
+        f"Page map: {len(graph.nodes)} pages, "
+        f"{len(graph.edges)} transitions"
+    )
+    if html:
+        logger.info(f"Visualization: {html}")
+
+
+def cmd_page_map_all(args: argparse.Namespace) -> None:
+    """Build page maps for all sessions in a directory."""
+    import os
+
+    from server.graph_visualizer import visualize_session
+    from server.page_graph import build_graph_from_session
+
+    raw_dir = args.raw_dir
+    if not os.path.isdir(raw_dir):
+        logger.error(f"Directory not found: {raw_dir}")
+        return
+
+    total = 0
+    for name in sorted(os.listdir(raw_dir)):
+        session_dir = os.path.join(raw_dir, name)
+        xml_dir = os.path.join(session_dir, "xml")
+        if not os.path.isdir(xml_dir):
+            continue
+        graph = build_graph_from_session(session_dir, threshold=args.threshold)
+        if graph.nodes:
+            graph.save(os.path.join(session_dir, "page_graph.json"))
+            visualize_session(session_dir, open_browser=False)
+            total += 1
+            logger.info(
+                f"  {name}: {len(graph.nodes)} pages, "
+                f"{len(graph.edges)} transitions"
+            )
+
+    logger.info(f"Built page maps for {total} sessions")
+
+
 def cmd_convert_all(args: argparse.Namespace) -> None:
     """Convert all sessions in a directory to JSONL."""
     from server.converter import Converter
@@ -115,6 +166,25 @@ def main() -> None:
     p.add_argument("--images-dir", required=True, help="Images output directory")
     p.add_argument("--label", type=int, default=1, help="Session label for image naming")
 
+    # page-map
+    p = sub.add_parser("page-map", help="Build page map from session data")
+    p.add_argument("--session", required=True, help="Session directory path")
+    p.add_argument(
+        "--threshold", type=float, default=0.85,
+        help="XML fingerprint similarity threshold (0.0-1.0)",
+    )
+    p.add_argument("--output", default=None, help="Output HTML path")
+    p.add_argument("--no-open", action="store_true", help="Do not open browser")
+
+    # page-map-all
+    p = sub.add_parser("page-map-all", help="Build page maps for all sessions")
+    p.add_argument("--raw-dir", default="data/raw", help="Raw sessions directory")
+    p.add_argument(
+        "--threshold", type=float, default=0.85,
+        help="XML fingerprint similarity threshold (0.0-1.0)",
+    )
+    p.add_argument("--no-open", action="store_true", help="Do not open browser")
+
     # convert-all
     p = sub.add_parser("convert-all", help="Convert all sessions to JSONL")
     p.add_argument("--raw-dir", default="data/raw", help="Raw sessions directory")
@@ -133,6 +203,10 @@ def main() -> None:
         cmd_convert(args)
     elif args.command == "convert-all":
         cmd_convert_all(args)
+    elif args.command == "page-map":
+        cmd_page_map(args)
+    elif args.command == "page-map-all":
+        cmd_page_map_all(args)
 
 
 if __name__ == "__main__":

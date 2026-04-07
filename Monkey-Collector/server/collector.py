@@ -10,6 +10,7 @@ from server.activity_coverage import ActivityCoverageTracker
 from server.adb import AdbClient
 from server.cost_tracker import CostTracker
 from server.explorer import SmartExplorer
+from server.page_graph import PageGraph
 from server.server import CollectionServer
 from server.storage import DataWriter
 from server.text_generator import TextGenerator
@@ -17,6 +18,7 @@ from server.xml_parser import UITree
 
 MAX_NO_CHANGE_RETRIES = 3
 MAX_EXTERNAL_APP_RETRIES = 10
+MAX_SAME_PAGE_STEPS = 5
 
 
 class Collector:
@@ -185,6 +187,9 @@ class Collector:
         logger.info(f"Starting session: {session_id}")
         logger.info(f"Target app: {package}, max_steps: {self.max_steps}")
 
+        # Initialize page graph for real-time building
+        page_graph = PageGraph()
+
         # 4. Collection loop
         step = 0
         total_actions = 0
@@ -196,6 +201,8 @@ class Collector:
         last_ui_tree: UITree | None = None
         last_raw_xml: str | None = None
         is_first_screen = False
+        current_page_id: int | None = None
+        same_page_count = 0
 
         try:
             while step < self.max_steps:
@@ -347,16 +354,63 @@ class Collector:
                         step += 1
                         continue
 
+                    # Extract activity name (always, for page graph + coverage)
+                    activity_name = meta.get("activity_name", "")
+                    if not activity_name:
+                        activity_name = self.adb.get_current_activity()
+
                     # Record activity coverage
                     if self._activity_tracker is not None:
-                        activity_name = meta.get("activity_name", "")
-                        if not activity_name:
-                            activity_name = self.adb.get_current_activity()
                         entry = self._activity_tracker.record(activity_name, step)
                         logger.debug(
                             f"Activity coverage: {entry['coverage']:.2%} "
                             f"({entry['unique_visited']}/{entry['total_activities']})"
                         )
+
+                    # Update page graph
+                    previous_page_id = current_page_id
+                    current_page_id = page_graph.get_or_create_page(
+                        activity_name, xml_str, step,
+                    )
+                    if previous_page_id is not None and last_action is not None:
+                        element_info = _describe_action_element(
+                            last_action, last_ui_tree,
+                        )
+                        page_graph.add_transition(
+                            from_page=previous_page_id,
+                            to_page=current_page_id,
+                            action_type=last_action.action_type,
+                            element_info=element_info,
+                            step=step,
+                        )
+
+                    # Detect stuck on same page
+                    if previous_page_id is not None and current_page_id == previous_page_id:
+                        same_page_count += 1
+                    else:
+                        same_page_count = 0
+
+                    if same_page_count >= MAX_SAME_PAGE_STEPS:
+                        logger.warning(
+                            f"Step {step}: stuck on page {current_page_id} "
+                            f"for {same_page_count} steps, forcing back"
+                        )
+                        if is_first_screen:
+                            self._tap_random_fallback()
+                        else:
+                            self.adb.press_back()
+                            time.sleep(0.5)
+                            if self.explorer.has_left_app(package):
+                                logger.warning("press_back caused app exit, recovering")
+                                self.explorer.return_to_app(package)
+                        self.server.clear_signal_queue()
+                        self.explorer.clear_excluded()
+                        same_page_count = 0
+                        last_action = None
+                        last_ui_tree = None
+                        time.sleep(self.action_delay)
+                        step += 1
+                        continue
 
                     # Update step for cost tracking
                     if self._text_generator and hasattr(self._text_generator, "set_step"):
@@ -413,6 +467,7 @@ class Collector:
                     # Log event
                     event = action.to_dict()
                     event["step"] = step
+                    event["activity_name"] = activity_name
                     self.writer.log_event(event)
 
                     # Wait before next action
@@ -429,6 +484,19 @@ class Collector:
         finally:
             # Finalize session even if interrupted
             self.writer.finalize_session()
+
+            # Save page graph and generate visualization
+            if page_graph.nodes:
+                graph_data = page_graph.to_dict()
+                graph_data["metadata"]["session_id"] = session_id
+                self.writer.save_page_graph(graph_data)
+                try:
+                    from server.graph_visualizer import visualize_session
+                    visualize_session(
+                        self.writer.session_dir, open_browser=False,
+                    )
+                except Exception as e:
+                    logger.warning(f"Page map visualization failed: {e}")
 
         logger.info(
             f"Session complete: {session_id} | "
@@ -447,3 +515,13 @@ class Collector:
     def _on_screenshot(self, image_data: bytes):
         """Callback: store latest screenshot for saving with next XML."""
         self._latest_screenshot = image_data
+
+
+def _describe_action_element(action: Action, ui_tree: UITree | None) -> str:
+    """Describe the target element of an action briefly."""
+    if ui_tree is None or action.element_index < 0:
+        return action.action_type
+    if action.element_index < len(ui_tree):
+        elem = ui_tree.elements[action.element_index]
+        return elem.display_name
+    return action.action_type
