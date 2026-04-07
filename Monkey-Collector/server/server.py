@@ -110,7 +110,7 @@ class CollectionServer:
             return False
 
     def wait_for_xml(
-        self, timeout: float = 15.0
+        self, timeout: float = 25.0
     ) -> tuple[str, dict] | None:
         """Block until the next XML is received from the Android app.
 
@@ -123,7 +123,7 @@ class CollectionServer:
         return None
 
     def wait_for_change_signal(
-        self, timeout: float = 15.0
+        self, timeout: float = 25.0
     ) -> tuple[str, str | None, dict | None] | None:
         """Block until XML or no-change signal is received.
 
@@ -138,7 +138,7 @@ class CollectionServer:
             return None
 
     def get_latest_signal(
-        self, timeout: float = 15.0
+        self, timeout: float = 25.0
     ) -> tuple[str, str | None, dict | None] | None:
         """Drain stale signals and return the latest one.
 

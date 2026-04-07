@@ -115,11 +115,11 @@ MediaProjection VirtualDisplay + ImageReader를 사용하여 저해상도(100px 
 **Capture Session 분리**: `startCaptureSession()`으로 VirtualDisplay/ImageReader를 생성하고, `stopCaptureSession()`으로 해제한다. MediaProjection 자체는 유지하여 재사용하며, `release()`에서만 완전 해제한다. 기존 MediaProjection이 있으면 새로 생성하지 않는 최적화가 적용되어 있다.
 
 **안정화 감지** (`waitForStable()`):
-- 500ms 초기 대기로 애니메이션 시작을 보장
+- 1000ms 초기 대기로 애니메이션 시작을 보장
 - 300ms 간격으로 저해상도 프레임 캡처
 - BitmapComparator로 연속 프레임 비교
-- 5개 연속 프레임이 1.5% 미만 차이일 때 안정화 판정
-- 최대 50회 시도 (약 15.5초, 초기 대기 포함), 타임아웃 시에도 캡처 진행
+- 7개 연속 프레임이 1.5% 미만 차이일 때 안정화 판정
+- 최대 60회 시도 (약 19초, 초기 대기 포함), 타임아웃 시에도 캡처 진행
 - Atomic flag로 동시 안정화 시도 방지
 
 **시각적 변화 감지** (`hasVisualChange()`):
@@ -176,10 +176,10 @@ AccessibilityEvent 수신 (debounced 300ms)
     │
     ▼
 ScreenStabilizer.waitForStable()
-    │  500ms 초기 대기 (애니메이션 시작 보장)
+    │  1000ms 초기 대기 (애니메이션 시작 보장)
     │  100px 프레임을 300ms 간격으로 캡처
-    │  5개 연속 프레임 < 1.5% diff → 안정화 완료
-    │  (최대 50회 = ~15.5초)
+    │  7개 연속 프레임 < 1.5% diff → 안정화 완료
+    │  (최대 60회 = ~19초)
     │
     ▼
 ScreenStabilizer.hasVisualChange()
@@ -236,7 +236,7 @@ TCP 서버. `0.0.0.0:12345`에서 Android 앱의 연결을 대기한다.
 - `_run_session()`: 단일 세션 실행 (서버 생명주기는 호출자가 관리)
 
 루프 구조:
-1. `server.get_latest_signal(timeout=15s)` — stale signal 드레인 후 최신 signal 대기
+1. `server.get_latest_signal(timeout=25s)` — stale signal 드레인 후 최신 signal 대기
 2. Signal에 따라 분기:
    - `None` (timeout): 화면 중앙 tap, 5회 연속 시 세션 종료
    - `"no_change"`: element exclusion + 재시도 (최대 3회), 초과 시 press_back (first screen이면 `_tap_random_fallback()`)
@@ -383,7 +383,7 @@ Entry point: `monkey-collect`. Subcommands: `run`, `convert`, `convert-all`. `ru
 ```python
 while step < max_steps:
     # Stale signal 드레인 후 최신 signal 대기
-    result = server.get_latest_signal(timeout=15s)
+    result = server.get_latest_signal(timeout=25s)
 
     if result is None:              # True timeout (signal 없음)
         timeout_count++
@@ -538,7 +538,7 @@ raw XML → _reformat() → _simplify() → _clean() → _renumber() → pretty_
 ### Client-Side Transition Detection
 
 - **Why**: MediaProjection 100px 캡처 (<1ms) vs ADB screencap (300~800ms)
-- **How**: ScreenStabilizer가 500ms 초기 대기 후 저해상도 프레임을 300ms 간격으로 캡처하고, BitmapComparator가 픽셀 단위 diff 계산 (1.5% 임계값, 5프레임 연속 안정)
+- **How**: ScreenStabilizer가 1000ms 초기 대기 후 저해상도 프레임을 300ms 간격으로 캡처하고, BitmapComparator가 픽셀 단위 diff 계산 (1.5% 임계값, 7프레임 연속 안정)
 - **Benefit**: 실제 전환이 발생한 경우에만 전송 → 네트워크 트래픽 및 서버 처리 최소화
 
 ### Element Exclusion on No-Change

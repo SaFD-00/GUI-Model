@@ -142,7 +142,7 @@ def main() -> None:
     p.add_argument("--app", default=None, help="Target app package (optional: received from client if omitted)")
     p.add_argument("--steps", type=int, default=100, help="Max steps per session")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
-    p.add_argument("--delay", type=int, default=1000, help="Action delay in ms")
+    p.add_argument("--delay", type=int, default=1500, help="Action delay in ms")
     p.add_argument("--port", type=int, default=12345, help="TCP server port")
     p.add_argument("--output", default="data/raw", help="Output directory")
     p.add_argument("--device", default=None, help="ADB device serial")

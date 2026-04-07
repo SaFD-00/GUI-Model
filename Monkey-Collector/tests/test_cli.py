@@ -109,4 +109,4 @@ class TestRunArgsDefaults:
             args = mock_cmd.call_args[0][0]
             assert args.output == "data/raw"
             assert args.device is None
-            assert args.delay == 1000
+            assert args.delay == 1500

@@ -33,10 +33,10 @@ class ScreenStabilizer(
         const val TARGET_WIDTH = 100
         const val STABILITY_THRESHOLD = 0.015f   // 1.5% pixel difference (stricter)
         const val FIRST_SCREEN_THRESHOLD = 0.05f // 5% — more lenient for first screen comparison
-        const val REQUIRED_STABLE_FRAMES = 5     // 5 consecutive stable frames
-        const val MAX_ATTEMPTS = 50              // ~15.5s max (500ms initial + 50 × 300ms)
+        const val REQUIRED_STABLE_FRAMES = 7     // 7 consecutive stable frames
+        const val MAX_ATTEMPTS = 60              // ~19s max (1000ms initial + 60 × 300ms)
         const val CHECK_INTERVAL_MS = 300L       // 300ms between checks (higher sampling)
-        const val INITIAL_WAIT_MS = 500L         // Wait for animation to begin
+        const val INITIAL_WAIT_MS = 1000L        // Wait for animation to begin
     }
 
     private var mediaProjectionManager: MediaProjectionManager? = null
@@ -159,8 +159,8 @@ class ScreenStabilizer(
     /**
      * Wait for the screen to stabilize (stop changing).
      *
-     * Waits 500ms for animation to begin, then compares consecutive
-     * low-res frames at 300ms intervals. Returns true when 5 consecutive
+     * Waits 1000ms for animation to begin, then compares consecutive
+     * low-res frames at 300ms intervals. Returns true when 7 consecutive
      * frames are within 1.5% difference.
      * Returns false on timeout (captures should still proceed).
      *

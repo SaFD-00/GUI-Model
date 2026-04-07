@@ -23,7 +23,7 @@ App (Kotlin, AccessibilityService)       TCP        Server (Python)
 
 **Transition Detection → Client(App)** 에서 수행:
 - MediaProjection low-res 캡처 (<1ms) vs ADB screencap (300-800ms)
-- BitmapComparator: 픽셀 비교로 5프레임 연속 안정 확인 (~2.0초, 500ms 초기 대기 포함)
+- BitmapComparator: 픽셀 비교로 7프레임 연속 안정 확인 (~3.1초, 1000ms 초기 대기 포함)
 - 전환 감지 시만 Server로 전송 → 네트워크 트래픽 최소화
 
 **First Screen Protection** — 첫 화면 보호:
@@ -184,7 +184,7 @@ monkey-collect page-map-all --raw-dir data/raw
 App 측:
   ① AccessibilityEvent 감지 (WINDOW_STATE/CONTENT_CHANGED)
   ② ScreenStabilizer: low-res 캡처 (100px) → BitmapComparator 비교
-  ③ 500ms 초기 대기 후 5프레임 연속 안정 확인 (~2.0초) → 의미 있는 전환인지 판정
+  ③ 1000ms 초기 대기 후 7프레임 연속 안정 확인 (~3.1초) → 의미 있는 전환인지 판정
   ③-1 전환 없음 시: N 신호 전송 → Server에서 다른 element로 재시도
   ④ 전환 시: 고해상도 screenshot + XML dump → TCP 전송 (Activity명 + first screen 여부 플래그 포함)
 

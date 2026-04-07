@@ -44,7 +44,7 @@ class Collector:
         writer: DataWriter,
         max_steps: int = 100,
         action_delay: float = 1.0,
-        xml_timeout: float = 15.0,
+        xml_timeout: float = 25.0,
         activity_coverage_tracker: ActivityCoverageTracker | None = None,
         cost_tracker: CostTracker | None = None,
         text_generator: TextGenerator | None = None,

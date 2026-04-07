@@ -18,7 +18,7 @@ class CollectorService : AccessibilityService() {
     companion object {
         private const val TAG = "CollectorService"
         private const val DEBOUNCE_MS = 300L
-        private const val MIN_CAPTURE_INTERVAL_MS = 2000L
+        private const val MIN_CAPTURE_INTERVAL_MS = 3000L
         private const val NOTIFICATION_CHANNEL_ID = "MonkeyCollector_Channel"
         private const val NOTIFICATION_ID = 1
 
