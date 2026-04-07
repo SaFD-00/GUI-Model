@@ -86,7 +86,7 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 - **CollectorService**: AccessibilityService. WINDOW_STATE/CONTENT_CHANGED 이벤트 디바운스(300ms) 후 ScreenStabilizer로 전환 확정. 플로팅 버튼 관리. first screen 플래그 전송. `TYPE_WINDOW_STATE_CHANGED`에서 현재 Activity 클래스명 추적 (`currentActivityName`). 외부 앱 감지 시 런처 판별(`LAUNCHER_PACKAGES` + `isLauncher()`) → `getLaunchIntentForPackage()` 또는 back으로 복구
 - **FloatingCollectorButton**: TYPE_ACCESSIBILITY_OVERLAY 플로팅 START/STOP 버튼. foreground 앱을 타겟으로 자동 감지
-- **ScreenStabilizer**: 저해상도(100px) 프레임 비교로 안정화 감지 (2% 임계값, 3연속 안정 프레임). first screen 감지 (5% 임계값)
+- **ScreenStabilizer**: 저해상도(100px) 프레임 비교로 안정화 감지 (1.5% 임계값, 5연속 안정 프레임, 500ms 초기 대기). first screen 감지 (5% 임계값)
 - **TcpClient**: P/S/X/E/N/F 프로토콜 구현, synchronized write, 3회 재시도
 - **ScreenCapture**: API 30+ AccessibilityService.takeScreenshot() 래퍼. 5초 타임아웃 동기 캡처
 - **BitmapComparator**: 픽셀 단위 비트맵 비교. 차이 비율(0.0~1.0) 반환
