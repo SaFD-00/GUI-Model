@@ -19,6 +19,7 @@ from server.xml_parser import UITree
 MAX_NO_CHANGE_RETRIES = 3
 MAX_EXTERNAL_APP_RETRIES = 10
 MAX_SAME_PAGE_STEPS = 5
+MAX_EMPTY_UI_RETRIES = 2
 
 
 class Collector:
@@ -197,6 +198,7 @@ class Collector:
         max_timeouts = 5
         no_change_retries = 0
         external_app_count = 0
+        empty_ui_retries = 0
         last_action: Action | None = None
         last_ui_tree: UITree | None = None
         last_raw_xml: str | None = None
@@ -337,7 +339,6 @@ class Collector:
                     # signal_type == "xml" — screen changed
                     timeout_count = 0
                     no_change_retries = 0
-                    external_app_count = 0
                     self.explorer.clear_excluded()
 
                     _, xml_str, meta = result
@@ -425,6 +426,18 @@ class Collector:
                     # Parse UI tree
                     ui_tree = UITree.from_xml_string(xml_str)
                     if len(ui_tree) == 0:
+                        empty_ui_retries += 1
+                        if empty_ui_retries <= MAX_EMPTY_UI_RETRIES:
+                            logger.info(
+                                f"Step {step}: no UI elements, waiting for app load "
+                                f"({empty_ui_retries}/{MAX_EMPTY_UI_RETRIES})"
+                            )
+                            time.sleep(1.0)
+                            step += 1
+                            last_ui_tree = None
+                            last_action = None
+                            continue
+                        empty_ui_retries = 0
                         if is_first_screen:
                             logger.warning(
                                 f"Step {step}: no UI elements, on first screen — tap instead of back"
@@ -443,6 +456,10 @@ class Collector:
                         last_action = None
                         step += 1
                         continue
+
+                    # Valid UI tree — reset counters
+                    empty_ui_retries = 0
+                    external_app_count = 0
 
                     # Select action
                     self.explorer.set_raw_xml(xml_str)

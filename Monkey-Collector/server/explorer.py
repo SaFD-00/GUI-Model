@@ -182,10 +182,10 @@ class SmartExplorer:
             current = self.adb.get_current_package()
             if current != package:
                 self.adb.launch_app(package)
-                time.sleep(2)
+                time.sleep(3)
         except Exception:
             self.adb.launch_app(package)
-            time.sleep(2)
+            time.sleep(3)
 
     def recover(self, package: str) -> None:
         """Recover from an error state."""
@@ -193,7 +193,7 @@ class SmartExplorer:
             self.adb.press_home()
             time.sleep(1)
             self.adb.launch_app(package)
-            time.sleep(2)
+            time.sleep(3)
         except Exception:
             logger.error("Recovery failed for package %s", package)
 

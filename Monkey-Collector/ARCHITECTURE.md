@@ -240,8 +240,8 @@ TCP 서버. `0.0.0.0:12345`에서 Android 앱의 연결을 대기한다.
 2. Signal에 따라 분기:
    - `None` (timeout): 화면 중앙 tap, 5회 연속 시 세션 종료
    - `"no_change"`: element exclusion + 재시도 (최대 3회), 초과 시 press_back (first screen이면 `_tap_random_fallback()`)
-   - `"external_app"`: 로그 후 continue (client-side에서 back/재실행으로 복구)
-   - `"xml"`: 정상 처리 — parse → select → execute → `clear_signal_queue()` → save
+   - `"external_app"`: `return_to_app()` (1-3회) → `recover()` (4+회) → 세션 종료 (10+회). `external_app_count`는 유효한 UI tree가 있는 화면에서만 리셋
+   - `"xml"`: 정상 처리 — parse → select → execute → `clear_signal_queue()` → save. 빈 UI tree인 경우 대기 후 재시도 (최대 2회), 초과 시 press_back
 
 #### SmartExplorer (`explorer.py`)
 
@@ -418,15 +418,23 @@ while step < max_steps:
         break                       # 즉시 세션 종료 (타임아웃 대기 없음)
 
     if signal_type == "xml":        # 화면 전환 발생
-        reset retry/timeout counters
+        reset retry/timeout/no_change counters
         clear excluded_elements
         record activity_coverage (meta.activity_name → CSV, ADB fallback)
         update text_generator step (for cost tracking)
         check app_escape (top_pkg != target_pkg → skip)
         save screenshot + xml
         parse UI tree
-        if empty → first_screen? → _tap_random_fallback() : press_back
-                   if not first_screen and has_left_app(): return_to_app()  # back으로 앱 이탈 시 복구
+        if empty:
+            empty_ui_retries++
+            if empty_ui_retries <= 2:  # 앱 로딩 중일 수 있음
+                sleep(1.0)             # 대기 후 다음 signal 기다림
+                continue
+            empty_ui_retries = 0
+            first_screen? → _tap_random_fallback() : press_back
+            if not first_screen and has_left_app(): return_to_app()
+        empty_ui_retries = 0
+        external_app_count = 0      # 유효 UI tree에서만 리셋
         select action (SmartExplorer)
         execute action (ADB)
         clear_signal_queue()        # 액션 실행 중 쌓인 stale signals 폐기
@@ -441,7 +449,7 @@ while step < max_steps:
 | 시각적 변화 없음 (N signal) | element 제외 후 다른 element로 재시도 (최대 3회). 초과 시 press_back (first screen이면 `_tap_random_fallback()`) |
 | 외부 앱 감지 (Client) | `E` signal 전송 + press_back → `consecutiveBackCount` 추적 → 3회 연속 또는 런처 감지 시 `getLaunchIntentForPackage()` 재실행 (fallback: `am start -a MAIN -c LAUNCHER`) |
 | 외부 앱 감지 (Server) | `external_app` signal 수신 → `external_app_count` 추적: 1-3회 `return_to_app()` (back → launch), 4+회 `recover()` (home → launch), 10+회 세션 종료 |
-| Empty UI tree | press_back (first screen이면 `_tap_random_fallback()`) |
+| Empty UI tree | 앱 로딩 중일 수 있으므로 대기 후 재시도 (최대 2회). 초과 시 press_back (first screen이면 `_tap_random_fallback()`) |
 | TCP 연결 끊김 | 3회 재연결 시도 (2초 간격) |
 | 예외 발생 | `SmartExplorer.recover()` — home → launch_app |
 

@@ -420,9 +420,14 @@ class TestXmlEdgeCases:
 
     @patch("server.collector.time.sleep")
     def test_empty_tree_recovery(self, mock_sleep, mock_adb):
-        """Empty UI tree + not first screen + has_left_app → recovery."""
+        """Empty UI tree + not first screen + has_left_app → waits then recovery."""
+        empty_meta = {"top_package": "com.test.app", "activity_name": "com.test.app/.MainActivity", "target_package": "com.test.app", "is_first_screen": False}
         signals = [
-            ("xml", MINIMAL_XML, {"top_package": "com.test.app", "activity_name": "com.test.app/.MainActivity", "target_package": "com.test.app", "is_first_screen": False}),
+            # First 2 empty trees → wait (no back)
+            ("xml", MINIMAL_XML, empty_meta),
+            ("xml", MINIMAL_XML, empty_meta),
+            # 3rd empty tree → press_back + recovery
+            ("xml", MINIMAL_XML, empty_meta),
             ("finish", None, None),
         ]
         collector, explorer, server, writer = _make_collector(mock_adb, signals)
