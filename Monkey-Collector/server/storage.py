@@ -12,7 +12,7 @@ class DataWriter:
     """Writes raw collection data to session directories.
 
     Directory structure:
-        data/raw/{session_id}/
+        data/raw/{package}/
         ├── metadata.json
         ├── screenshots/0000.png, 0001.png, ...
         ├── xml/0000.xml, 0001.xml, ...
@@ -25,22 +25,15 @@ class DataWriter:
         self.step_count = 0
 
     def find_existing_session(self, package: str) -> str | None:
-        """Find the latest existing session directory for a package.
+        """Find existing session directory for a package.
 
         Returns the session_id (directory name) or None.
         """
-        if not os.path.isdir(self.base_dir):
-            return None
-        candidates = []
-        for name in os.listdir(self.base_dir):
-            if name.startswith(f"{package}_"):
-                session_dir = os.path.join(self.base_dir, name)
-                meta_path = os.path.join(session_dir, "metadata.json")
-                if os.path.isfile(meta_path):
-                    candidates.append(name)
-        if not candidates:
-            return None
-        return sorted(candidates)[-1]
+        session_dir = os.path.join(self.base_dir, package)
+        meta_path = os.path.join(session_dir, "metadata.json")
+        if os.path.isfile(meta_path):
+            return package
+        return None
 
     def resume_session(self, session_id: str) -> int:
         """Resume an existing session. Returns current step count."""

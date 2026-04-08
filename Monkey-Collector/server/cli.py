@@ -163,7 +163,7 @@ def main() -> None:
         "--new-session",
         action="store_true",
         default=False,
-        help="Force new session directory (default: continue existing session for same app)",
+        help="Delete existing session and start fresh (default: continue existing session for same app)",
     )
 
     # convert

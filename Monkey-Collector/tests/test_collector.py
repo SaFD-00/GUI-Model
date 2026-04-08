@@ -1,6 +1,5 @@
 """Tests for server.collector — main collection orchestration (integration)."""
 
-import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,7 +47,8 @@ def _make_collector(mock_adb, signals, max_steps=10):
     mock_writer.save_xml.return_value = "/tmp/xml/0000.xml"
     mock_writer.save_screenshot.return_value = "/tmp/screenshots/0000.png"
     mock_writer.find_existing_session.return_value = None
-    mock_writer.session_dir = "/tmp/sessions/com.test.app_2026-01-01_10-00-00"
+    mock_writer.base_dir = "/tmp/sessions"
+    mock_writer.session_dir = "/tmp/sessions/com.test.app"
 
     collector = Collector(
         adb=mock_adb,
@@ -73,14 +73,14 @@ class TestSessionResume:
             ("finish", None, None),
         ]
         collector, explorer, server, writer = _make_collector(mock_adb, signals)
-        writer.find_existing_session.return_value = "com.test.app_2026-01-01_10-00-00"
+        writer.find_existing_session.return_value = "com.test.app"
         writer.resume_session.return_value = 5
-        writer.session_dir = "/tmp/sessions/com.test.app_2026-01-01_10-00-00"
+        writer.session_dir = "/tmp/sessions/com.test.app"
 
         session_id = collector.run(package="com.test.app")
 
-        assert session_id == "com.test.app_2026-01-01_10-00-00"
-        writer.resume_session.assert_called_once_with("com.test.app_2026-01-01_10-00-00")
+        assert session_id == "com.test.app"
+        writer.resume_session.assert_called_once_with("com.test.app")
         writer.init_session.assert_not_called()
 
     @patch("server.collector.time.sleep")
@@ -92,7 +92,7 @@ class TestSessionResume:
         ]
         collector, explorer, server, writer = _make_collector(mock_adb, signals)
         collector._new_session = True
-        writer.find_existing_session.return_value = "com.test.app_2026-01-01_10-00-00"
+        writer.find_existing_session.return_value = "com.test.app"
 
         session_id = collector.run(package="com.test.app")
 
@@ -129,9 +129,7 @@ class TestRunSessionHappyPath:
 
         session_id = collector.run(package="com.test.app")
 
-        assert session_id != ""
-        assert "com.test.app" in session_id
-        assert re.search(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", session_id)
+        assert session_id == "com.test.app"
         assert explorer.select_action.call_count == 3
         assert explorer.execute_action.call_count == 3
         assert writer.save_xml.call_count == 3

@@ -1,7 +1,8 @@
 """Main collection loop: receive UI states from App, select actions, execute via ADB."""
 
+import os
+import shutil
 import time
-from datetime import datetime
 
 from loguru import logger
 
@@ -195,7 +196,12 @@ class Collector:
                 self._cost_tracker.resume(self.writer.session_dir)
             logger.info(f"Resuming session: {session_id} from step {resume_step}")
         else:
-            session_id = f"{package}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+            session_id = package
+            if self._new_session:
+                existing_dir = os.path.join(self.writer.base_dir, session_id)
+                if os.path.isdir(existing_dir):
+                    shutil.rmtree(existing_dir)
+                    logger.info(f"Removed existing session directory: {existing_dir}")
             self.writer.init_session(session_id, package)
             resume_step = 0
             if self._activity_tracker is not None:

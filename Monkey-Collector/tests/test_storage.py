@@ -11,21 +11,21 @@ from server.storage import DataWriter
 @pytest.fixture
 def writer(tmp_path):
     w = DataWriter(base_dir=str(tmp_path))
-    w.init_session("com.test.app_2026-04-02_10-00-00", "com.test.app")
+    w.init_session("com.test.app", "com.test.app")
     return w
 
 
 class TestInitSession:
     def test_creates_directories(self, writer, tmp_path):
-        session_dir = tmp_path / "com.test.app_2026-04-02_10-00-00"
+        session_dir = tmp_path / "com.test.app"
         assert (session_dir / "screenshots").is_dir()
         assert (session_dir / "xml").is_dir()
 
     def test_writes_metadata(self, writer, tmp_path):
-        meta_path = tmp_path / "com.test.app_2026-04-02_10-00-00" / "metadata.json"
+        meta_path = tmp_path / "com.test.app" / "metadata.json"
         assert meta_path.exists()
         meta = json.loads(meta_path.read_text())
-        assert meta["session_id"] == "com.test.app_2026-04-02_10-00-00"
+        assert meta["session_id"] == "com.test.app"
         assert meta["package"] == "com.test.app"
         assert meta["started_at"] is not None
         assert meta["completed_at"] is None
@@ -37,7 +37,7 @@ class TestSaveScreenshot:
     def test_save(self, writer, tmp_path):
         path = writer.save_screenshot(b"\x89PNG_fake_data")
         assert "0000.png" in path
-        saved = (tmp_path / "com.test.app_2026-04-02_10-00-00" / "screenshots" / "0000.png").read_bytes()
+        saved = (tmp_path / "com.test.app" / "screenshots" / "0000.png").read_bytes()
         assert saved == b"\x89PNG_fake_data"
 
 
@@ -53,7 +53,7 @@ class TestSaveXml:
         assert "0001.xml" in path2
         assert writer.step_count == 2
 
-        content = (tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml" / "0001.xml").read_text()
+        content = (tmp_path / "com.test.app" / "xml" / "0001.xml").read_text()
         assert content == "<xml>second</xml>"
 
     def test_saves_five_variants(self, writer, tmp_path):
@@ -62,7 +62,7 @@ class TestSaveXml:
 
         writer.save_xml(SIMPLE_XML)
 
-        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        xml_dir = tmp_path / "com.test.app" / "xml"
         assert (xml_dir / "0000.xml").exists()
         assert (xml_dir / "0000_parsed.xml").exists()
         assert (xml_dir / "0000_hierarchy.xml").exists()
@@ -76,7 +76,7 @@ class TestSaveXml:
         from tests.fixtures.xml_samples import SIMPLE_XML
 
         writer.save_xml(SIMPLE_XML)
-        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        xml_dir = tmp_path / "com.test.app" / "xml"
         encoded = (xml_dir / "0000_encoded.xml").read_text()
         root = ET.fromstring(encoded)
         for el in root.iter():
@@ -85,7 +85,7 @@ class TestSaveXml:
     def test_invalid_xml_still_saves_raw(self, writer, tmp_path):
         """Invalid XML should still save raw file without crashing."""
         writer.save_xml("<not valid!!!")
-        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        xml_dir = tmp_path / "com.test.app" / "xml"
         assert (xml_dir / "0000.xml").exists()
         assert not (xml_dir / "0000_parsed.xml").exists()
 
@@ -95,7 +95,7 @@ class TestLogEvent:
         writer.log_event({"action_type": "tap", "x": 100, "y": 200})
         writer.log_event({"action_type": "swipe", "step": 1})
 
-        events_path = tmp_path / "com.test.app_2026-04-02_10-00-00" / "events.jsonl"
+        events_path = tmp_path / "com.test.app" / "events.jsonl"
         lines = events_path.read_text().strip().split("\n")
         assert len(lines) == 2
         assert json.loads(lines[0])["action_type"] == "tap"
@@ -107,7 +107,7 @@ class TestLogExternalApp:
         writer.log_external_app({"detected_package": "com.other"})
 
         # Check event written
-        events_path = tmp_path / "com.test.app_2026-04-02_10-00-00" / "events.jsonl"
+        events_path = tmp_path / "com.test.app" / "events.jsonl"
         lines = events_path.read_text().strip().split("\n")
         event = json.loads(lines[0])
         assert event["type"] == "external_app"
@@ -115,7 +115,7 @@ class TestLogExternalApp:
 
         # Check metadata counter
         meta = json.loads(
-            (tmp_path / "com.test.app_2026-04-02_10-00-00" / "metadata.json").read_text()
+            (tmp_path / "com.test.app" / "metadata.json").read_text()
         )
         assert meta["external_app_events"] == 1
 
@@ -127,7 +127,7 @@ class TestFinalizeSession:
         writer.finalize_session()
 
         meta = json.loads(
-            (tmp_path / "com.test.app_2026-04-02_10-00-00" / "metadata.json").read_text()
+            (tmp_path / "com.test.app" / "metadata.json").read_text()
         )
         assert meta["completed_at"] is not None
         assert meta["total_steps"] == 2
@@ -142,8 +142,8 @@ class TestMultipleSteps:
 
         assert writer.step_count == 3
 
-        screenshots_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "screenshots"
-        xml_dir = tmp_path / "com.test.app_2026-04-02_10-00-00" / "xml"
+        screenshots_dir = tmp_path / "com.test.app" / "screenshots"
+        xml_dir = tmp_path / "com.test.app" / "xml"
         assert len(list(screenshots_dir.iterdir())) == 3
         # 3 raw files; parsed variants may or may not exist depending on XML validity
         raw_files = [f for f in xml_dir.iterdir() if "_" not in f.stem]
@@ -175,14 +175,13 @@ class TestReinitSession:
 
 
 class TestFindExistingSession:
-    def test_returns_latest(self, tmp_path):
-        """Multiple sessions for same package → returns the latest."""
+    def test_returns_package(self, tmp_path):
+        """Existing session for package → returns the package name."""
         w = DataWriter(base_dir=str(tmp_path))
-        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
-        w.init_session("com.test.app_2026-01-02_10-00-00", "com.test.app")
+        w.init_session("com.test.app", "com.test.app")
 
         result = w.find_existing_session("com.test.app")
-        assert result == "com.test.app_2026-01-02_10-00-00"
+        assert result == "com.test.app"
 
     def test_returns_none_when_no_session(self, tmp_path):
         w = DataWriter(base_dir=str(tmp_path))
@@ -190,14 +189,14 @@ class TestFindExistingSession:
 
     def test_ignores_other_packages(self, tmp_path):
         w = DataWriter(base_dir=str(tmp_path))
-        w.init_session("com.other.app_2026-01-01_10-00-00", "com.other.app")
+        w.init_session("com.other.app", "com.other.app")
 
         assert w.find_existing_session("com.test.app") is None
 
     def test_ignores_dirs_without_metadata(self, tmp_path):
         """Directory without metadata.json is not a valid session."""
         w = DataWriter(base_dir=str(tmp_path))
-        os.makedirs(tmp_path / "com.test.app_2026-01-01_10-00-00")
+        os.makedirs(tmp_path / "com.test.app")
         # No metadata.json created
         assert w.find_existing_session("com.test.app") is None
 
@@ -206,27 +205,27 @@ class TestResumeSession:
     def test_restores_step_count(self, tmp_path):
         """Step count restored from existing raw XML files."""
         w = DataWriter(base_dir=str(tmp_path))
-        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        w.init_session("com.test.app", "com.test.app")
         w.save_xml("<xml>step0</xml>")
         w.save_xml("<xml>step1</xml>")
         w.save_xml("<xml>step2</xml>")
         w.finalize_session()
 
         w2 = DataWriter(base_dir=str(tmp_path))
-        step_count = w2.resume_session("com.test.app_2026-01-01_10-00-00")
+        step_count = w2.resume_session("com.test.app")
         assert step_count == 3
         assert w2.step_count == 3
 
     def test_preserves_started_at(self, tmp_path):
         """Original started_at is preserved on resume."""
         w = DataWriter(base_dir=str(tmp_path))
-        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
-        meta_path = tmp_path / "com.test.app_2026-01-01_10-00-00" / "metadata.json"
+        w.init_session("com.test.app", "com.test.app")
+        meta_path = tmp_path / "com.test.app" / "metadata.json"
         original_meta = json.loads(meta_path.read_text())
         original_started = original_meta["started_at"]
 
         w2 = DataWriter(base_dir=str(tmp_path))
-        w2.resume_session("com.test.app_2026-01-01_10-00-00")
+        w2.resume_session("com.test.app")
 
         meta = json.loads(meta_path.read_text())
         assert meta["started_at"] == original_started
@@ -234,12 +233,12 @@ class TestResumeSession:
     def test_adds_resumed_at(self, tmp_path):
         """Resume adds resumed_at timestamp array."""
         w = DataWriter(base_dir=str(tmp_path))
-        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        w.init_session("com.test.app", "com.test.app")
 
         w2 = DataWriter(base_dir=str(tmp_path))
-        w2.resume_session("com.test.app_2026-01-01_10-00-00")
+        w2.resume_session("com.test.app")
 
-        meta_path = tmp_path / "com.test.app_2026-01-01_10-00-00" / "metadata.json"
+        meta_path = tmp_path / "com.test.app" / "metadata.json"
         meta = json.loads(meta_path.read_text())
         assert "resumed_at" in meta
         assert len(meta["resumed_at"]) == 1
@@ -248,13 +247,13 @@ class TestResumeSession:
     def test_continues_numbering(self, tmp_path):
         """After resume, new files continue from existing step count."""
         w = DataWriter(base_dir=str(tmp_path))
-        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        w.init_session("com.test.app", "com.test.app")
         w.save_xml("<xml>step0</xml>")
         w.save_xml("<xml>step1</xml>")
         w.finalize_session()
 
         w2 = DataWriter(base_dir=str(tmp_path))
-        w2.resume_session("com.test.app_2026-01-01_10-00-00")
+        w2.resume_session("com.test.app")
         path = w2.save_xml("<xml>step2</xml>")
         assert "0002.xml" in path
         assert w2.step_count == 3

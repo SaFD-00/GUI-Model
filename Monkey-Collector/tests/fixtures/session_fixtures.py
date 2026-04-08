@@ -16,7 +16,7 @@ TINY_PNG = (
 
 def create_mock_session(
     base_dir: Path,
-    session_id: str = "com.test.app_2026-04-02_10-00-00",
+    session_id: str = "com.test.app",
     num_steps: int = 2,
 ) -> Path:
     """Create a mock session directory structure.
