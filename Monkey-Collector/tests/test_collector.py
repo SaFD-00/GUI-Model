@@ -135,6 +135,40 @@ class TestRunSessionFinish:
 
 
 @pytest.mark.integration
+class TestSessionEndSignal:
+    @patch("server.collector.time.sleep")
+    def test_session_end_sent_on_finish(self, mock_sleep, mock_adb):
+        """send_session_end() is called when session finishes normally."""
+        signals = [
+            _make_xml_signal(),
+            ("finish", None, None),
+        ]
+        collector, explorer, server, writer = _make_collector(mock_adb, signals)
+
+        collector.run(package="com.test.app")
+        server.send_session_end.assert_called_once()
+
+    @patch("server.collector.time.sleep")
+    def test_session_end_sent_on_timeout(self, mock_sleep, mock_adb):
+        """send_session_end() is called even when session ends due to timeouts."""
+        signals = [None, None, None, None, None]
+        collector, explorer, server, writer = _make_collector(mock_adb, signals)
+
+        collector.run(package="com.test.app")
+        server.send_session_end.assert_called_once()
+
+    @patch("server.collector.time.sleep")
+    def test_session_end_sent_on_max_external_app(self, mock_sleep, mock_adb):
+        """send_session_end() is called when session ends due to max external app retries."""
+        signals = [_make_xml_signal()]
+        signals += [("external_app", None, {"detected_package": "com.other"})] * 10
+        collector, explorer, server, writer = _make_collector(mock_adb, signals, max_steps=50)
+
+        collector.run(package="com.test.app")
+        server.send_session_end.assert_called_once()
+
+
+@pytest.mark.integration
 class TestRunSessionTimeout:
     @patch("server.collector.time.sleep")
     def test_max_timeouts(self, mock_sleep, mock_adb):

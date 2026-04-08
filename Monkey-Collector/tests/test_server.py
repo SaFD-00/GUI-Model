@@ -91,6 +91,20 @@ class TestWaitForChangeSignal:
         assert result is None
 
 
+class TestSendSessionEnd:
+    def test_sends_session_end(self, srv):
+        mock_socket = MagicMock()
+        srv._client = mock_socket
+        result = srv.send_session_end()
+        assert result is True
+        data = mock_socket.sendall.call_args[0][0]
+        decoded = json.loads(data.decode("utf-8").strip())
+        assert decoded["type"] == "SESSION_END"
+
+    def test_no_client(self, srv):
+        assert srv.send_session_end() is False
+
+
 class TestResetForNewSession:
     def test_clears_state(self, srv):
         srv._target_package = "com.test.app"
@@ -108,6 +122,15 @@ class TestResetForNewSession:
         assert srv._latest_xml_meta is None
         assert srv._client is None
         assert srv._signal_queue.empty()
+
+    def test_closes_client_socket(self, srv):
+        mock_socket = MagicMock()
+        srv._client = mock_socket
+
+        srv.reset_for_new_session()
+
+        mock_socket.close.assert_called_once()
+        assert srv._client is None
 
 
 class TestIsClientConnected:

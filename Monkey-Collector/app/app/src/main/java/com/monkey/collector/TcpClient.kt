@@ -2,11 +2,14 @@ package com.monkey.collector
 
 import android.graphics.Bitmap
 import android.util.Log
+import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.IOException
+import java.io.InputStreamReader
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import org.json.JSONObject
 
 class TcpClient(
     private val serverIp: String,
@@ -21,9 +24,15 @@ class TcpClient(
     private var socket: Socket? = null
     private var dos: DataOutputStream? = null
     private val writeLock = Any()
+    private var readerThread: Thread? = null
+    private var onSessionEnd: (() -> Unit)? = null
 
     @Volatile
     private var connected = false
+
+    fun setOnSessionEnd(callback: () -> Unit) {
+        onSessionEnd = callback
+    }
 
     fun connect(): Boolean {
         for (attempt in 1..MAX_RETRIES) {
@@ -31,6 +40,7 @@ class TcpClient(
                 socket = Socket(serverIp, serverPort)
                 dos = DataOutputStream(socket!!.getOutputStream())
                 connected = true
+                startReaderThread()
                 Log.i(TAG, "Connected to $serverIp:$serverPort (attempt $attempt)")
                 return true
             } catch (e: IOException) {
@@ -48,8 +58,50 @@ class TcpClient(
         return false
     }
 
+    /**
+     * Start a background thread that reads control signals from the server.
+     *
+     * The server sends \r\n-delimited JSON messages. Currently supported:
+     * - {"type": "SESSION_END"} — server requests the app to stop collection.
+     */
+    private fun startReaderThread() {
+        readerThread = Thread {
+            try {
+                val reader = BufferedReader(
+                    InputStreamReader(socket!!.getInputStream(), StandardCharsets.UTF_8)
+                )
+                while (connected) {
+                    val line = reader.readLine() ?: break  // null = connection closed
+                    try {
+                        val json = JSONObject(line.trim())
+                        when (json.optString("type")) {
+                            "SESSION_END" -> {
+                                Log.i(TAG, "Received SESSION_END from server")
+                                onSessionEnd?.invoke()
+                            }
+                            else -> Log.d(TAG, "Unknown server message: $line")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to parse server message: $line")
+                    }
+                }
+            } catch (e: IOException) {
+                if (connected) {
+                    Log.w(TAG, "Reader thread error: ${e.message}")
+                }
+            }
+            Log.d(TAG, "Reader thread exited")
+        }.apply {
+            isDaemon = true
+            name = "TcpClient-Reader"
+            start()
+        }
+    }
+
     fun disconnect() {
         connected = false
+        readerThread?.interrupt()
+        readerThread = null
         synchronized(writeLock) {
             try {
                 dos?.close()

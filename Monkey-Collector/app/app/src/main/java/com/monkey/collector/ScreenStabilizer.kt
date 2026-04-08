@@ -37,6 +37,8 @@ class ScreenStabilizer(
         const val MAX_ATTEMPTS = 60              // ~19s max (1000ms initial + 60 × 300ms)
         const val CHECK_INTERVAL_MS = 300L       // 300ms between checks (higher sampling)
         const val INITIAL_WAIT_MS = 1000L        // Wait for animation to begin
+        const val OSCILLATION_WINDOW = 10        // Track last 10 frame hashes
+        const val OSCILLATION_MIN_REPEATS = 3    // Pattern must repeat 3+ times to be "stable"
     }
 
     private var mediaProjectionManager: MediaProjectionManager? = null
@@ -46,6 +48,8 @@ class ScreenStabilizer(
     private var lastStableFrame: Bitmap? = null
     private var firstScreenFrame: Bitmap? = null
     private val isStabilizing = AtomicBoolean(false)
+    @Volatile
+    private var lastStabilizationTimedOut = false
 
     private val targetWidth: Int = TARGET_WIDTH
     private val targetHeight: Int =
@@ -193,8 +197,13 @@ class ScreenStabilizer(
         }
         if (bitmapA == null) {
             Log.w(TAG, "Initial capture failed after 3 retries, skipping stabilization")
+            lastStabilizationTimedOut = false
             return true
         }
+
+        // Ring buffer for oscillation detection
+        val recentHashes = mutableListOf<ByteArray>()
+        recentHashes.add(BitmapComparator.computeFrameHash(bitmapA!!))
 
         try {
             for (i in 1..MAX_ATTEMPTS) {
@@ -208,12 +217,32 @@ class ScreenStabilizer(
                     BitmapComparator.compare(bitmapA!!, bitmapB)
                 }
 
+                // Track frame hash for oscillation detection
+                if (bitmapB != null) {
+                    val hash = BitmapComparator.computeFrameHash(bitmapB)
+                    recentHashes.add(hash)
+                    if (recentHashes.size > OSCILLATION_WINDOW) {
+                        recentHashes.removeAt(0)
+                    }
+
+                    // Check for oscillation (e.g., cursor blink alternating 2 frames)
+                    if (detectOscillation(recentHashes)) {
+                        Log.d(TAG, "Oscillation detected after $i checks — treating as stable")
+                        lastStableFrame?.recycle()
+                        lastStableFrame = bitmapB
+                        bitmapA!!.recycle()
+                        lastStabilizationTimedOut = false
+                        return true
+                    }
+                }
+
                 if (difference < STABILITY_THRESHOLD) {
                     stableCount++
                     bitmapB?.recycle()
 
                     if (stableCount >= REQUIRED_STABLE_FRAMES) {
                         Log.d(TAG, "Screen stable after $i checks ($stableCount consecutive)")
+                        lastStabilizationTimedOut = false
                         return true
                     }
                 } else {
@@ -228,7 +257,42 @@ class ScreenStabilizer(
             }
         }
 
+        // Timeout: save current frame as lastStableFrame to prevent
+        // hasVisualChange() false positives on micro-animations
+        val timeoutFrame = takeComparisonScreenshot()
+        if (timeoutFrame != null) {
+            lastStableFrame?.recycle()
+            lastStableFrame = timeoutFrame
+        }
+        lastStabilizationTimedOut = true
+
         Log.w(TAG, "Stabilization timeout ($MAX_ATTEMPTS attempts)")
+        return false
+    }
+
+    /**
+     * Detect oscillating frame patterns (e.g., cursor blink alternating 2 frames).
+     *
+     * Checks if the last N frame hashes form a repeating cycle of period 1, 2, or 3.
+     * A cycle must repeat at least OSCILLATION_MIN_REPEATS times to qualify.
+     */
+    private fun detectOscillation(hashes: List<ByteArray>): Boolean {
+        for (period in 1..3) {
+            val needed = period * OSCILLATION_MIN_REPEATS
+            if (hashes.size < needed) continue
+
+            val tail = hashes.subList(hashes.size - needed, hashes.size)
+            val pattern = tail.subList(0, period)
+
+            var matches = true
+            for (j in period until needed) {
+                if (!tail[j].contentEquals(pattern[j % period])) {
+                    matches = false
+                    break
+                }
+            }
+            if (matches) return true
+        }
         return false
     }
 
@@ -252,9 +316,12 @@ class ScreenStabilizer(
         previous.recycle()
         lastStableFrame = currentFrame
 
-        val changed = diff > STABILITY_THRESHOLD
+        // Use a more lenient threshold after stabilization timeout to
+        // avoid false positives from micro-animations (cursor blink, spinners)
+        val threshold = if (lastStabilizationTimedOut) FIRST_SCREEN_THRESHOLD else STABILITY_THRESHOLD
+        val changed = diff > threshold
         if (!changed) {
-            Log.d(TAG, "No visual change (diff=${String.format("%.4f", diff)})")
+            Log.d(TAG, "No visual change (diff=${String.format("%.4f", diff)}, threshold=${String.format("%.3f", threshold)})")
         }
         return changed
     }

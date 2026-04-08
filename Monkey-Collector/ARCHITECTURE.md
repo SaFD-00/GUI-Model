@@ -119,11 +119,13 @@ MediaProjection VirtualDisplay + ImageReader를 사용하여 저해상도(100px 
 - 300ms 간격으로 저해상도 프레임 캡처
 - BitmapComparator로 연속 프레임 비교
 - 7개 연속 프레임이 1.5% 미만 차이일 때 안정화 판정
-- 최대 60회 시도 (약 19초, 초기 대기 포함), 타임아웃 시에도 캡처 진행
+- **Oscillation 감지**: 프레임 해시(8×8 grid 평균 휘도) ring buffer(10프레임)로 주기 1~3의 반복 패턴(3회 이상) 감지 → 커서 깜빡임, 미세 애니메이션 등에서 조기 안정화 판정
+- 최대 60회 시도 (약 19초, 초기 대기 포함), 타임아웃 시 현재 프레임을 `lastStableFrame`으로 저장
 - Atomic flag로 동시 안정화 시도 방지
 
 **시각적 변화 감지** (`hasVisualChange()`):
-- 현재 프레임과 `lastStableFrame` 비교 (1.5% threshold)
+- 현재 프레임과 `lastStableFrame` 비교
+- 안정화 성공 시 1.5% threshold, 타임아웃 시 5% threshold (adaptive) — 미세 애니메이션 오탐 방지
 - 변화 없으면 `false` 반환 → N signal 전송으로 이어짐
 
 **First screen 감지**:
@@ -132,7 +134,7 @@ MediaProjection VirtualDisplay + ImageReader를 사용하여 저해상도(100px 
 
 #### BitmapComparator (`BitmapComparator.kt`)
 
-두 Bitmap의 픽셀 단위 RGBA 비교. 전체 픽셀 중 차이가 있는 픽셀의 비율을 0.0~1.0으로 반환한다.
+두 Bitmap의 픽셀 단위 RGBA 비교. 전체 픽셀 중 차이가 있는 픽셀의 비율을 0.0~1.0으로 반환한다. `computeFrameHash()`: 비트맵을 8×8 그리드로 나눠 셀별 평균 휘도를 계산하여 64바이트 perceptual hash를 생성 (oscillation 감지용).
 
 #### ScreenCapture (`ScreenCapture.kt`)
 
@@ -146,10 +148,9 @@ API 30+ `AccessibilityService.takeScreenshot()` 래퍼. `HardwareBuffer`에서 `
 
 #### TcpClient (`TcpClient.kt`)
 
-P/S/X/E/N/F 프로토콜 구현체.
-- X 메시지: top_pkg, activity_name, target_pkg, is_first_screen, xml_data 전송
-- 스크린샷: JPEG 90% quality 압축 후 전송
-- Thread safety: `synchronized(writeLock)`으로 모든 write 연산 보호
+양방향 TCP 통신 구현체.
+- **App→Server**: P/S/X/E/N/F 프로토콜. X 메시지: top_pkg, activity_name, target_pkg, is_first_screen, xml_data. 스크린샷: JPEG 90% quality 압축. Thread safety: `synchronized(writeLock)`으로 모든 write 직렬화
+- **Server→App**: reader 스레드에서 `\r\n` 구분 JSON 수신. `{"type":"SESSION_END"}` → `onSessionEnd` 콜백 호출 → CollectorService가 `stopCollection()` 실행. 소켓 닫힘 시 자동 종료
 - 연결: 3회 재시도, 2초 간격
 
 #### MainActivity (`MainActivity.kt`)
@@ -167,6 +168,7 @@ MediaProjection 권한 결과(`resultCode`, `resultData`)를 Activity에서 Serv
 | Main thread | AccessibilityEvent 콜백 수신, UI overlay 업데이트 (`Handler(MainLooper)`) |
 | Worker threads | 이벤트별 캡처/XML/TCP 작업 (`Thread { ... }.start()`) |
 | TCP writes | `synchronized(writeLock)`으로 직렬화 |
+| TCP reader | TcpClient reader 스레드: 서버 제어 신호(SESSION_END 등) 수신 |
 | ScreenStabilizer | Worker thread에서 blocking 대기 (`Thread.sleep` 루프) |
 
 ### 3.3 Screen Transition Detection
@@ -179,11 +181,13 @@ ScreenStabilizer.waitForStable()
     │  1000ms 초기 대기 (애니메이션 시작 보장)
     │  100px 프레임을 300ms 간격으로 캡처
     │  7개 연속 프레임 < 1.5% diff → 안정화 완료
-    │  (최대 60회 = ~19초)
+    │  OR oscillation 감지 (2~3프레임 교대 반복 3회) → 조기 안정화
+    │  (최대 60회 = ~19초, 타임아웃 시 lastStableFrame 업데이트)
     │
     ▼
 ScreenStabilizer.hasVisualChange()
-    │  현재 프레임 vs lastStableFrame (1.5% threshold)
+    │  현재 프레임 vs lastStableFrame
+    │  (안정화 성공: 1.5%, 타임아웃: 5% adaptive threshold)
     │
     ├─ 변화 없음 → N signal 전송 → Server가 다른 element로 재시도
     │
@@ -221,7 +225,8 @@ TCP 서버. `0.0.0.0:12345`에서 Android 앱의 연결을 대기한다.
 - 바이너리 프로토콜 파싱: single-byte header → 메타데이터 텍스트 → size-prefixed 바이너리
 - `Queue` 기반 signal 전달: 4가지 signal type (`xml`, `no_change`, `external_app`, `finish`)을 큐잉
 - `get_latest_signal()`: stale signal을 모두 드레인한 후 최신 signal 반환. 큐가 비어 있으면 `timeout`까지 blocking 대기
-- `reset_for_new_session()`: 다중 세션 모드에서 세션 간 상태 초기화 (`_package_event`, signal queue, XML state 등). 서버 소켓과 accept 루프는 유지
+- `send_session_end()`: 앱에 `{"type":"SESSION_END"}` 전송. 세션 종료 시 `_run_session()` finally 블록에서 호출
+- `reset_for_new_session()`: 다중 세션 모드에서 세션 간 상태 초기화 (`_package_event`, signal queue, XML state 등). 기존 클라이언트 소켓을 명시적으로 close하여 앱이 disconnect를 감지. 서버 소켓과 accept 루프는 유지
 - `clear_signal_queue()`: 큐에 쌓인 모든 signal 폐기 (액션 실행 후 호출)
 - `wait_for_package()`: `threading.Event`로 P 메시지의 package name을 blocking 대기
 - `threading.Event`로 package name/XML 동기화
@@ -474,14 +479,15 @@ while step < max_steps:
 
 ### 5.2 Server → App
 
+`\r\n` 구분 JSON 메시지. TcpClient reader 스레드에서 수신.
+
 | Format | Description |
 |--------|-------------|
-| `{action_json}\r\n` | 실행할 action 명령 (JSON) |
+| `{"type":"SESSION_END"}\r\n` | 세션 종료 알림. 앱이 `stopCollection()` 실행 |
+| `{action_json}\r\n` | 실행할 action 명령 (미래 확장용) |
 
-Action JSON 예시:
-```json
-{"action_type": "tap", "x": 540, "y": 960, "element_index": 5}
-```
+- 세션 종료 시 서버가 `send_session_end()` 호출 → 앱의 reader 스레드가 수신 → `stopCollection()`
+- 소켓 close를 fallback으로 활용: SESSION_END를 놓쳐도 소켓 닫힘으로 reader 스레드가 종료됨
 
 ---
 

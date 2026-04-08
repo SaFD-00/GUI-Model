@@ -82,6 +82,7 @@ class CollectionServer:
         """Reset server state for a new collection session.
 
         Clears package event, signal queue, XML state, and client reference.
+        Closes the old client socket so the app detects the disconnect.
         The server socket and accept loop remain active.
         """
         self._package_event.clear()
@@ -89,6 +90,11 @@ class CollectionServer:
         self._xml_event.clear()
         self._latest_xml = None
         self._latest_xml_meta = None
+        if self._client:
+            try:
+                self._client.close()
+            except OSError:
+                pass
         self._client = None
         self.clear_signal_queue()
         logger.debug("Server state reset for new session")
@@ -108,6 +114,13 @@ class CollectionServer:
         except (OSError, BrokenPipeError) as e:
             logger.error(f"Failed to send action: {e}")
             return False
+
+    def send_session_end(self) -> bool:
+        """Send SESSION_END control signal to the connected app.
+
+        Tells the app to stop the current collection session.
+        """
+        return self.send_action({"type": "SESSION_END"})
 
     def wait_for_xml(
         self, timeout: float = 25.0

@@ -499,6 +499,9 @@ class Collector:
                         pass
                     step += 1
         finally:
+            # Notify app that session is ending
+            self.server.send_session_end()
+
             # Finalize session even if interrupted
             self.writer.finalize_session()
 

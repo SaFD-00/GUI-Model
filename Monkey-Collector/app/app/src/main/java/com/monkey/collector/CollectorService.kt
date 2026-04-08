@@ -7,6 +7,8 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -276,6 +278,10 @@ class CollectorService : AccessibilityService() {
 
         // Connect TCP client and send target package
         tcpClient = TcpClient(serverIp, serverPort)
+        tcpClient?.setOnSessionEnd {
+            Log.i(TAG, "Server ended session, stopping collection")
+            Handler(Looper.getMainLooper()).post { stopCollection() }
+        }
         Thread {
             val connected = tcpClient?.connect() ?: false
             if (connected) {
@@ -294,12 +300,14 @@ class CollectorService : AccessibilityService() {
         // Pause screen stabilizer (keep MediaProjection alive for reuse)
         screenStabilizer?.stopCaptureSession()
 
-        // Send finish and disconnect
-        tcpClient?.sendFinish()
+        // Null out tcpClient immediately to prevent in-flight worker threads
+        // from sending more data (they use tcpClient?.send* null-safe calls)
+        val client = tcpClient
+        tcpClient = null
         Thread {
-            Thread.sleep(500)
-            tcpClient?.disconnect()
-            tcpClient = null
+            client?.sendFinish()
+            Thread.sleep(200)
+            client?.disconnect()
         }.start()
 
         // Stop foreground
