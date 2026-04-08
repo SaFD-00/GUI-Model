@@ -73,7 +73,7 @@ Monkey-Collector/
 │   │   ├── __init__.py
 │   │   ├── base.py          # 추상 Parser 베이스 클래스
 │   │   └── structured_parser.py  # StructuredXmlParser (HTML-like 변환)
-│   ├── converter.py         # Parsed XML (_parsed.xml) → gui-model_stage1.jsonl 변환
+│   ├── converter.py         # Encoded XML (_encoded.xml) → gui-model_stage1.jsonl 변환
 │   ├── page_graph.py        # 페이지 맵 빌드 (parser 전처리 + fingerprint)
 │   └── graph_visualizer.py  # 페이지 맵 PyVis HTML 시각화
 │

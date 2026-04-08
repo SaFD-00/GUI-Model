@@ -106,8 +106,8 @@ def _map_event_to_action(
 
 
 def generate_example(
-    before_parsed_xml: str,
-    after_parsed_xml: str,
+    before_encoded_xml: str,
+    after_encoded_xml: str,
     event: dict,
     screenshot_path: str,
     before_elements: list[UIElement] | None = None,
@@ -115,8 +115,8 @@ def generate_example(
     """Generate a world modeling training example.
 
     Args:
-        before_parsed_xml: Pre-parsed XML (_parsed.xml) for the before state.
-        after_parsed_xml: Pre-parsed XML (_parsed.xml) for the after state.
+        before_encoded_xml: Encoded XML (_encoded.xml) for the before state.
+        after_encoded_xml: Encoded XML (_encoded.xml) for the after state.
         event: Collector event dict.
         screenshot_path: Relative image path for the JSONL record.
         before_elements: UIElement list from raw XML for coordinate-based
@@ -126,10 +126,10 @@ def generate_example(
         ShareGPT-format dict compatible with gui-model_stage1.jsonl,
         or None if no meaningful state change.
     """
-    if not before_parsed_xml or not after_parsed_xml:
+    if not before_encoded_xml or not after_encoded_xml:
         return None
 
-    if before_parsed_xml == after_parsed_xml:
+    if before_encoded_xml == after_encoded_xml:
         return None
 
     # Map event to action
@@ -145,11 +145,11 @@ def generate_example(
             {
                 "from": "human",
                 "value": (
-                    f"<image>\n## Current State\n{before_parsed_xml}\n\n"
+                    f"<image>\n## Current State\n{before_encoded_xml}\n\n"
                     f"## Action\n{action_json}"
                 ),
             },
-            {"from": "gpt", "value": after_parsed_xml},
+            {"from": "gpt", "value": after_encoded_xml},
         ],
         "images": [screenshot_path],
     }
@@ -199,18 +199,18 @@ class Converter:
             step_idx = int(raw_xml_files[i].stem)
             next_step_idx = int(raw_xml_files[i + 1].stem)
 
-            # Read pre-parsed XML (_parsed.xml) for training data
-            before_parsed_path = xml_dir / f"{step_idx:04d}_parsed.xml"
-            after_parsed_path = xml_dir / f"{next_step_idx:04d}_parsed.xml"
+            # Read encoded XML (_encoded.xml) for training data
+            before_encoded_path = xml_dir / f"{step_idx:04d}_encoded.xml"
+            after_encoded_path = xml_dir / f"{next_step_idx:04d}_encoded.xml"
 
-            if not before_parsed_path.exists() or not after_parsed_path.exists():
+            if not before_encoded_path.exists() or not after_encoded_path.exists():
                 logger.debug(
-                    f"Parsed XML not found for step {step_idx} or {next_step_idx}"
+                    f"Encoded XML not found for step {step_idx} or {next_step_idx}"
                 )
                 continue
 
-            before_parsed = before_parsed_path.read_text()
-            after_parsed = after_parsed_path.read_text()
+            before_encoded = before_encoded_path.read_text()
+            after_encoded = after_encoded_path.read_text()
 
             # Read raw XML for element coordinate lookup
             before_raw = raw_xml_files[i].read_text()
@@ -235,7 +235,7 @@ class Converter:
                 continue
 
             example = generate_example(
-                before_parsed, after_parsed, event, image_rel, before_elements
+                before_encoded, after_encoded, event, image_rel, before_elements
             )
             if example is None:
                 continue

@@ -53,7 +53,7 @@ Client-side 감지로 네트워크 트래픽과 서버 처리량을 최소화하
 │                                          │      │    ├─ ActivityCoverageTracker (CSV)    │
 │                                          │      │    └─ CostTracker (CSV)               │
 │                                          │      │                                       │
-│  MediaProjectionHelper (singleton)       │      │  Converter (parsed XML → JSONL)        │
+│  MediaProjectionHelper (singleton)       │      │  Converter (encoded XML → JSONL)        │
 └──────────────────────────────────────────┘      │  xml_parser, parser/ (StructuredXmlParser) │
                                                   └───────────────────────────────────────┘
 ```
@@ -347,14 +347,14 @@ raw XML → LLM 친화적 HTML-style XML 변환 파이프라인. 3파일 구성:
 
 #### Converter (`converter.py`)
 
-세션의 pre-parsed XML (`_parsed.xml`) → ShareGPT 형식 JSONL 변환.
+세션의 encoded XML (`_encoded.xml`) → ShareGPT 형식 JSONL 변환.
 
-수집 시 생성된 `_parsed.xml` (시맨틱 HTML 태그 + bounds + index, pretty-printed)을 직접 읽어 학습 데이터를 생성한다. 파이프라인을 다시 실행하지 않으며, 좌표 기반 element lookup이 필요한 경우에만 raw XML을 읽어 `parse_uiautomator_xml()`으로 처리한다.
+수집 시 생성된 `_encoded.xml` (시맨틱 HTML 태그 + index, bounds 제거)을 직접 읽어 학습 데이터를 생성한다. 파이프라인을 다시 실행하지 않으며, 좌표 기반 element lookup이 필요한 경우에만 raw XML을 읽어 `parse_uiautomator_xml()`으로 처리한다.
 
 연속 XML 쌍 (step i, step i+1)에서 학습 예제 생성:
 - **system**: "You are a mobile UI transition predictor..."
-- **human**: `<image>` + before XML (parsed) + action JSON
-- **gpt**: after XML (parsed)
+- **human**: `<image>` + before XML (encoded, bounds 제거) + action JSON
+- **gpt**: after XML (encoded, bounds 제거)
 
 **Event 필터링**: `transition` 필드가 `false`인 이벤트 (no-change retry 등)는 변환에서 제외된다.
 
@@ -524,21 +524,21 @@ data/raw/{package}/
 
 ### 6.2 JSONL Conversion
 
-**Pipeline**: Pre-parsed XML (`_parsed.xml`) → ShareGPT format JSONL
+**Pipeline**: Encoded XML (`_encoded.xml`) → ShareGPT format JSONL
 
-수집 시 생성된 `_parsed.xml`을 직접 읽어 학습 예제를 생성한다. Converter는 파이프라인을 다시 실행하지 않는다.
+수집 시 생성된 `_encoded.xml`을 직접 읽어 학습 예제를 생성한다. Converter는 파이프라인을 다시 실행하지 않는다.
 
 연속 step 쌍 (i, i+1)에서 학습 예제를 생성한다:
 
 | Role | Content |
 |------|---------|
 | system | "You are a mobile UI transition predictor..." |
-| human | `<image>` + current XML (parsed, bounds 포함) + action JSON |
-| gpt | next XML (parsed, bounds 포함) |
+| human | `<image>` + current XML (encoded, bounds 제거) + action JSON |
+| gpt | next XML (encoded, bounds 제거) |
 
-**Event 필터링**: events.jsonl에서 `transition: false` 이벤트 (no-change retry)는 건너뛴다. parsed XML이 before/after 동일한 경우도 제외된다.
+**Event 필터링**: events.jsonl에서 `transition: false` 이벤트 (no-change retry)는 건너뛴다. encoded XML이 before/after 동일한 경우도 제외된다.
 
-**XML source**: `_parsed.xml` = `StructuredXmlParser.parse()` 결과 (시맨틱 HTML 태그 + bounds + index, pretty-printed). 수집 시 `DataWriter.save_xml()`이 생성한다.
+**XML source**: `_encoded.xml` = `StructuredXmlParser.parse()` 후 bounds 제거 결과 (시맨틱 HTML 태그 + index, bounds 없음). 수집 시 `DataWriter.save_xml()`이 생성한다.
 
 **Action mapping**: Collector의 action type을 GUI-Model format으로 변환
 - `tap` → `Click` (element_index 우선, fallback: 좌표로 최소 bounding box element 검색)
