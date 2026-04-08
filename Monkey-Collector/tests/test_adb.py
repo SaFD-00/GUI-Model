@@ -145,7 +145,39 @@ class TestAdbCommands:
         mock_subprocess.return_value.stdout = ""
         assert adb_client.get_current_activity() == ""
 
-    def test_get_declared_activities(self, adb_client, mock_subprocess):
+    def test_get_declared_activities_from_packages_section(self, adb_client, mock_subprocess):
+        """Packages section lists ALL manifest activities (not just intent-filtered)."""
+        mock_subprocess.return_value.stdout = (
+            "Activity Resolver Table:\n"
+            "  Non-Data Actions:\n"
+            "      android.intent.action.MAIN:\n"
+            "        abc1234 com.test.app/.MainActivity filter abc\n"
+            "  Receiver Resolver Table:\n"
+            "      some.action:\n"
+            "\n"
+            "Packages:\n"
+            "  Package [com.test.app] (abcdef):\n"
+            "    userId=10123\n"
+            "    activities:\n"
+            "      com.test.app/.MainActivity\n"
+            "        flags=0x0\n"
+            "      com.test.app/.DetailActivity\n"
+            "        flags=0x0\n"
+            "      com.test.app/.SettingsActivity\n"
+            "        flags=0x0\n"
+            "    receivers:\n"
+            "      com.test.app/.MyReceiver\n"
+        )
+        result = adb_client.get_declared_activities("com.test.app")
+        # Should find all 3 activities from Packages section, not just 1 from Resolver
+        assert result == [
+            "com.test.app/.DetailActivity",
+            "com.test.app/.MainActivity",
+            "com.test.app/.SettingsActivity",
+        ]
+
+    def test_get_declared_activities_fallback_to_resolver(self, adb_client, mock_subprocess):
+        """Falls back to Activity Resolver Table when Packages section is absent."""
         mock_subprocess.return_value.stdout = (
             "Activity Resolver Table:\n"
             "  Non-Data Actions:\n"

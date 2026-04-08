@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from server.activity_coverage import ActivityCoverageTracker
+from server.activity_coverage import ActivityCoverageTracker, _normalize_activity_name
 
 
 class TestInitialize:
@@ -114,6 +114,54 @@ class TestEdgeCases:
         tracker = ActivityCoverageTracker()
         tracker.initialize(str(tmp_path), [])
         entry = tracker.record("A", step=1)
-        # coverage = 1/1 (max(0,1)) to avoid division by zero
-        assert entry["total_activities"] == 0
+        # A is dynamically added to total, so total_activities == 1
+        assert entry["total_activities"] == 1
         assert entry["coverage"] == pytest.approx(1.0)
+
+    def test_dynamic_total_expansion(self, tmp_path):
+        """Visiting an undeclared activity expands total_activities."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(str(tmp_path), ["A", "B"])
+        tracker.record("A", step=1)
+        tracker.record("C", step=2)  # C is not declared
+        assert tracker.get_visited_count() == 2
+        assert len(tracker.total_activities) == 3  # expanded
+        assert tracker.get_coverage() <= 1.0
+
+    def test_format_normalization(self, tmp_path):
+        """Shorthand and full activity formats are treated as the same."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(str(tmp_path), ["com.test.app/.MainActivity"])
+        # App sends full format
+        tracker.record("com.test.app/com.test.app.MainActivity", step=1)
+        # Should NOT expand total — same activity in different format
+        assert len(tracker.total_activities) == 1
+        assert tracker.get_coverage() == pytest.approx(1.0)
+
+    def test_coverage_never_exceeds_one(self, tmp_path):
+        """Coverage stays <= 1.0 even with many unknown activities."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(str(tmp_path), ["A"])
+        tracker.record("A", step=1)
+        tracker.record("B", step=2)
+        tracker.record("C", step=3)
+        tracker.record("D", step=4)
+        assert tracker.get_coverage() <= 1.0
+        assert len(tracker.total_activities) == 4
+
+
+class TestNormalize:
+    def test_shorthand_to_full(self):
+        assert _normalize_activity_name("com.test.app/.MainActivity") == \
+            "com.test.app/com.test.app.MainActivity"
+
+    def test_full_format_unchanged(self):
+        assert _normalize_activity_name("com.test.app/com.test.app.MainActivity") == \
+            "com.test.app/com.test.app.MainActivity"
+
+    def test_no_slash(self):
+        assert _normalize_activity_name("SomeActivity") == "SomeActivity"
+
+    def test_inner_class(self):
+        assert _normalize_activity_name("com.test.app/.Outer$Inner") == \
+            "com.test.app/com.test.app.Outer$Inner"

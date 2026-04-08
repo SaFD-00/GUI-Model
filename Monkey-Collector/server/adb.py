@@ -158,8 +158,10 @@ class AdbClient:
     def get_declared_activities(self, package: str) -> list[str]:
         """Return all declared Activity component names for *package*.
 
-        Parses the Activity Resolver Table from ``dumpsys package``.
-        Returns sorted list of component strings.
+        Parses the ``Packages:`` section from ``dumpsys package`` to get
+        **all** manifest-declared activities.  Falls back to the Activity
+        Resolver Table (intent-filter-only) when the Packages section
+        yields no results.  Returns sorted list of component strings.
         """
         try:
             output = self.shell(f"dumpsys package {package}", timeout=15)
@@ -167,11 +169,76 @@ class AdbClient:
             logger.warning(f"Failed to get declared activities: {e}")
             return []
 
+        activities = self._parse_package_activities(output, package)
+        if not activities:
+            activities = self._parse_resolver_activities(output, package)
+
+        return sorted(activities)
+
+    # ------------------------------------------------------------------
+    # Private helpers for dumpsys parsing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_package_activities(output: str, package: str) -> set[str]:
+        """Parse activities from the ``Packages:`` section of dumpsys.
+
+        This section lists **all** manifest-declared activities regardless
+        of whether they have intent filters.
+        """
+        activities: set[str] = set()
+        activity_pattern = re.compile(rf'({re.escape(package)}/\S+)')
+
+        in_packages = False
+        in_target_pkg = False
+        in_activities = False
+        activities_indent: int | None = None
+
+        for line in output.splitlines():
+            stripped = line.strip()
+
+            if not in_packages:
+                if stripped == "Packages:":
+                    in_packages = True
+                continue
+
+            if not in_target_pkg:
+                if f"Package [{package}]" in stripped:
+                    in_target_pkg = True
+                continue
+
+            indent = len(line) - len(line.lstrip())
+
+            if not in_activities:
+                if stripped == "activities:":
+                    in_activities = True
+                    activities_indent = indent
+                    continue
+                # Another top-level package started — stop searching.
+                if stripped.startswith("Package ["):
+                    break
+                continue
+
+            # Inside activities: subsection.
+            # A sibling or parent section at same/lower indent ends it.
+            if stripped and indent <= activities_indent:
+                break
+
+            match = activity_pattern.search(stripped)
+            if match:
+                activities.add(match.group(1))
+
+        return activities
+
+    @staticmethod
+    def _parse_resolver_activities(output: str, package: str) -> set[str]:
+        """Parse activities from the Activity Resolver Table (fallback).
+
+        Only returns activities that have intent filters registered.
+        """
         activities: set[str] = set()
         in_activity_section = False
-        activity_pattern = re.compile(
-            rf'({re.escape(package)}/\S+)'
-        )
+        activity_pattern = re.compile(rf'({re.escape(package)}/\S+)')
 
         for line in output.splitlines():
             stripped = line.strip()
@@ -188,7 +255,7 @@ class AdbClient:
                 if match:
                     activities.add(match.group(1))
 
-        return sorted(activities)
+        return activities
 
     def wait_for_idle(self, timeout: float = 2.0) -> None:
         """Wait for the UI to settle after an action."""
