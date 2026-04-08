@@ -10,7 +10,7 @@ from server.activity_coverage import ActivityCoverageTracker
 from server.adb import AdbClient
 from server.cost_tracker import CostTracker
 from server.explorer import SmartExplorer
-from server.page_graph import PageGraph
+from server.page_graph import PageGraph, build_graph_from_session
 from server.server import CollectionServer
 from server.storage import DataWriter
 from server.text_generator import TextGenerator
@@ -49,6 +49,7 @@ class Collector:
         activity_coverage_tracker: ActivityCoverageTracker | None = None,
         cost_tracker: CostTracker | None = None,
         text_generator: TextGenerator | None = None,
+        new_session: bool = False,
     ):
         self.adb = adb
         self.explorer = explorer
@@ -61,6 +62,7 @@ class Collector:
         self._activity_tracker = activity_coverage_tracker
         self._cost_tracker = cost_tracker
         self._text_generator = text_generator
+        self._new_session = new_session
 
     def run(self, package: str | None = None) -> str:
         """Run a single collection session.
@@ -173,17 +175,36 @@ class Collector:
 
         logger.info(f"Target package: {package}")
 
-        # 3. Initialize session
-        session_id = f"{package}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        # 3. Initialize session (resume existing or create new)
         self.server.on_external_app = lambda payload: self.writer.log_external_app(payload)
-        self.writer.init_session(session_id, package)
 
-        # Initialize trackers (session_dir now available)
-        if self._activity_tracker is not None:
+        existing = (
+            None if self._new_session
+            else self.writer.find_existing_session(package)
+        )
+
+        if existing:
+            session_id = existing
+            resume_step = self.writer.resume_session(session_id)
             total_activities = self.adb.get_declared_activities(package)
-            self._activity_tracker.initialize(self.writer.session_dir, total_activities)
-        if self._cost_tracker is not None:
-            self._cost_tracker.initialize(self.writer.session_dir)
+            if self._activity_tracker is not None:
+                self._activity_tracker.resume(
+                    self.writer.session_dir, total_activities,
+                )
+            if self._cost_tracker is not None:
+                self._cost_tracker.resume(self.writer.session_dir)
+            logger.info(f"Resuming session: {session_id} from step {resume_step}")
+        else:
+            session_id = f"{package}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+            self.writer.init_session(session_id, package)
+            resume_step = 0
+            if self._activity_tracker is not None:
+                total_activities = self.adb.get_declared_activities(package)
+                self._activity_tracker.initialize(
+                    self.writer.session_dir, total_activities,
+                )
+            if self._cost_tracker is not None:
+                self._cost_tracker.initialize(self.writer.session_dir)
 
         logger.info(f"Starting session: {session_id}")
         logger.info(f"Target app: {package}, max_steps: {self.max_steps}")
@@ -192,7 +213,7 @@ class Collector:
         page_graph = PageGraph()
 
         # 4. Collection loop
-        step = 0
+        step = resume_step
         total_actions = 0
         timeout_count = 0
         max_timeouts = 5
@@ -207,7 +228,8 @@ class Collector:
         same_page_count = 0
 
         try:
-            while step < self.max_steps:
+            max_step = resume_step + self.max_steps
+            while step < max_step:
                 try:
                     # Wait for latest signal (skips stale queued signals)
                     result = self.server.get_latest_signal(
@@ -505,9 +527,10 @@ class Collector:
             # Finalize session even if interrupted
             self.writer.finalize_session()
 
-            # Save page graph and generate visualization
-            if page_graph.nodes:
-                graph_data = page_graph.to_dict()
+            # Rebuild page graph from all XML files (covers both old + new steps)
+            rebuilt_graph = build_graph_from_session(self.writer.session_dir)
+            if rebuilt_graph.nodes:
+                graph_data = rebuilt_graph.to_dict()
                 graph_data["metadata"]["session_id"] = session_id
                 self.writer.save_page_graph(graph_data)
                 try:

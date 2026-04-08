@@ -25,6 +25,9 @@ monkey-collect run --app <package> --steps 100
 # 단일 세션 모드 (1회 수집 후 서버 자동 종료)
 monkey-collect run --single --steps 100
 
+# 같은 앱에 기존 세션이 있어도 새 세션 디렉토리 강제 생성
+monkey-collect run --steps 100 --new-session
+
 # 하드코딩 랜덤 텍스트 사용 (API 키 불필요)
 monkey-collect run --steps 100 --input-mode random
 
@@ -50,6 +53,8 @@ Android 앱은 `app/` 디렉토리에서 Gradle로 빌드 (compileSdk 34, minSdk
 4. ■ 버튼으로 세션 종료 → 다른 앱 열기 → ▶ 버튼 → 새 세션 자동 시작 (서버 재시작 불필요)
 5. Ctrl+C로 서버 종료
 
+**세션 이어서 저장**: 같은 앱 패키지에 대한 기존 세션이 `data/raw/`에 존재하면, 새 디렉토리를 만들지 않고 기존 세션에 데이터를 이어서 저장한다 (스크린샷/XML/이벤트/커버리지/비용 모두 append). PageGraph는 세션 종료 시 전체 XML로 재빌드. `--new-session` 플래그로 강제 새 세션 생성 가능.
+
 ## Architecture
 
 ```
@@ -68,7 +73,7 @@ Android App (Kotlin)  ←TCP→  Python Server
                              Converter (raw → ShareGPT JSONL)
 ```
 
-**수집 루프**: App이 A11y 이벤트 감지 → ScreenStabilizer로 전환 확정 → 스크린샷+XML+Activity를 서버로 전송 → DataWriter가 XML 5종 저장 → PageGraph로 페이지 식별(parser 전처리 후 fingerprint) + 전환 기록 → SmartExplorer가 액션 선택 → ADB로 실행 → 반복. 화면 변화 없으면 N signal 전송 → no-change retry (max 3, element exclusion). first screen 보호: back 비활성화, tap으로 대체. external_app signal 시 server-side 능동 복구: return_to_app (1-3회) → recover (4+회) → 세션 종료 (10+회). 빈 UI tree 보호: 앱 로딩 중 빈 화면이면 back 대신 대기 후 재시도 (max 2회), external_app_count는 유효한 UI가 있는 화면에서만 리셋.
+**수집 루프**: 세션 시작 시 같은 앱의 기존 세션 자동 감지 → 있으면 resume (step/tracker 이어서), 없으면 새 세션 생성. App이 A11y 이벤트 감지 → ScreenStabilizer로 전환 확정 → 스크린샷+XML+Activity를 서버로 전송 → DataWriter가 XML 5종 저장 → SmartExplorer가 액션 선택 → ADB로 실행 → 반복. 세션 종료 시 전체 XML로 PageGraph 재빌드 (`build_graph_from_session()`). 화면 변화 없으면 N signal 전송 → no-change retry (max 3, element exclusion). first screen 보호: back 비활성화, tap으로 대체. external_app signal 시 server-side 능동 복구: return_to_app (1-3회) → recover (4+회) → 세션 종료 (10+회). 빈 UI tree 보호: 앱 로딩 중 빈 화면이면 back 대신 대기 후 재시도 (max 2회), external_app_count는 유효한 UI가 있는 화면에서만 리셋.
 
 **TCP 프로토콜 (App→Server)**: `P`(타겟 패키지명), `S`(스크린샷 JPEG), `X`(XML+top_pkg+activity_name+target_pkg+is_first_screen), `E`(외부 앱 감지), `N`(화면 변화 없음), `F`(종료). 바이너리 데이터는 크기 prefixed. Activity명은 앱이 `TYPE_WINDOW_STATE_CHANGED` 이벤트에서 추출하여 전송.
 
@@ -78,7 +83,7 @@ Android App (Kotlin)  ←TCP→  Python Server
 
 | Module | Role |
 |--------|------|
-| `server/collector.py` | 메인 수집 오케스트레이션. `run()` 단일 세션, `run_multi()` 다중 세션 (서버 유지). no-change 재시도 (max 3), first screen 보호, external_app 능동 복구 (return_to_app/recover, max 10). 빈 UI tree 보호: 앱 로딩 중 빈 화면이면 대기 후 재시도 (max 2), external_app_count는 유효 UI tree에서만 리셋. Activity 커버리지: TCP meta에서 activity_name 우선 사용, 없으면 ADB fallback. 실시간 PageGraph 빌드 (세션 종료 시 page_graph.json + HTML 자동 생성). 세션 종료 시 `send_session_end()`로 앱에 종료 알림 |
+| `server/collector.py` | 메인 수집 오케스트레이션. `run()` 단일 세션, `run_multi()` 다중 세션 (서버 유지). **세션 이어서 저장**: 같은 앱 기존 세션 자동 감지 → `DataWriter.resume_session()`으로 step 이어서 저장, tracker들 `resume()`으로 CSV append. `--new-session`으로 강제 새 세션. no-change 재시도 (max 3), first screen 보호, external_app 능동 복구 (return_to_app/recover, max 10). 빈 UI tree 보호: 앱 로딩 중 빈 화면이면 대기 후 재시도 (max 2), external_app_count는 유효 UI tree에서만 리셋. Activity 커버리지: TCP meta에서 activity_name 우선 사용, 없으면 ADB fallback. 세션 종료 시 전체 XML로 PageGraph 재빌드 (`build_graph_from_session()`) + HTML 자동 생성. `send_session_end()`로 앱에 종료 알림 |
 | `server/server.py` | TCP 서버, 바이너리 프로토콜 파싱 (X 메시지에 activity_name 포함). Queue 기반 change signal 대기. `reset_for_new_session()` 세션 간 상태 초기화 + 소켓 close. `send_session_end()` 앱에 세션 종료 알림 |
 | `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%). element exclusion, first screen에서 back 비활성화. TextGenerator 주입으로 input_text 생성 전략 교체 가능. `has_left_app()` / `return_to_app()` / `recover()` — 앱 이탈 감지 및 복구 |
 | `server/text_generator.py` | InputText 생성 전략. `RandomTextGenerator` (하드코딩 랜덤), `LLMTextGenerator` (OpenAI gpt-5-nano Responses API, reasoning: minimal, verbosity: low). API 실패 시 자동 fallback |
@@ -86,9 +91,9 @@ Android App (Kotlin)  ←TCP→  Python Server
 | `server/parser/` | 구조적 XML 파서 (3파일: `base.py`, `structured_parser.py`, `__init__.py`). 5단계 파이프라인: _reformat→_simplify→_clean→_renumber→pretty_xml. raw XML을 HTML-like 시맨틱 태그(button, p, img, input, div)로 변환. bounds 캐싱/제거, scroll 중복 제거, attribute whitelist 적용 |
 | `server/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
 | `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색). `get_current_activity()`, `get_declared_activities()` — Activity 커버리지용 |
-| `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{session_id}/`). XML 5종 저장 (raw, parsed, hierarchy, encoded, pretty) |
-| `server/activity_coverage.py` | 앱별 Activity 방문 커버리지 추적. 세션별 `activity_coverage.csv` 생성. Activity명은 앱이 TCP로 전송 (ADB fallback) |
-| `server/cost_tracker.py` | LLM API 토큰 사용량/비용 추적. 세션별 `cost.csv` 생성. `MODEL_PRICING` 딕셔너리 |
+| `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{session_id}/`). XML 5종 저장 (raw, parsed, hierarchy, encoded, pretty). `find_existing_session(package)`: 같은 앱의 최신 기존 세션 검색. `resume_session(session_id)`: 기존 세션 이어서 저장 (step_count 복원, `resumed_at` 타임스탬프 기록) |
+| `server/activity_coverage.py` | 앱별 Activity 방문 커버리지 추적. 세션별 `activity_coverage.csv` 생성. Activity명은 앱이 TCP로 전송 (ADB fallback). `resume()`: 기존 CSV에서 visited_activities 복원 후 append |
+| `server/cost_tracker.py` | LLM API 토큰 사용량/비용 추적. 세션별 `cost.csv` 생성. `MODEL_PRICING` 딕셔너리. `resume()`: 기존 CSV에서 누적 비용 복원 후 append |
 | `server/page_graph.py` | 페이지 맵 엔진. parser 전처리(_reformat+_simplify) 후 시맨틱 태그 기반 fingerprint로 고유 페이지 식별. `PageGraph`로 전환 그래프 빌드 (중복 필터링: dedup key = from_page, to_page, action_type). `build_graph_from_session()`으로 사후 재구축 |
 | `server/graph_visualizer.py` | PyVis 기반 ��이지 맵 HTML 시각화. Activity별 노드 색상, 전환 빈도별 엣지 너비. hierarchical (>15 노드) / forceAtlas2 레이아웃 |
 | `server/actions.py` | Action 데이터클래스 (Tap, Swipe, InputText, LongPress, PressBack, PressHome) |
@@ -112,7 +117,7 @@ Android App (Kotlin)  ←TCP→  Python Server
 **Raw 세션 구조**:
 ```
 data/raw/{package}_{YYYY-MM-DD_HH-MM-SS}/
-├── metadata.json
+├── metadata.json           # session_id, package, started_at, completed_at, total_steps, external_app_events, resumed_at[]
 ├── screenshots/0000.png, 0001.png, ...
 ├── xml/
 │   ├── 0000.xml                # raw uiautomator dump

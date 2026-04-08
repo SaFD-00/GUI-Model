@@ -24,6 +24,47 @@ class DataWriter:
         self.session_dir: str | None = None
         self.step_count = 0
 
+    def find_existing_session(self, package: str) -> str | None:
+        """Find the latest existing session directory for a package.
+
+        Returns the session_id (directory name) or None.
+        """
+        if not os.path.isdir(self.base_dir):
+            return None
+        candidates = []
+        for name in os.listdir(self.base_dir):
+            if name.startswith(f"{package}_"):
+                session_dir = os.path.join(self.base_dir, name)
+                meta_path = os.path.join(session_dir, "metadata.json")
+                if os.path.isfile(meta_path):
+                    candidates.append(name)
+        if not candidates:
+            return None
+        return sorted(candidates)[-1]
+
+    def resume_session(self, session_id: str) -> int:
+        """Resume an existing session. Returns current step count."""
+        self.session_dir = os.path.join(self.base_dir, session_id)
+        xml_dir = os.path.join(self.session_dir, "xml")
+
+        # Count existing raw XML files (exclude _parsed, _hierarchy, etc.)
+        existing = [
+            f for f in os.listdir(xml_dir)
+            if f.endswith(".xml") and "_" not in f
+        ]
+        self.step_count = len(existing)
+
+        # Update metadata with resumed_at timestamp
+        meta_path = os.path.join(self.session_dir, "metadata.json")
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta.setdefault("resumed_at", []).append(datetime.now().isoformat())
+        meta["completed_at"] = None
+        self._write_metadata(meta)
+
+        logger.info(f"Session resumed: {self.session_dir} (step_count={self.step_count})")
+        return self.step_count
+
     def init_session(self, session_id: str, app_package: str):
         """Initialize a new session directory."""
         self.session_dir = os.path.join(self.base_dir, session_id)

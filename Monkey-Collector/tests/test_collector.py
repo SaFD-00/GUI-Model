@@ -7,7 +7,16 @@ import pytest
 
 from server.actions import Tap
 from server.collector import Collector
+from server.page_graph import PageGraph
 from tests.fixtures.xml_samples import MINIMAL_XML, SIMPLE_XML
+
+
+@pytest.fixture(autouse=True)
+def _mock_build_graph():
+    """Mock build_graph_from_session for all collector tests."""
+    with patch("server.collector.build_graph_from_session") as mock:
+        mock.return_value = PageGraph()
+        yield mock
 
 
 def _make_xml_signal(xml=SIMPLE_XML, pkg="com.test.app", is_first=False, activity="com.test.app/.MainActivity"):
@@ -38,6 +47,8 @@ def _make_collector(mock_adb, signals, max_steps=10):
     mock_writer.step_count = 0
     mock_writer.save_xml.return_value = "/tmp/xml/0000.xml"
     mock_writer.save_screenshot.return_value = "/tmp/screenshots/0000.png"
+    mock_writer.find_existing_session.return_value = None
+    mock_writer.session_dir = "/tmp/sessions/com.test.app_2026-01-01_10-00-00"
 
     collector = Collector(
         adb=mock_adb,
@@ -50,6 +61,58 @@ def _make_collector(mock_adb, signals, max_steps=10):
     )
 
     return collector, mock_explorer, mock_server, mock_writer
+
+
+@pytest.mark.integration
+class TestSessionResume:
+    @patch("server.collector.time.sleep")
+    def test_resumes_existing_session(self, mock_sleep, mock_adb):
+        """When existing session found, resume is used instead of init."""
+        signals = [
+            _make_xml_signal(),
+            ("finish", None, None),
+        ]
+        collector, explorer, server, writer = _make_collector(mock_adb, signals)
+        writer.find_existing_session.return_value = "com.test.app_2026-01-01_10-00-00"
+        writer.resume_session.return_value = 5
+        writer.session_dir = "/tmp/sessions/com.test.app_2026-01-01_10-00-00"
+
+        session_id = collector.run(package="com.test.app")
+
+        assert session_id == "com.test.app_2026-01-01_10-00-00"
+        writer.resume_session.assert_called_once_with("com.test.app_2026-01-01_10-00-00")
+        writer.init_session.assert_not_called()
+
+    @patch("server.collector.time.sleep")
+    def test_new_session_flag(self, mock_sleep, mock_adb):
+        """--new-session flag forces new session creation."""
+        signals = [
+            _make_xml_signal(),
+            ("finish", None, None),
+        ]
+        collector, explorer, server, writer = _make_collector(mock_adb, signals)
+        collector._new_session = True
+        writer.find_existing_session.return_value = "com.test.app_2026-01-01_10-00-00"
+
+        session_id = collector.run(package="com.test.app")
+
+        writer.resume_session.assert_not_called()
+        writer.init_session.assert_called_once()
+
+    @patch("server.collector.time.sleep")
+    def test_no_existing_session(self, mock_sleep, mock_adb):
+        """No existing session → normal init."""
+        signals = [
+            _make_xml_signal(),
+            ("finish", None, None),
+        ]
+        collector, explorer, server, writer = _make_collector(mock_adb, signals)
+        writer.find_existing_session.return_value = None
+
+        session_id = collector.run(package="com.test.app")
+
+        writer.resume_session.assert_not_called()
+        writer.init_session.assert_called_once()
 
 
 @pytest.mark.integration

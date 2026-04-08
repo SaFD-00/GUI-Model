@@ -82,6 +82,31 @@ class ActivityCoverageTracker:
 
         return entry
 
+    def resume(self, session_dir: str, total_activities: list[str]) -> None:
+        """Resume from existing activity_coverage.csv.
+
+        Rebuilds visited_activities from CSV and appends new records.
+        """
+        self.csv_path = os.path.join(session_dir, "activity_coverage.csv")
+        self.total_activities = total_activities
+        self.visited_activities = set()
+        self.start_time = time.time()
+
+        if os.path.exists(self.csv_path):
+            with open(self.csv_path, encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    activity = row.get("activity", "")
+                    if activity:
+                        self.visited_activities.add(activity)
+
+        self._initialized = True
+        logger.info(
+            f"Activity coverage tracker resumed: "
+            f"{len(self.visited_activities)} previously visited, "
+            f"{len(total_activities)} total activities"
+        )
+
     def get_coverage(self) -> float:
         """Current coverage ratio."""
         total = max(len(self.total_activities), 1)

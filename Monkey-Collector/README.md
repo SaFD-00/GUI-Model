@@ -133,11 +133,16 @@ monkey-collect run --app <package> [옵션]
 | `--device` | - | ADB 디바이스 시리얼 |
 | `--input-mode` | `api` | 텍스트 입력 모드: `api` (LLM) / `random` (하드코딩) |
 | `--single` | - | 단일 세션 모드: 1회 수집 후 서버 종료 (기본: 다중 세션) |
+| `--new-session` | - | 강제 새 세션 디렉토리 생성 (기본: 같은 앱 기존 세션에 이어서 저장) |
 
 ```bash
 # 기본 (다중 세션 — 여러 앱 연속 수집, Ctrl+C로 종료)
+# 같은 앱에 기존 세션이 있으면 자동으로 이어서 저장
 monkey-collect run --steps 100
 # → 앱에서 ■ 버튼으로 세션 종료 → 다른 앱 열기 → ▶ 버튼 → 새 세션 자동 시작
+
+# 같은 앱이라도 새 세션 디렉토리 강제 생성
+monkey-collect run --steps 100 --new-session
 
 # 단일 세션 (1회 수집 후 서버 자동 종료)
 monkey-collect run --single --app com.android.calculator2 --steps 50
@@ -222,11 +227,23 @@ Server 측:
 
 ## 출력 데이터
 
+### 세션 이어서 저장 (Resume)
+
+같은 앱 패키지에 대한 기존 세션이 `data/raw/`에 존재하면, 새 디렉토리를 만들지 않고 기존 세션에 데이터를 이어서 저장한다:
+- 스크린샷/XML: 기존 step 번호 이후부터 저장 (예: 0035.png~)
+- events.jsonl: append
+- activity_coverage.csv: 기존 visited_activities 복원 후 append
+- cost.csv: 기존 누적 비용 복원 후 append
+- page_graph.json: 세션 종료 시 전체 XML로 재빌드
+- metadata.json: `resumed_at` 타임스탬프 배열에 추가
+
+`--new-session` 플래그로 강제 새 세션 생성 가능.
+
 ### Raw 세션 데이터
 
 ```
 data/raw/<session_id>/
-├── metadata.json           # 세션 메타데이터
+├── metadata.json           # 세션 메타데이터 (resumed_at[] 포함)
 ├── screenshots/            # 전환 감지된 step의 스크린샷
 │   ├── 0000.png
 │   ├── 0001.png

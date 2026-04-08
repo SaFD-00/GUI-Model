@@ -43,6 +43,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         activity_coverage_tracker=activity_tracker,
         cost_tracker=cost_tracker,
         text_generator=text_gen,
+        new_session=args.new_session,
     )
 
     if args.single:
@@ -157,6 +158,12 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Single-session mode: stop server after one session (default: multi-session)",
+    )
+    p.add_argument(
+        "--new-session",
+        action="store_true",
+        default=False,
+        help="Force new session directory (default: continue existing session for same app)",
     )
 
     # convert

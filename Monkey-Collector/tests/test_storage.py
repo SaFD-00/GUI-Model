@@ -174,6 +174,92 @@ class TestReinitSession:
         assert "session_2" in w.session_dir
 
 
+class TestFindExistingSession:
+    def test_returns_latest(self, tmp_path):
+        """Multiple sessions for same package → returns the latest."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        w.init_session("com.test.app_2026-01-02_10-00-00", "com.test.app")
+
+        result = w.find_existing_session("com.test.app")
+        assert result == "com.test.app_2026-01-02_10-00-00"
+
+    def test_returns_none_when_no_session(self, tmp_path):
+        w = DataWriter(base_dir=str(tmp_path))
+        assert w.find_existing_session("com.test.app") is None
+
+    def test_ignores_other_packages(self, tmp_path):
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("com.other.app_2026-01-01_10-00-00", "com.other.app")
+
+        assert w.find_existing_session("com.test.app") is None
+
+    def test_ignores_dirs_without_metadata(self, tmp_path):
+        """Directory without metadata.json is not a valid session."""
+        w = DataWriter(base_dir=str(tmp_path))
+        os.makedirs(tmp_path / "com.test.app_2026-01-01_10-00-00")
+        # No metadata.json created
+        assert w.find_existing_session("com.test.app") is None
+
+
+class TestResumeSession:
+    def test_restores_step_count(self, tmp_path):
+        """Step count restored from existing raw XML files."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        w.save_xml("<xml>step0</xml>")
+        w.save_xml("<xml>step1</xml>")
+        w.save_xml("<xml>step2</xml>")
+        w.finalize_session()
+
+        w2 = DataWriter(base_dir=str(tmp_path))
+        step_count = w2.resume_session("com.test.app_2026-01-01_10-00-00")
+        assert step_count == 3
+        assert w2.step_count == 3
+
+    def test_preserves_started_at(self, tmp_path):
+        """Original started_at is preserved on resume."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        meta_path = tmp_path / "com.test.app_2026-01-01_10-00-00" / "metadata.json"
+        original_meta = json.loads(meta_path.read_text())
+        original_started = original_meta["started_at"]
+
+        w2 = DataWriter(base_dir=str(tmp_path))
+        w2.resume_session("com.test.app_2026-01-01_10-00-00")
+
+        meta = json.loads(meta_path.read_text())
+        assert meta["started_at"] == original_started
+
+    def test_adds_resumed_at(self, tmp_path):
+        """Resume adds resumed_at timestamp array."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+
+        w2 = DataWriter(base_dir=str(tmp_path))
+        w2.resume_session("com.test.app_2026-01-01_10-00-00")
+
+        meta_path = tmp_path / "com.test.app_2026-01-01_10-00-00" / "metadata.json"
+        meta = json.loads(meta_path.read_text())
+        assert "resumed_at" in meta
+        assert len(meta["resumed_at"]) == 1
+        assert meta["completed_at"] is None
+
+    def test_continues_numbering(self, tmp_path):
+        """After resume, new files continue from existing step count."""
+        w = DataWriter(base_dir=str(tmp_path))
+        w.init_session("com.test.app_2026-01-01_10-00-00", "com.test.app")
+        w.save_xml("<xml>step0</xml>")
+        w.save_xml("<xml>step1</xml>")
+        w.finalize_session()
+
+        w2 = DataWriter(base_dir=str(tmp_path))
+        w2.resume_session("com.test.app_2026-01-01_10-00-00")
+        path = w2.save_xml("<xml>step2</xml>")
+        assert "0002.xml" in path
+        assert w2.step_count == 3
+
+
 class TestIncrementMetadata:
     def test_increment_twice(self, tmp_path):
         """_increment_metadata twice -> value is 2."""

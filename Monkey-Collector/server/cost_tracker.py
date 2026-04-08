@@ -90,6 +90,29 @@ class CostTracker:
 
         return entry
 
+    def resume(self, session_dir: str) -> None:
+        """Resume from existing cost.csv.
+
+        Rebuilds accumulated total from CSV and appends new records.
+        """
+        self.csv_path = os.path.join(session_dir, "cost.csv")
+        self.start_time = time.time()
+        self._total = 0.0
+
+        if os.path.exists(self.csv_path):
+            with open(self.csv_path, encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        self._total = float(row.get("total", 0))
+                    except ValueError:
+                        pass
+
+        self._initialized = True
+        logger.info(
+            f"Cost tracker resumed: previous total=${self._total:.6f}"
+        )
+
     def get_total_cost(self) -> float:
         """Return accumulated total cost in USD."""
         return self._total
