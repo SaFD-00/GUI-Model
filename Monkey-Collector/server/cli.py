@@ -120,6 +120,15 @@ def cmd_page_map_all(args: argparse.Namespace) -> None:
     logger.info(f"Built page maps for {total} sessions")
 
 
+def cmd_regenerate(args: argparse.Namespace) -> None:
+    """Regenerate all XML variants from raw XML files."""
+    from server.storage import regenerate_xml_variants
+
+    logger.info(f"Regenerating XML variants under: {args.raw_dir}")
+    count = regenerate_xml_variants(args.raw_dir)
+    logger.info(f"Regenerated {count} files total")
+
+
 def cmd_convert_all(args: argparse.Namespace) -> None:
     """Convert all sessions in a directory to JSONL."""
     from server.converter import Converter
@@ -192,6 +201,10 @@ def main() -> None:
     )
     p.add_argument("--no-open", action="store_true", help="Do not open browser")
 
+    # regenerate
+    p = sub.add_parser("regenerate", help="Regenerate XML variants from raw XML")
+    p.add_argument("--raw-dir", default="data/raw", help="Raw sessions directory")
+
     # convert-all
     p = sub.add_parser("convert-all", help="Convert all sessions to JSONL")
     p.add_argument("--raw-dir", default="data/raw", help="Raw sessions directory")
@@ -210,6 +223,8 @@ def main() -> None:
         cmd_convert(args)
     elif args.command == "convert-all":
         cmd_convert_all(args)
+    elif args.command == "regenerate":
+        cmd_regenerate(args)
     elif args.command == "page-map":
         cmd_page_map(args)
     elif args.command == "page-map-all":

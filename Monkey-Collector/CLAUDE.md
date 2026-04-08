@@ -42,6 +42,9 @@ monkey-collect page-map --session <dir> [--threshold 0.85] [--no-open]
 
 # 전체 세션 일괄 페이지 맵 빌드
 monkey-collect page-map-all --raw-dir <dir> [--threshold 0.85]
+
+# 파서 변경 후 XML 파생 파일 재생성 (raw → _parsed, _hierarchy, _encoded, _pretty)
+monkey-collect regenerate [--raw-dir data/raw]
 ```
 
 Android 앱은 `app/` 디렉토리에서 Gradle로 빌드 (compileSdk 34, minSdk 28).
@@ -88,10 +91,10 @@ Android App (Kotlin)  ←TCP→  Python Server
 | `server/explorer.py` | 가중치 기반 랜덤 액션 선택 (tap 60%, swipe/back/input 10%, long_press 5%). element exclusion, first screen에서 back 비활성화. TextGenerator 주입으로 input_text 생성 전략 교체 가능. `has_left_app()` / `return_to_app()` / `recover()` — 앱 이탈 감지 및 복구 |
 | `server/text_generator.py` | InputText 생성 전략. `RandomTextGenerator` (하드코딩 랜덤), `LLMTextGenerator` (OpenAI gpt-5-nano Responses API, reasoning: minimal, verbosity: low). API 실패 시 자동 fallback |
 | `server/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 (SmartExplorer 액션 선택용) |
-| `server/parser/` | 구조적 XML 파서 (3파일: `base.py`, `structured_parser.py`, `__init__.py`). 5단계 파이프라인: _reformat→_simplify→_clean→_renumber→pretty_xml. raw XML을 HTML-like 시맨틱 태그(button, p, img, input, div)로 변환. bounds 캐싱/제거, scroll 중복 제거, attribute whitelist 적용 |
+| `server/parser/` | 구조적 XML 파서 (3파일: `base.py`, `structured_parser.py`, `__init__.py`). 5단계 파이프라인: _reformat→_simplify→_clean→_renumber→pretty_xml. raw XML을 HTML-like 시맨틱 태그(button, p, img, input, div)로 변환. Android 클래스 매핑: `_BUTTON_CLASSES` (FloatingActionButton, ImageButton 등 → Button), `_LAYOUT_CLASSES` (LinearLayoutCompat, RecyclerView, GridView 등 40+ 클래스 → div), scrollable=true → Scroll, 미등록 클래스 → div fallback. bounds 캐싱/제거, scroll 중복 제거, attribute whitelist 적용 |
 | `server/converter.py` | 세션의 pre-parsed XML (`_parsed.xml`) → ShareGPT JSONL 변환 |
 | `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색). `launch_app()` inner class `$` 이스케이프 처리. `get_current_activity()`, `get_declared_activities()` — Activity 커버리지용 |
-| `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{package}/`). XML 5종 저장 (raw, parsed, hierarchy, encoded, pretty). `find_existing_session(package)`: 같은 앱의 기존 세션 검색. `resume_session(session_id)`: 기존 세션 이어서 저장 (step_count 복원, `resumed_at` 타임스탬프 기록) |
+| `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{package}/`). XML 5종 저장 (raw, parsed, hierarchy, encoded, pretty). `find_existing_session(package)`: 같은 앱의 기존 세션 검색. `resume_session(session_id)`: 기존 세션 이어서 저장 (step_count 복원, `resumed_at` 타임스탬프 기록). `regenerate_xml_variants(raw_dir)`: 파서 변경 후 raw XML에서 파생 파일 4종 일괄 재생성 |
 | `server/activity_coverage.py` | 앱별 Activity 방문 커버리지 추적. 세션별 `activity_coverage.csv` 생성. Activity명은 앱이 TCP로 전송 (ADB fallback). `resume()`: 기존 CSV에서 visited_activities 복원 후 append |
 | `server/cost_tracker.py` | LLM API 토큰 사용량/비용 추적. 세션별 `cost.csv` 생성. `MODEL_PRICING` 딕셔너리. `resume()`: 기존 CSV에서 누적 비용 복원 후 append |
 | `server/page_graph.py` | 페이지 맵 엔진. parser 전처리(_reformat+_simplify) 후 시맨틱 태그 기반 fingerprint로 고유 페이지 식별. `PageGraph`로 전환 그래프 빌드 (중복 필터링: dedup key = from_page, to_page, action_type). `build_graph_from_session()`으로 사후 재구축 |

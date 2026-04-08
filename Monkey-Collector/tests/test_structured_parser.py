@@ -159,6 +159,74 @@ class TestReformat:
         child = self._child(xml)
         assert child.tag == "Button"
 
+    def test_linear_layout_compat_to_div(self):
+        """LinearLayoutCompat → div."""
+        xml = _wrap(
+            f'<node class="androidx.appcompat.widget.LinearLayoutCompat" '
+            f'bounds="[0,0][1080,200]" index="0" text="" resource-id="" '
+            f'content-desc="" checkable="false" checked="false" clickable="false" '
+            f'enabled="true" scrollable="false" long-clickable="false" '
+            f'password="false" selected="false" important="false">'
+            f'{_make_node("android.widget.TextView", text="item")}'
+            f"</node>"
+        )
+        child = self._child(xml)
+        assert child.tag == "div"
+
+    def test_recycler_view_scrollable_to_scroll(self):
+        """RecyclerView with scrollable=true → Scroll."""
+        xml = _wrap(
+            f'<node class="androidx.recyclerview.widget.RecyclerView" '
+            f'bounds="[0,0][1080,1920]" index="0" text="" resource-id="" '
+            f'content-desc="" checkable="false" checked="false" clickable="false" '
+            f'enabled="true" scrollable="true" long-clickable="false" '
+            f'password="false" selected="false" important="false">'
+            f'{_make_node("android.widget.TextView", text="item")}'
+            f"</node>"
+        )
+        child = self._child(xml)
+        assert child.tag == "Scroll"
+
+    def test_recycler_view_not_scrollable_to_div(self):
+        """RecyclerView with scrollable=false → div."""
+        xml = _wrap(
+            f'<node class="androidx.recyclerview.widget.RecyclerView" '
+            f'bounds="[0,0][1080,1920]" index="0" text="" resource-id="" '
+            f'content-desc="" checkable="false" checked="false" clickable="false" '
+            f'enabled="true" scrollable="false" long-clickable="false" '
+            f'password="false" selected="false" important="false">'
+            f'{_make_node("android.widget.TextView", text="item")}'
+            f"</node>"
+        )
+        child = self._child(xml)
+        assert child.tag == "div"
+
+    def test_floating_action_button_to_button(self):
+        """FloatingActionButton → Button (even without clickable=true)."""
+        xml = _wrap(
+            _make_node(
+                "com.google.android.material.floatingactionbutton.FloatingActionButton",
+                clickable="false",
+                **{"content-desc": "Add"},
+            )
+        )
+        child = self._child(xml)
+        assert child.tag == "Button"
+
+    def test_unknown_class_fallback_to_div(self):
+        """Unrecognized class → div (not raw class name)."""
+        xml = _wrap(
+            f'<node class="com.custom.widget.FancyView" '
+            f'bounds="[0,0][100,100]" index="0" text="" resource-id="" '
+            f'content-desc="" checkable="false" checked="false" clickable="false" '
+            f'enabled="true" scrollable="false" long-clickable="false" '
+            f'password="false" selected="false" important="false">'
+            f'{_make_node("android.widget.TextView", text="child")}'
+            f"</node>"
+        )
+        child = self._child(xml)
+        assert child.tag == "div"
+
 
 # ── Stage 2: Simplify ──
 

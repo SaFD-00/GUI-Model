@@ -187,3 +187,74 @@ class DataWriter:
                 meta = json.load(f)
             meta[key] = meta.get(key, 0) + 1
             self._write_metadata(meta)
+
+
+def regenerate_xml_variants(raw_dir: str) -> int:
+    """Re-parse all raw XML files and overwrite derived variants.
+
+    Walks ``raw_dir/{package}/xml/`` directories, reads each raw XML
+    (files without ``_`` in the name), and regenerates the 4 variant files:
+    ``_parsed.xml``, ``_hierarchy.xml``, ``_encoded.xml``, ``_pretty.xml``.
+
+    Returns the number of files successfully regenerated.
+    """
+    from server.parser.structured_parser import (
+        StructuredXmlParser,
+        indent_xml,
+    )
+
+    count = 0
+    for pkg_name in sorted(os.listdir(raw_dir)):
+        xml_dir = os.path.join(raw_dir, pkg_name, "xml")
+        if not os.path.isdir(xml_dir):
+            continue
+        pkg_count = 0
+        for fname in sorted(os.listdir(xml_dir)):
+            if not fname.endswith(".xml") or "_" in fname:
+                continue
+            stem = fname.removesuffix(".xml")
+            raw_path = os.path.join(xml_dir, fname)
+            with open(raw_path, "r", encoding="utf-8") as f:
+                raw_xml = f.read()
+
+            parser = StructuredXmlParser()
+            parsed = parser.parse(raw_xml)
+            if not parsed:
+                logger.warning(f"Parse failed, skipping: {raw_path}")
+                continue
+
+            # _parsed.xml (semantic HTML tags + bounds + index)
+            with open(os.path.join(xml_dir, f"{stem}_parsed.xml"), "w", encoding="utf-8") as f:
+                f.write(parsed)
+
+            # _hierarchy.xml (structure only — no text/bounds/index)
+            try:
+                root = ET.fromstring(parser.views)
+                for el in root.iter():
+                    el.attrib.pop("bounds", None)
+                    el.attrib.pop("index", None)
+                    el.text = None
+                hierarchy = ET.tostring(root, encoding="unicode")
+                with open(os.path.join(xml_dir, f"{stem}_hierarchy.xml"), "w", encoding="utf-8") as f:
+                    f.write(hierarchy)
+            except ET.ParseError:
+                pass
+
+            # _encoded.xml (bounds removed, index only)
+            encoded = parser._clear_bounds(parser.views)
+            encoded_str = ET.tostring(ET.fromstring(encoded), encoding="unicode")
+            with open(os.path.join(xml_dir, f"{stem}_encoded.xml"), "w", encoding="utf-8") as f:
+                f.write(encoded_str)
+
+            # _pretty.xml (pretty-printed encoded)
+            pretty = indent_xml(encoded_str)
+            with open(os.path.join(xml_dir, f"{stem}_pretty.xml"), "w", encoding="utf-8") as f:
+                f.write(pretty)
+
+            pkg_count += 1
+
+        if pkg_count:
+            logger.info(f"  {pkg_name}: {pkg_count} files regenerated")
+        count += pkg_count
+
+    return count

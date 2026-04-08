@@ -16,14 +16,55 @@ from loguru import logger
 
 from server.parser.base import Parser
 
+_BUTTON_CLASSES = frozenset(
+    {
+        "FloatingActionButton",
+        "ImageButton",
+        "MaterialButton",
+        "ExtendedFloatingActionButton",
+        "Chip",
+    }
+)
+
 _LAYOUT_CLASSES = frozenset(
     {
+        # Core layouts
         "FrameLayout",
         "LinearLayout",
         "RelativeLayout",
         "ViewGroup",
         "ConstraintLayout",
         "unknown",
+        # Compat / extended layouts
+        "LinearLayoutCompat",
+        "GridLayout",
+        "GridView",
+        "RadioGroup",
+        "TableLayout",
+        "TableRow",
+        "CoordinatorLayout",
+        "CardView",
+        "AppBarLayout",
+        "CollapsingToolbarLayout",
+        "Toolbar",
+        "NavigationView",
+        "DrawerLayout",
+        "ViewFlipper",
+        "ViewSwitcher",
+        "BottomNavigationView",
+        "TabLayout",
+        "ChipGroup",
+        # Scrollable containers (when scrollable=false → div)
+        "RecyclerView",
+        "ListView",
+        "ScrollView",
+        "HorizontalScrollView",
+        "ViewPager",
+        "ViewPager2",
+        "NestedScrollView",
+        # Misc
+        "node",
+        "View",
     }
 )
 
@@ -110,6 +151,16 @@ class StructuredXmlParser(Parser):
             new_attrs["id"] = rid.split("/")[-1]
 
         # --- tag selection ---
+        # Priority order:
+        #   1. EditText → input
+        #   2. checkable → Checker
+        #   3. clickable OR _BUTTON_CLASSES → Button
+        #   4. scrollable → Scroll  (before layout so scrollable RecyclerView → Scroll)
+        #   5. _LAYOUT_CLASSES → div
+        #   6. ImageView → Image
+        #   7. TextView → TextField
+        #   8. has text → TextField (leaf) / div (parent)
+        #   9. else → div  (fallback — no raw class names leak through)
         class_name = element.attrib.get("class", "node") or "node"
         class_short = class_name.split(".")[-1]
 
@@ -125,9 +176,12 @@ class StructuredXmlParser(Parser):
             new_attrs.pop("checkable", None)
             new_element = ET.Element("Checker", new_attrs)
 
-        elif new_attrs.get("clickable") == "true":
+        elif new_attrs.get("clickable") == "true" or class_short in _BUTTON_CLASSES:
             new_attrs.pop("clickable", None)
             new_element = ET.Element("Button", new_attrs)
+
+        elif new_attrs.get("scrollable") == "true":
+            new_element = ET.Element("Scroll", new_attrs)
 
         elif class_short in _LAYOUT_CLASSES:
             new_element = ET.Element("div", new_attrs)
@@ -140,9 +194,6 @@ class StructuredXmlParser(Parser):
             if len(element) == 0 and "text" in new_element.attrib:
                 new_element.text = new_element.attrib.pop("text")
 
-        elif new_attrs.get("scrollable") == "true":
-            new_element = ET.Element("Scroll", new_attrs)
-
         elif "text" in new_attrs:
             if len(element) == 0:
                 new_element = ET.Element("TextField", new_attrs)
@@ -151,7 +202,8 @@ class StructuredXmlParser(Parser):
                 new_element = ET.Element("div", new_attrs)
 
         else:
-            new_element = ET.Element(class_short, new_attrs)
+            # Fallback: map unknown classes to div (prevents raw class names in output)
+            new_element = ET.Element("div", new_attrs)
 
         # --- recurse into children ---
         for child in element:
