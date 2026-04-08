@@ -43,10 +43,13 @@ class ActivityCoverageTracker:
         self.visited_activities: set[str] = set()
         self.total_activities: list[str] = []
         self._total_set: set[str] = set()  # normalized names for O(1) lookup
+        self._target_package: str = ""
         self.start_time: float = 0.0
         self._initialized = False
 
-    def initialize(self, session_dir: str, total_activities: list[str]) -> None:
+    def initialize(
+        self, session_dir: str, total_activities: list[str], package: str = "",
+    ) -> None:
         """Set total activities and create CSV file with header.
 
         Resets internal state so the tracker can be reused across sessions.
@@ -54,6 +57,7 @@ class ActivityCoverageTracker:
         self.csv_path = os.path.join(session_dir, "activity_coverage.csv")
         self.total_activities = total_activities
         self._total_set = {_normalize_activity_name(a) for a in total_activities}
+        self._target_package = package
         self.visited_activities = set()
         self.start_time = time.time()
 
@@ -79,12 +83,14 @@ class ActivityCoverageTracker:
         """
         if activity_name:
             self.visited_activities.add(activity_name)
-            # Safety net: dynamically expand total if an unknown activity
-            # is visited (e.g. dumpsys missed it or format mismatch).
+            # Expand total only for target package activities that
+            # dumpsys missed (e.g. format mismatch). Skip other apps.
             normalized = _normalize_activity_name(activity_name)
             if normalized not in self._total_set:
-                self.total_activities.append(activity_name)
-                self._total_set.add(normalized)
+                pkg = normalized.split("/", 1)[0] if "/" in normalized else ""
+                if pkg == self._target_package:
+                    self.total_activities.append(activity_name)
+                    self._total_set.add(normalized)
 
         total = max(len(self.total_activities), 1)
         coverage = len(self.visited_activities) / total
@@ -106,7 +112,9 @@ class ActivityCoverageTracker:
 
         return entry
 
-    def resume(self, session_dir: str, total_activities: list[str]) -> None:
+    def resume(
+        self, session_dir: str, total_activities: list[str], package: str = "",
+    ) -> None:
         """Resume from existing activity_coverage.csv.
 
         Rebuilds visited_activities from CSV and appends new records.
@@ -114,6 +122,7 @@ class ActivityCoverageTracker:
         self.csv_path = os.path.join(session_dir, "activity_coverage.csv")
         self.total_activities = total_activities
         self._total_set = {_normalize_activity_name(a) for a in total_activities}
+        self._target_package = package
         self.visited_activities = set()
         self.start_time = time.time()
 
@@ -124,11 +133,12 @@ class ActivityCoverageTracker:
                     activity = row.get("activity", "")
                     if activity:
                         self.visited_activities.add(activity)
-                        # Expand total for previously visited unknowns too.
                         normalized = _normalize_activity_name(activity)
                         if normalized not in self._total_set:
-                            self.total_activities.append(activity)
-                            self._total_set.add(normalized)
+                            pkg = normalized.split("/", 1)[0] if "/" in normalized else ""
+                            if pkg == self._target_package:
+                                self.total_activities.append(activity)
+                                self._total_set.add(normalized)
 
         self._initialized = True
         logger.info(

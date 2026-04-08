@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from server.parser.structured_parser import parse_to_html_xml
 from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML
 
 # Minimal 1x1 white PNG (67 bytes)
@@ -35,8 +36,13 @@ def create_mock_session(
     for i in range(num_steps):
         # Screenshot
         (screenshots_dir / f"{i:04d}.png").write_bytes(TINY_PNG)
-        # XML
-        (xml_dir / f"{i:04d}.xml").write_text(xmls[i % len(xmls)])
+        # Raw XML
+        raw_xml = xmls[i % len(xmls)]
+        (xml_dir / f"{i:04d}.xml").write_text(raw_xml)
+        # Pre-parsed XML (_parsed.xml)
+        parsed = parse_to_html_xml(raw_xml)
+        if parsed:
+            (xml_dir / f"{i:04d}_parsed.xml").write_text(parsed)
         # Event
         events.append({
             "action_type": "tap",

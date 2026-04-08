@@ -9,7 +9,6 @@ from pathlib import Path
 
 from loguru import logger
 
-from server.parser.structured_parser import encode_to_html_xml, indent_xml
 from server.xml_parser import UIElement, parse_uiautomator_xml
 
 SYSTEM_PROMPT = (
@@ -107,37 +106,37 @@ def _map_event_to_action(
 
 
 def generate_example(
-    before_xml: str,
-    after_xml: str,
+    before_parsed_xml: str,
+    after_parsed_xml: str,
     event: dict,
     screenshot_path: str,
+    before_elements: list[UIElement] | None = None,
 ) -> dict | None:
     """Generate a world modeling training example.
+
+    Args:
+        before_parsed_xml: Pre-parsed XML (_parsed.xml) for the before state.
+        after_parsed_xml: Pre-parsed XML (_parsed.xml) for the after state.
+        event: Collector event dict.
+        screenshot_path: Relative image path for the JSONL record.
+        before_elements: UIElement list from raw XML for coordinate-based
+            element lookup. Pass None if coordinate fallback is not needed.
 
     Returns:
         ShareGPT-format dict compatible with gui-model_stage1.jsonl,
         or None if no meaningful state change.
     """
-    before_encoded = encode_to_html_xml(before_xml)
-    after_encoded = encode_to_html_xml(after_xml)
-
-    if not before_encoded or not after_encoded:
+    if not before_parsed_xml or not after_parsed_xml:
         return None
 
-    # Skip if no state change in encoded XML
-    if before_encoded == after_encoded:
+    if before_parsed_xml == after_parsed_xml:
         return None
-
-    # Parse elements for action mapping
-    before_elements = parse_uiautomator_xml(before_xml)
 
     # Map event to action
-    action = _map_event_to_action(event, before_elements)
+    action = _map_event_to_action(event, before_elements or [])
     if action is None:
         return None
 
-    before_pretty = indent_xml(before_encoded)
-    after_pretty = indent_xml(after_encoded)
     action_json = json.dumps(action, indent=2)
 
     return {
@@ -146,11 +145,11 @@ def generate_example(
             {
                 "from": "human",
                 "value": (
-                    f"<image>\n## Current State\n{before_pretty}\n\n"
+                    f"<image>\n## Current State\n{before_parsed_xml}\n\n"
                     f"## Action\n{action_json}"
                 ),
             },
-            {"from": "gpt", "value": after_pretty},
+            {"from": "gpt", "value": after_parsed_xml},
         ],
         "images": [screenshot_path],
     }
@@ -177,9 +176,11 @@ class Converter:
         screenshots_dir = session / "screenshots"
         events_path = session / "events.jsonl"
 
-        # Load raw XML files only (exclude _parsed, _encoded, etc.)
-        xml_files = sorted(f for f in xml_dir.glob("*.xml") if "_" not in f.stem)
-        if len(xml_files) < 2:
+        # Load raw XML files for step enumeration and element lookup
+        raw_xml_files = sorted(
+            f for f in xml_dir.glob("*.xml") if "_" not in f.stem
+        )
+        if len(raw_xml_files) < 2:
             logger.warning(f"Session {session_dir}: not enough XML files")
             return 0
 
@@ -194,10 +195,26 @@ class Converter:
                     events[ev.get("step", -1)] = ev
 
         count = 0
-        for i in range(len(xml_files) - 1):
-            step_idx = int(xml_files[i].stem)
-            before_xml = xml_files[i].read_text()
-            after_xml = xml_files[i + 1].read_text()
+        for i in range(len(raw_xml_files) - 1):
+            step_idx = int(raw_xml_files[i].stem)
+            next_step_idx = int(raw_xml_files[i + 1].stem)
+
+            # Read pre-parsed XML (_parsed.xml) for training data
+            before_parsed_path = xml_dir / f"{step_idx:04d}_parsed.xml"
+            after_parsed_path = xml_dir / f"{next_step_idx:04d}_parsed.xml"
+
+            if not before_parsed_path.exists() or not after_parsed_path.exists():
+                logger.debug(
+                    f"Parsed XML not found for step {step_idx} or {next_step_idx}"
+                )
+                continue
+
+            before_parsed = before_parsed_path.read_text()
+            after_parsed = after_parsed_path.read_text()
+
+            # Read raw XML for element coordinate lookup
+            before_raw = raw_xml_files[i].read_text()
+            before_elements = parse_uiautomator_xml(before_raw)
 
             # Find matching event
             event = events.get(step_idx, {})
@@ -218,7 +235,7 @@ class Converter:
                 continue
 
             example = generate_example(
-                before_xml, after_xml, event, image_rel
+                before_parsed, after_parsed, event, image_rel, before_elements
             )
             if example is None:
                 continue

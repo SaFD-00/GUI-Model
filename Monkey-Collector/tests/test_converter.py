@@ -8,9 +8,14 @@ from server.converter import (
     _map_event_to_action,
     generate_example,
 )
+from server.parser.structured_parser import parse_to_html_xml
+from server.xml_parser import parse_uiautomator_xml
 from tests.conftest import make_element
 from tests.fixtures.session_fixtures import create_mock_session
 from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML
+
+SIMPLE_PARSED = parse_to_html_xml(SIMPLE_XML) or ""
+COMPLEX_PARSED = parse_to_html_xml(COMPLEX_XML) or ""
 
 
 class TestFindElementAt:
@@ -120,10 +125,12 @@ class TestMapEventToAction:
 
 class TestGenerateExample:
     def test_sharegpt_format(self):
+        elements = parse_uiautomator_xml(SIMPLE_XML)
         result = generate_example(
-            SIMPLE_XML, COMPLEX_XML,
+            SIMPLE_PARSED, COMPLEX_PARSED,
             {"action_type": "tap", "element_index": 2, "x": 978, "y": 84},
             "images/0001.png",
+            before_elements=elements,
         )
         assert result is not None
         msgs = result["messages"]
@@ -135,7 +142,7 @@ class TestGenerateExample:
 
     def test_skip_no_state_change(self):
         result = generate_example(
-            SIMPLE_XML, SIMPLE_XML,
+            SIMPLE_PARSED, SIMPLE_PARSED,
             {"action_type": "tap", "element_index": 2},
             "img.png",
         )
@@ -143,7 +150,7 @@ class TestGenerateExample:
 
     def test_skip_empty_xml(self):
         result = generate_example(
-            "", SIMPLE_XML,
+            "", SIMPLE_PARSED,
             {"action_type": "tap"}, "img.png",
         )
         assert result is None
@@ -171,6 +178,8 @@ class TestConverterSession:
         xml_dir = session_dir / "xml"
         xml_dir.mkdir(parents=True)
         (xml_dir / "0000.xml").write_text(SIMPLE_XML)
+        if SIMPLE_PARSED:
+            (xml_dir / "0000_parsed.xml").write_text(SIMPLE_PARSED)
         (session_dir / "metadata.json").write_text("{}")
 
         output_path = tmp_path / "output.jsonl"

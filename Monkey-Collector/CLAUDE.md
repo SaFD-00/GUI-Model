@@ -70,7 +70,7 @@ Android App (Kotlin)  ←TCP→  Python Server
                              GraphVisualizer (PyVis HTML)
                              ActivityCoverageTracker (activity coverage CSV)
                              CostTracker (LLM cost CSV)
-                             Converter (raw → ShareGPT JSONL)
+                             Converter (parsed XML → ShareGPT JSONL)
 ```
 
 **수집 루프**: 세션 시작 시 같은 앱의 기존 세션 자동 감지 → 있으면 resume (step/tracker 이어서), 없으면 새 세션 생성. App이 A11y 이벤트 감지 → ScreenStabilizer로 전환 확정 → 스크린샷+XML+Activity를 서버로 전송 → DataWriter가 XML 5종 저장 → SmartExplorer가 액션 선택 → ADB로 실행 → 반복. 세션 종료 시 전체 XML로 PageGraph 재빌드 (`build_graph_from_session()`). 화면 변화 없으면 N signal 전송 → no-change retry (max 3, element exclusion). first screen 보호: back 비활성화, tap으로 대체. external_app signal 시 server-side 능동 복구: return_to_app (1-3회) → recover (4+회) → 세션 종료 (10+회). 빈 UI tree 보호: 앱 로딩 중 빈 화면이면 back 대신 대기 후 재시도 (max 2회), external_app_count는 유효한 UI가 있는 화면에서만 리셋.
@@ -89,8 +89,8 @@ Android App (Kotlin)  ←TCP→  Python Server
 | `server/text_generator.py` | InputText 생성 전략. `RandomTextGenerator` (하드코딩 랜덤), `LLMTextGenerator` (OpenAI gpt-5-nano Responses API, reasoning: minimal, verbosity: low). API 실패 시 자동 fallback |
 | `server/xml_parser.py` | uiautomator XML → UIElement/UITree 파싱 (SmartExplorer 액션 선택용) |
 | `server/parser/` | 구조적 XML 파서 (3파일: `base.py`, `structured_parser.py`, `__init__.py`). 5단계 파이프라인: _reformat→_simplify→_clean→_renumber→pretty_xml. raw XML을 HTML-like 시맨틱 태그(button, p, img, input, div)로 변환. bounds 캐싱/제거, scroll 중복 제거, attribute whitelist 적용 |
-| `server/converter.py` | raw 세션 → ShareGPT JSONL 변환 |
-| `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색). `get_current_activity()`, `get_declared_activities()` — Activity 커버리지용 |
+| `server/converter.py` | 세션의 pre-parsed XML (`_parsed.xml`) → ShareGPT JSONL 변환 |
+| `server/adb.py` | ADB 커맨드 래퍼 (자동 SDK 경로 탐색). `launch_app()` inner class `$` 이스케이프 처리. `get_current_activity()`, `get_declared_activities()` — Activity 커버리지용 |
 | `server/storage.py` | 세션별 디렉토리 구조 관리 (`data/raw/{package}/`). XML 5종 저장 (raw, parsed, hierarchy, encoded, pretty). `find_existing_session(package)`: 같은 앱의 기존 세션 검색. `resume_session(session_id)`: 기존 세션 이어서 저장 (step_count 복원, `resumed_at` 타임스탬프 기록) |
 | `server/activity_coverage.py` | 앱별 Activity 방문 커버리지 추적. 세션별 `activity_coverage.csv` 생성. Activity명은 앱이 TCP로 전송 (ADB fallback). `resume()`: 기존 CSV에서 visited_activities 복원 후 append |
 | `server/cost_tracker.py` | LLM API 토큰 사용량/비용 추적. 세션별 `cost.csv` 생성. `MODEL_PRICING` 딕셔너리. `resume()`: 기존 CSV에서 누적 비용 복원 후 append |

@@ -69,6 +69,9 @@ class AdbClient:
         for line in reversed(resolve_output.strip().split("\n")):
             line = line.strip()
             if "/" in line:
+                # Escape '$' (Java inner-class separator) so the
+                # device shell doesn't treat it as a variable.
+                line = line.replace("$", "\\$")
                 return self.shell(f"am start -n {line}")
         # Fallback: let Android resolve the intent (no random events)
         return self.shell(

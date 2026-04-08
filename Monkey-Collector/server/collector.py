@@ -190,7 +190,7 @@ class Collector:
             total_activities = self.adb.get_declared_activities(package)
             if self._activity_tracker is not None:
                 self._activity_tracker.resume(
-                    self.writer.session_dir, total_activities,
+                    self.writer.session_dir, total_activities, package,
                 )
             if self._cost_tracker is not None:
                 self._cost_tracker.resume(self.writer.session_dir)
@@ -207,7 +207,7 @@ class Collector:
             if self._activity_tracker is not None:
                 total_activities = self.adb.get_declared_activities(package)
                 self._activity_tracker.initialize(
-                    self.writer.session_dir, total_activities,
+                    self.writer.session_dir, total_activities, package,
                 )
             if self._cost_tracker is not None:
                 self._cost_tracker.initialize(self.writer.session_dir)
