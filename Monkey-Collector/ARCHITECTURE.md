@@ -519,7 +519,9 @@ data/raw/{package}/
 │   └── ...
 ├── events.jsonl            # 전체 action 로그 (step별 JSON line)
 ├── activity_coverage.csv   # Activity 커버리지 추적 (step별 방문 Activity 기록)
-└── cost.csv                # LLM API 토큰 사용량 및 비용 추적
+├── cost.csv                # LLM API 토큰 사용량 및 비용 추적
+├── page_graph.json         # 페이지 전환 그래프 (nodes + edges, 중복 필터링됨)
+└── page_graph.html         # 인터랙티브 시각화 (PyVis, 브라우저에서 열기)
 ```
 
 ### 6.2 JSONL Conversion

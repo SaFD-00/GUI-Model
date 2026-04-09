@@ -127,7 +127,7 @@ monkey-collect run --app <package> [옵션]
 | `--app` | - | 대상 앱 패키지명 (미지정 시 클라이언트가 자동 감지) |
 | `--steps` | 100 | 최대 step 수 (세션 단위) |
 | `--seed` | 42 | 랜덤 시드 |
-| `--delay` | 1000 | action 간 대기 (ms) |
+| `--delay` | 1500 | action 간 대기 (ms) |
 | `--port` | 12345 | TCP 서버 포트 |
 | `--output` | `data/raw` | 저장 디렉토리 |
 | `--device` | - | ADB 디바이스 시리얼 |

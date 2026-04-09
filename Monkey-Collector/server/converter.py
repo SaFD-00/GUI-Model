@@ -222,8 +222,8 @@ class Converter:
                 # Try to find event by sequential index
                 event = self._find_event_by_index(events, i)
 
-            # Image naming: {label}_step_{step:04d}.png
-            image_name = f"{session_label}_step_{count + 1:04d}.png"
+            # Image naming: episode_{label:06d}_step_{step:04d}.png
+            image_name = f"episode_{session_label:06d}_step_{count + 1:04d}.png"
             image_rel = f"GUI-Model/images/{image_name}"
 
             # Copy screenshot

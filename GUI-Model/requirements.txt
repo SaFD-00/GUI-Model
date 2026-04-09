@@ -1,0 +1,37 @@
+# Core ML
+torch>=2.4.0
+torchvision
+torchaudio
+transformers>=5.0.0
+peft>=0.18.0
+accelerate
+safetensors
+datasets
+
+# LLaMA-Factory (install separately: pip install -e LlamaFactory/)
+# deepspeed  # GPU server only
+# vllm>=0.8.2  # GPU server only (inference)
+
+# Tokenizers
+sentencepiece
+tiktoken
+
+# Evaluation metrics
+beautifulsoup4
+munkres
+nltk
+rouge
+jieba
+
+# Data processing
+numpy
+pandas
+scipy
+pillow
+pyarrow
+
+# Utilities
+tqdm
+pyyaml
+protobuf
+requests

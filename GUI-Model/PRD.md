@@ -189,13 +189,13 @@ Phase 2 - RL
 gui-model.ipynb
 │
 ├── Section 0: 환경 설정 및 LLaMA-Factory 설치
-├── Section 1-2: 데이터 분할 및 LLaMA-Factory dataset_info.json 등록
+├── Section 1-2: 데이터 등록 (상대 경로로 dataset_info.json 등록, 이미지 symlink)
 ├── Section 3: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
-├── Section 4: Stage 1 평가 (Exp-1 vs Baseline Zero-shot)
-├── Section 5: Stage 1 모델 Merge & HuggingFace 업로드
+├── Section 4: Stage 1 모델 Merge & HuggingFace 업로드
+├── Section 5: Stage 1 평가 (Exp-1 vs Baseline Zero-shot)
 ├── Section 6: Stage 2 학습 (Exp-2, Exp-3, Exp-4 — LoRA FT)
-├── Section 7: Stage 2 평가 (4-Way + Baseline Zero-shot 비교)
-└── Section 8: Stage 2 모든 모델 Merge & 업로드
+├── Section 7: Stage 2 모델 Merge & HuggingFace 업로드
+└── Section 8: Stage 2 평가 (4-Way + Baseline Zero-shot 비교)
 ```
 
 ---
@@ -280,33 +280,39 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 ## 6. 데이터셋
 
-### 6.1 출처
+### 6.1 출처 및 데이터셋 선택
 
 모바일 UI 인터랙션 데이터로부터 구성. 각 샘플은 스크린샷(PNG) + UI 계층구조(XML) + 액션 정보를 포함.
 
+`gui-model.ipynb` Cell 3의 `DATASET_NAME` 변수로 학습 데이터셋을 전환:
+
+| 데이터셋 | Stage 1 | Stage 2 | Images | 총 크기 | 용도 |
+|----------|---------|---------|--------|---------|------|
+| **MobiBench** (기본) | 3,145건 (~18.7MB) | 3,655건 (~10.5MB) | 3,655개 | ~28 MB | 소규모 실험, 빠른 반복 |
+| **AndroidControl** | 34,948건 (~202.7MB) | 58,234건 (~276.4MB) | 20,129개 | ~479 MB | 대규모 학습, 본 실험 |
+
 ### 6.2 Stage 1 (World Modeling)
 
-| 항목 | 값 |
-|------|-----|
-| 원본 데이터 | gui-model_stage1.jsonl (3,145건, ~18.7MB) |
-| Train Split | ~2,988건 (95%) |
-| Test Split | ~157건 (5%) |
-| Split Method | Random, seed=42 |
-| Format | ShareGPT (multimodal) |
-| Task | UI State (XML) + Action → Next UI State (XML) |
+| 항목 | MobiBench | AndroidControl |
+|------|-----------|----------------|
+| 원본 데이터 | gui-model_stage1.jsonl (3,145건) | gui-model_stage1.jsonl (34,948건) |
+| Train Split | ~2,988건 (95%) | ~33,200건 (95%) |
+| Test Split | ~157건 (5%) | ~1,748건 (5%) |
+| Split Method | Random, seed=42 | Random, seed=42 |
+| Format | ShareGPT (multimodal) | ShareGPT (multimodal) |
+| Task | UI State (XML) + Action → Next UI State (XML) | 동일 |
 
 ### 6.3 Stage 2 (Action Prediction)
 
-| 항목 | 값 |
-|------|-----|
-| 원본 데이터 | gui-model_stage2.jsonl (3,655건, ~10.5MB) |
-| Train Split | ~3,472건 (95%) |
-| Test Split | ~183건 (5%) |
-| Split Method | Stratified by action type, seed=42 |
-| Format | ShareGPT (multimodal) |
-| Task | Screenshot + UI State + Task → Action (JSON) |
+| 항목 | MobiBench | AndroidControl |
+|------|-----------|----------------|
+| 원본 데이터 | gui-model_stage2.jsonl (3,655건) | gui-model_stage2.jsonl (58,234건) |
+| Train Split | ~3,472건 (95%) | ~55,322건 (95%) |
+| Test Split | ~183건 (5%) | ~2,912건 (5%) |
+| Split Method | Stratified by action type, seed=42 | Stratified by action type, seed=42 |
+| Task | Screenshot + UI State + Task → Action (JSON) | 동일 |
 
-**Action Type 분포 (Test Set, 160 samples)**:
+**Action Type 분포 (MobiBench Test Set, 160 samples)**:
 
 | Action Type | Count | 비율 |
 |-------------|-------|------|
@@ -318,9 +324,14 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 ### 6.4 이미지
 
-- 3,655개 모바일 UI 스크린샷 (PNG)
+| 데이터셋 | 이미지 수 | 경로 패턴 |
+|----------|----------|----------|
+| MobiBench | 3,655개 | `GUI-Model/images/episode_{id}_step_{num}.png` |
+| AndroidControl | 20,129개 | `GUI-Model/data/AndroidControl/images/episode_{id}_step_{num}.png` |
+
 - Stage 1/2 공유
 - image_max_pixels: 4,233,600
+- AndroidControl은 LlamaFactory 데이터 디렉토리에 symlink로 참조
 
 ### 6.5 데이터 형식 상세
 
@@ -382,11 +393,11 @@ Qwen3-VL-8B                  Merged Model (Exp-2)
 
 | Parameter | 값 | 근거 |
 |-----------|-----|------|
-| per_device_train_batch_size | 2 | VLM 이미지 메모리 고려, ZeRO-3에서 안전 |
-| gradient_accumulation_steps | 8 | effective batch 64 확보 |
-| learning_rate | 2e-5 | batch 4배 증가(16→64)에 sqrt scaling (√4=2) |
-| lr_scheduler_type | cosine | constant 대비 수렴 안정성 우수, Qwen3 공식 권고 |
-| warmup_ratio | 0.1 | LR 증가 + batch 증가에 따른 초기 안정화 |
+| per_device_train_batch_size | 1 | VLM 이미지 메모리 고려, ZeRO-3에서 안전 |
+| gradient_accumulation_steps | 8 | effective batch 32 확보 |
+| learning_rate | 1.0e-5 | Full FT에서 안정적 수렴을 위한 보수적 LR |
+| lr_scheduler_type | constant | 데이터 ~3K 소규모에서 일정 LR이 안정적 |
+| warmup_ratio | 0.0 | constant scheduler에서는 warmup 불필요 |
 | num_train_epochs | 3.0 | 데이터 ~3K, 충분한 학습 |
 | weight_decay | 0.01 | 표준 정규화 |
 
@@ -503,7 +514,7 @@ predict_with_generate: true
 
 ### 8.4 Stage 2 학습 (LoRA)
 
-`stage2_lora/` 디렉토리에 Exp-2, Exp-3, Exp-4 각각의 YAML 설정 파일이 존재한다. `model_name_or_path`만 다르고 나머지 설정은 동일:
+Stage 2 학습은 `gui-model.ipynb` Section 6에서 직접 설정한다. Exp-2, Exp-3, Exp-4는 `model_name_or_path`만 다르고 나머지 설정은 동일:
 
 | Exp | model_name_or_path |
 |-----|-------------------|
@@ -513,12 +524,35 @@ predict_with_generate: true
 
 공통 설정: `finetuning_type: lora`, `lora_rank: 16`, `lora_alpha: 32`, `lora_dropout: 0.1`, `template: qwen3_vl_nothink`
 
-### 8.5 데이터 등록
+### 8.5 데이터 Split 및 등록
 
-`LlamaFactory/data/dataset_info.json`에 아래 데이터셋 엔트리를 추가해야 한다:
+**사전 준비**: `scripts/split_data.py`로 Train/Test Split 파일을 생성한다:
 
-- `GUI-Model_stage1_train`, `GUI-Model_stage1_test`: Stage 1 데이터
-- `GUI-Model_stage2_train`, `GUI-Model_stage2_test`: Stage 2 데이터
+```bash
+python scripts/split_data.py --dataset MobiBench       # data/MobiBench/ 내에 _train/_test 생성
+python scripts/split_data.py --dataset AndroidControl   # data/AndroidControl/ 내에 _train/_test 생성
+```
+
+- Stage 1: Random split (seed=42, 95:5)
+- Stage 2: Stratified split by action type (seed=42, 95:5)
+
+**등록**: Cell 8/11 실행 시 `LlamaFactory/data/dataset_info.json`에 상대 경로로 자동 등록:
+
+```json
+{
+  "GUI-Model_stage1_train": {
+    "file_name": "../../data/MobiBench/gui-model_stage1_train.jsonl"
+  }
+}
+```
+
+JSONL 파일을 LlamaFactory/data/로 복사하지 않음. 이미지 디렉토리만 symlink로 생성.
+
+**MobiBench** (`DATASET_NAME="MobiBench"`):
+- `GUI-Model_stage1_train`, `GUI-Model_stage1_test`, `GUI-Model_stage2_train`, `GUI-Model_stage2_test`
+
+**AndroidControl** (`DATASET_NAME="AndroidControl"`):
+- `GUI-Model-AC_stage1_train`, `GUI-Model-AC_stage1_test`, `GUI-Model-AC_stage2_train`, `GUI-Model-AC_stage2_test`
 
 설정 파일 위치: `LlamaFactory/examples/train_custom/GUI-Model/`
 
@@ -550,7 +584,7 @@ llamafactory-cli eval examples/train_custom/GUI-Model/stage1_eval/eval_loss.yaml
 llamafactory-cli train examples/train_custom/GUI-Model/stage1_eval/predict.yaml
 
 # Stage 2 평가: vLLM 배치 추론 + 커스텀 메트릭
-# gui-model.ipynb Section 7 참조
+# gui-model.ipynb Section 8 참조
 ```
 
 ### 9.3 모델 Merge & 배포
@@ -749,7 +783,7 @@ api.upload_folder(folder_path='<output_path>', repo_id='SaFD-00/<model_name>')
 |--------|------|------|
 | torch | ≥2.4.0 | 딥러닝 프레임워크 |
 | torchvision | ≥0.19.0 | 이미지 처리 |
-| transformers | ≥4.51.0, ≤5.2.0 | VLM 모델 로드 및 학습 |
+| transformers | ≥5.0.0 | VLM 모델 로드 및 학습 |
 | peft | ≥0.18.0, ≤0.18.1 | LoRA 구현 |
 | accelerate | ≥1.3.0, ≤1.11.0 | 분산 학습 |
 | trl | ≥0.18.0, ≤0.24.0 | 강화 학습 (확장용) |
@@ -840,7 +874,7 @@ api.upload_folder(folder_path='<output_path>', repo_id='SaFD-00/<model_name>')
 | 방향 | 설명 | 기대 효과 |
 |------|------|----------|
 | Bounds IoU 디버깅 | 좌표 형식 정규화 및 평가 메트릭 수정 | 공정한 종합 평가 가능 |
-| 데이터 규모 확장 | Stage 1 데이터를 10K+ 이상으로 확대 | 자체 World Model 성능 향상, gWorld와 격차 축소 |
+| AndroidControl 대규모 학습 | AndroidControl 데이터셋(~93K)으로 동일 4-Way 실험 재현 | 데이터 규모에 따른 World Model 효과 정량 비교 |
 | Stage 1 RARL 적용 | Code2World의 Render-Aware RL 접근법 도입 | World Model 시각적 일관성 향상 |
 | Multi-epoch Stage 2 | 1 epoch → 2-3 epoch 실험 | 과적합 없이 추가 성능 향상 가능 여부 확인 |
 | Rare Action 증강 | long_click, openapp 등 희소 액션 데이터 보강 | Per-Type 정확도 균형 개선 |
@@ -884,9 +918,14 @@ GUI-Model/
 ├── .gitignore
 │
 ├── data/                           # 데이터셋 (git-ignored)
-│   ├── gui-model_stage1.jsonl      # World Modeling 데이터
-│   ├── gui-model_stage2.jsonl      # Action Prediction 데이터
-│   └── images/                     # 모바일 UI 스크린샷 (3,655개)
+│   ├── MobiBench/                  # MobiBench 데이터셋
+│   │   ├── images/                 # 모바일 UI 스크린샷 (3,655개 PNG)
+│   │   ├── gui-model_stage1.jsonl  # Stage 1 (3,145건)
+│   │   └── gui-model_stage2.jsonl  # Stage 2 (3,655건)
+│   └── AndroidControl/             # AndroidControl 데이터셋
+│       ├── images/                 # 스크린샷 (episode_{id}_step_{num}.png)
+│       ├── gui-model_stage1.jsonl  # Stage 1 (34,948건)
+│       └── gui-model_stage2.jsonl  # Stage 2 (58,234건)
 │
 ├── LlamaFactory/                   # LLaMA-Factory 프레임워크
 │   ├── src/llamafactory/           # Python 패키지 소스
@@ -894,9 +933,7 @@ GUI-Model/
 │   ├── examples/
 │   │   └── train_custom/GUI-Model/ # 학습/평가 YAML 설정 파일
 │   │       ├── stage1_full/        # Stage 1 Full FT 설정
-│   │       ├── stage1_eval/        # Stage 1 평가 설정
-│   │       ├── stage2_lora/        # Stage 2 LoRA 설정
-│   │       └── stage2_eval/        # Stage 2 평가 설정
+│   │       └── stage1_eval/        # Stage 1 평가 설정
 │   ├── outputs/                    # 학습 및 평가 결과
 │   │   ├── stage1_eval/            # Stage 1 평가 리포트
 │   │   │   ├── eval_loss/          # Loss 메트릭
@@ -907,7 +944,8 @@ GUI-Model/
 │   │       ├── lora_world_model/   # Exp-2 (World Model)
 │   │       └── lora_gworld/        # Exp-4 (gWorld)
 │   └── data/                       # 데이터 설정 템플릿
-│       └── GUI-Model/              # 데이터셋 JSONL + images
+│       ├── GUI-Model/              # MobiBench 데이터셋 JSONL + images
+│       └── GUI-Model-AC/           # AndroidControl 데이터셋 JSONL + images (symlink)
 │
 └── .claude/                        # Claude Code 프로젝트 파일
     ├── plans/                      # 개발 계획 문서
