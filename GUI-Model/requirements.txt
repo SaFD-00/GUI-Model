@@ -35,3 +35,4 @@ tqdm
 pyyaml
 protobuf
 requests
+python-dotenv
