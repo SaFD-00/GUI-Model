@@ -29,8 +29,8 @@ Cell 3에서 `CONFIGS` 딕셔너리로 두 데이터셋(MobiBench/AndroidControl
 
 | 설정 | MobiBench | AndroidControl |
 |------|-----------|----------------|
-| LF subfolder | `GUI-Model` | `GUI-Model-AC` |
-| DS prefix | `GUI-Model` | `GUI-Model-AC` |
+| LF subfolder | `GUI-Model-MB` | `GUI-Model-AC` |
+| DS prefix | `GUI-Model-MB` | `GUI-Model-AC` |
 | Output prefix | (없음) | `AC/` |
 | HF slug | (없음) | `ac-` |
 | Stage 1 epochs / LR | 5.0 / 1e-5 | 5.0 / 2e-6 |
@@ -48,18 +48,18 @@ python scripts/split_data.py --dataset AndroidControl
 # Stage 1: World Modeling Full FT (H100 80GB × 4)
 cd LlamaFactory
 FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
-  llamafactory-cli train examples/custom/GUI-Model/stage1_full/qwen3_vl_8b_gui.yaml
+  llamafactory-cli train examples/custom/GUI-Model-MB/stage1_full/qwen3_vl_8b_gui.yaml
 
 # Stage 1 평가: eval_loss
-llamafactory-cli eval examples/custom/GUI-Model/stage1_eval/eval_loss.yaml
+llamafactory-cli eval examples/custom/GUI-Model-MB/stage1_eval/eval_loss.yaml
 
 # Stage 1 평가: predict (생성 기반)
-llamafactory-cli train examples/custom/GUI-Model/stage1_eval/predict.yaml
+llamafactory-cli train examples/custom/GUI-Model-MB/stage1_eval/predict.yaml
 
 # Stage 2: Action Prediction LoRA FT (H100 80GB × 4)
 # stage2, stage1+stage2 각각 별도 YAML로 실행 (model_name_or_path만 다름)
 FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
-  llamafactory-cli train examples/custom/GUI-Model/stage2_lora/<exp_yaml>
+  llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<exp_yaml>
 
 # Stage 2 평가: vLLM 배치 추론 + 커스텀 메트릭
 # gui-model.ipynb Section 8 참조
@@ -86,7 +86,7 @@ FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
 
 - **gui-model.ipynb**: 전체 파이프라인의 유일한 실행 엔트리포인트. 데이터 준비, 학습, 평가, 모델 배포를 순차 실행
 - **LlamaFactory/**: LLaMA-Factory 프레임워크 (submodule 또는 클론). 학습/평가 엔진
-- **LlamaFactory/examples/custom/GUI-Model/**: 학습/평가 YAML 설정 파일
+- **LlamaFactory/examples/custom/GUI-Model-MB/**: 학습/평가 YAML 설정 파일
   - `stage1_full/`: Stage 1 Full FT 설정
   - `stage1_eval/`: Stage 1 평가 (eval_loss.yaml, predict.yaml)
   - `stage2_lora/`: Stage 2 LoRA 설정 (stage2, stage1+stage2)
@@ -192,7 +192,7 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 - **데이터 Split**: `python scripts/split_data.py --dataset {DATASET_NAME}` (학습 전 1회 실행)
 - **데이터셋 설정**: `gui-model.ipynb` Cell 3에서 `CONFIGS` 딕셔너리로 양 데이터셋 자동 설정
 - **데이터 등록**: Cell 8/11 실행 시 `dataset_info.json`에 상대 경로(`../../data/{DATASET_NAME}/...`)로 자동 등록. 파일 복사 없음
-- **Stage 1 학습**: `LlamaFactory/examples/custom/GUI-Model/stage1_full/qwen3_vl_8b_gui.yaml` (노트북에서 동적 생성)
+- **Stage 1 학습**: `LlamaFactory/examples/custom/GUI-Model-MB/stage1_full/qwen3_vl_8b_gui.yaml` (노트북에서 동적 생성)
 - **Stage 2 학습**: `gui-model.ipynb` Section 6에서 직접 설정 (LoRA config는 노트북 내 정의)
 - **환경변수**: `.env.example` 참조 (HuggingFace token 등)
 
