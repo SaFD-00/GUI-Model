@@ -391,11 +391,17 @@ Qwen3-VL-8B                  Merged Model (stage1+stage2)
 |-----------|-----------|----------------|------|
 | per_device_train_batch_size | 2 | 2 | VLM 이미지 메모리 고려 |
 | gradient_accumulation_steps | 8 | 8 | effective batch 64 (2×8×4GPU) |
-| learning_rate | 1.0e-5 | 2.0e-6 | gWorld의 낮은 LR 원칙. AC는 데이터 ~11배로 더 낮은 LR |
+| learning_rate | 1.0e-5 | 2.0e-5 | MB 소규모는 저 LR × 다 epoch 전략, AC 대규모는 상대적 고 LR × 적 epoch 전략 |
 | lr_scheduler_type | cosine | cosine | Code2World, gWorld, MobileDreamer 모두 cosine |
-| warmup_ratio | 0.03 | 0.03 | gWorld(0.01)에 가깝게 조정 (기존 0.1에서 감소) |
-| num_train_epochs | 5.0 | 5.0 | gWorld, MobileDreamer 모두 5 epochs |
+| warmup_ratio | 0.05 | 0.1 | AC는 LR이 높고 초기 스텝 불안정 위험 → warmup 비율 2× |
+| num_train_epochs | 5 | 2 | MB는 gWorld/MobileDreamer를 따라 5 epochs, AC는 데이터 규모(~35k+)로 2 epochs면 충분한 업데이트 |
 | weight_decay | 0.01 | 0.01 | gWorld 동일, 표준 정규화 |
+| max_grad_norm | 1.0 | 1.0 | gradient explosion 방지 |
+| save_strategy | epoch | steps (500) | MB는 epoch 단위가 자연스럽고, AC는 step 단위 추적이 운영에 유리 |
+| save_total_limit | 5 | 5 | 디스크 사용량 제한 |
+| eval_strategy | epoch | steps (500) | `load_best_model_at_end`의 strategy 일치 제약 충족 |
+| eval_dataset | `GUI-Model-MB_stage1_test` | `GUI-Model-AC_stage1_test` | 기존 test split을 재사용 (별도 val split 생성 안 함) |
+| load_best_model_at_end / metric | true / eval_loss↓ | true / eval_loss↓ | best checkpoint 자동 선택 |
 
 ### 7.3 Stage 2 하이퍼파라미터 (LoRA)
 
@@ -403,16 +409,26 @@ Qwen3-VL-8B                  Merged Model (stage1+stage2)
 |-----------|-----------|----------------|------|
 | per_device_train_batch_size | 2 | 2 | H100 80GB VRAM 활용 |
 | gradient_accumulation_steps | 4 | 4 | effective batch 32 (2×4×4GPU) |
-| learning_rate | 3.0e-5 | 5.0e-6 | MobileDreamer LoRA 참고. AC는 데이터 ~16배로 더 낮은 LR |
+| learning_rate | 3.0e-5 | 1.0e-5 | MobileDreamer LoRA 참고. AC는 데이터 대규모로 상대적으로 낮은 LR |
 | lr_scheduler_type | cosine | cosine | 수렴 안정성 |
 | warmup_ratio | 0.05 | 0.05 | 표준 |
-| num_train_epochs | 5.0 | 5.0 | MobileDreamer LoRA 5 epochs |
+| num_train_epochs | 5 | 2 | MB는 5 epochs, AC는 데이터 규모로 2 epochs |
+| weight_decay | 0.01 | 0.01 | 표준 |
+| max_grad_norm | 1.0 | 1.0 | gradient explosion 방지 |
+| save_strategy | epoch | steps (500) | S1과 동일한 정책 |
+| save_total_limit | 5 | 5 | 디스크 사용량 제한 |
+| eval_strategy | epoch | steps (500) | `load_best_model_at_end` 제약 충족 |
+| eval_dataset | `GUI-Model-MB_stage2_test` | `GUI-Model-AC_stage2_test` | 기존 test split 재사용 |
+| load_best_model_at_end / metric | true / eval_loss↓ | true / eval_loss↓ | best checkpoint 자동 선택 |
+| LoRA r / α / dropout | 16 / 32 / 0.1 | 16 / 32 / 0.1 | 표준 LoRA 설정 |
 
 ---
 
 ## 8. 설정 파일
 
-### 8.1 Stage 1 학습: `stage1_full/qwen3_vl_8b_gui.yaml`
+### 8.1 Stage 1 학습: `examples/custom/GUI-Model-{MB|AC}/stage1_full/qwen3_vl_8b_gui.yaml`
+
+> `gui-model.ipynb` Cell 14가 `CONFIGS[ds_name]["stage1"]` 기반으로 동적 생성. 아래는 MobiBench 예시이며 AndroidControl은 데이터셋 접두사/출력 경로/하이퍼파라미터가 7.2 표와 같이 분기된다.
 
 ```yaml
 ### model
@@ -434,23 +450,34 @@ overwrite_cache: true
 preprocessing_num_workers: 8
 
 ### output
-output_dir: ./outputs/stage1_full
+output_dir: ./outputs/MB/stage1_full/full_world_model
 logging_steps: 1
-save_steps: 50
+save_strategy: epoch           # AC: steps (save_steps: 500)
+save_total_limit: 5
 plot_loss: true
 overwrite_output_dir: true
 
 ### train
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 8
-learning_rate: 1.0e-5  # MobiBench. AndroidControl: 2.0e-6
-num_train_epochs: 5.0
+learning_rate: 1.0e-5           # AC: 2.0e-5
+num_train_epochs: 5             # AC: 2
 lr_scheduler_type: cosine
-warmup_ratio: 0.03
+warmup_ratio: 0.05              # AC: 0.1
 weight_decay: 0.01
+max_grad_norm: 1.0
 bf16: true
 gradient_checkpointing: true
 deepspeed: examples/deepspeed/ds_z3_config.json
+# resume_from_checkpoint: true
+
+### eval
+eval_dataset: GUI-Model-MB_stage1_test
+per_device_eval_batch_size: 1
+eval_strategy: epoch            # AC: steps (eval_steps: 500)
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
 ```
 
 ### 8.2 Stage 1 평가: `stage1_eval/eval_loss.yaml`
@@ -508,16 +535,56 @@ per_device_eval_batch_size: 1
 predict_with_generate: true
 ```
 
-### 8.4 Stage 2 학습 (LoRA)
+### 8.4 Stage 2 학습 (LoRA): `examples/custom/GUI-Model-{MB|AC}/stage2_lora/{base,world_model}.yaml`
 
-Stage 2 학습은 `gui-model.ipynb` Section 6에서 직접 설정한다. stage2, stage1+stage2는 `model_name_or_path`만 다르고 나머지 설정은 동일:
+> `gui-model.ipynb` Cell 30이 데이터셋별로 `base.yaml`과 `world_model.yaml` 두 개를 자동 생성. 두 파일은 `model_name_or_path`와 `output_dir`만 다르다.
 
-| Exp | model_name_or_path |
-|-----|-------------------|
-| stage1+stage2 | `SaFD-00/qwen3-vl-8b-stage1-world-model` |
-| stage2 | `Qwen/Qwen3-VL-8B-Instruct` |
+| Exp | model_name_or_path | output_dir |
+|-----|--------------------|------------|
+| stage1+stage2 (`world_model.yaml`) | `SaFD-00/qwen3-vl-8b-{mb|ac}-stage1-world-model` | `./outputs/{MB|AC}/stage2_lora/lora_world_model` |
+| stage2 (`base.yaml`) | `Qwen/Qwen3-VL-8B-Instruct` | `./outputs/{MB|AC}/stage2_lora/lora_base` |
 
-공통 설정: `finetuning_type: lora`, `lora_rank: 16`, `lora_alpha: 32`, `lora_dropout: 0.1`, `template: qwen3_vl_nothink`
+```yaml
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+freeze_vision_tower: true
+lora_rank: 16
+lora_alpha: 32
+lora_target: all
+lora_dropout: 0.1
+
+### dataset
+dataset: GUI-Model-MB_stage2_train       # AC: GUI-Model-AC_stage2_train
+template: qwen3_vl_nothink
+cutoff_len: 8192
+
+### output
+save_strategy: epoch                     # AC: steps (save_steps: 500)
+save_total_limit: 5
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 4
+learning_rate: 3.0e-5                    # AC: 1.0e-5
+num_train_epochs: 5                      # AC: 2
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+weight_decay: 0.01
+max_grad_norm: 1.0
+bf16: true
+gradient_checkpointing: true
+# resume_from_checkpoint: true
+
+### eval
+eval_dataset: GUI-Model-MB_stage2_test   # AC: GUI-Model-AC_stage2_test
+per_device_eval_batch_size: 1
+eval_strategy: epoch                     # AC: steps (eval_steps: 500)
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
+```
 
 ### 8.5 데이터 Split 및 등록
 

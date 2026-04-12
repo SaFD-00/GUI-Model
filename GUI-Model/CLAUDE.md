@@ -31,10 +31,11 @@ Cell 3에서 `CONFIGS` 딕셔너리로 두 데이터셋(MobiBench/AndroidControl
 |------|-----------|----------------|
 | LF subfolder | `GUI-Model-MB` | `GUI-Model-AC` |
 | DS prefix | `GUI-Model-MB` | `GUI-Model-AC` |
-| Output prefix | (없음) | `AC/` |
-| HF slug | (없음) | `ac-` |
-| Stage 1 epochs / LR | 5.0 / 1e-5 | 5.0 / 2e-6 |
-| Stage 2 epochs / LR | 5.0 / 3e-5 | 5.0 / 5e-6 |
+| Output prefix | `MB/` | `AC/` |
+| HF slug | `mb-` | `ac-` |
+| Stage 1 epochs / LR | 5 / 1e-5 | 2 / 2e-5 |
+| Stage 2 epochs / LR | 5 / 3e-5 | 2 / 1e-5 |
+| save / eval strategy | epoch | steps (500) |
 
 ## Commands
 
@@ -204,8 +205,14 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 |------|-------------------|----------------|
 | batch × accum × GPU | 2 × 8 × 4 = 64 | 2 × 4 × 4 = 32 |
 | learning_rate | 1e-5 | 3e-5 |
-| epochs | 5.0 | 5.0 |
-| warmup_ratio | 0.03 | 0.05 |
+| epochs | 5 | 5 |
+| lr_scheduler | cosine | cosine |
+| warmup_ratio | 0.05 | 0.05 |
+| weight_decay | 0.01 | 0.01 |
+| max_grad_norm | 1.0 | 1.0 |
+| save_strategy / save_total_limit | epoch / 5 | epoch / 5 |
+| eval_strategy | epoch | epoch |
+| load_best_model_at_end | true (eval_loss ↓) | true (eval_loss ↓) |
 | LoRA r / α / dropout | — | 16 / 32 / 0.1 |
 | DeepSpeed | ZeRO-3 | — |
 | image_max_pixels | 4,233,600 | 4,233,600 |
@@ -214,19 +221,24 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 
 | 항목 | Stage 1 (Full FT) | Stage 2 (LoRA) |
 |------|-------------------|----------------|
-| learning_rate | 2e-6 | 5e-6 |
-| epochs | 5.0 | 5.0 |
-| warmup_ratio | 0.03 | 0.05 |
+| learning_rate | 2e-5 | 1e-5 |
+| epochs | 2 | 2 |
+| warmup_ratio | 0.1 | 0.05 |
+| save_strategy / save_steps | steps / 500 | steps / 500 |
+| eval_strategy / eval_steps | steps / 500 | steps / 500 |
+| save_total_limit | 5 | 5 |
+| max_grad_norm | 1.0 | 1.0 |
 | 기타 설정 | MobiBench와 동일 | MobiBench와 동일 |
 
 ### Training Recipe 근거
 
-Code2World, gWorld, MobileDreamer 논문의 training recipe를 참고하여 설계:
-- **Epochs = 5**: gWorld, MobileDreamer 모두 5 epochs 사용
-- **낮은 LR**: epochs 증가에 따른 보상. gWorld(2e-7)의 낮은 LR 원칙 적용
-- **Warmup 0.03**: gWorld(0.01)에 가깝게 조정 (기존 0.1에서 감소)
+Code2World, gWorld, MobileDreamer 논문의 training recipe를 참고하되 데이터셋 규모 차이를 반영해 분기:
+- **MobiBench (≈3k 샘플)**: 소규모이므로 `epochs=5`로 충분히 학습, `save_strategy=epoch`로 에폭 단위 체크포인트. `warmup_ratio=0.05`로 안정적 워밍업.
+- **AndroidControl (≈35k~58k 샘플)**: 대규모 데이터셋에서는 epoch을 낮추고 step 단위 체크포인트가 운영상 유리 → `epochs=2`, `save/eval=steps(500)`. 데이터량으로 충분한 업데이트가 보장되므로 LR을 상대적으로 상향(2e-5 / 1e-5)하고 `warmup_ratio=0.1`로 초반 스텝 불안정을 완화.
+- **공통 안정화**: `max_grad_norm=1.0`, `save_total_limit=5`, `load_best_model_at_end=true` + `metric_for_best_model=eval_loss`로 학습 실패/OOM 복구 및 best checkpoint 자동 선택을 보장.
+- **Eval 전략**: 별도 validation split을 만들지 않고 기존 `{ds_prefix}_stage{n}_test` 데이터셋을 `eval_dataset`으로 재사용(train 중 best checkpoint 선택 + 이후 quantitative eval 모두 같은 set을 사용).
 
-> Cell 3의 `_DATASET_CONFIG`에서 데이터셋별 하이퍼파라미터 자유 조정 가능
+> Cell 3의 `_DATASET_CONFIG[ds_name]["stage{1,2}"]`에서 데이터셋×스테이지별 하이퍼파라미터 자유 조정 가능 (lr, epochs, warmup_ratio, save_strategy, save_steps, eval_strategy, eval_steps).
 
 ## Dependencies
 
