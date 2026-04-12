@@ -41,31 +41,52 @@ Cell 3에서 `CONFIGS` 딕셔너리로 두 데이터셋(MobiBench/AndroidControl
 
 ## Commands
 
+두 가지 실행 경로. **YAML 생성은 notebook 전용**이므로, 최초 실행은 notebook, 반복 실행은 shell script 가 표준이다.
+
+### A. Shell Scripts (권장, 재실행·자동화)
+
+`gui-model.ipynb` Cell 3/7/10/14/17/20/30/34 를 먼저 실행해 YAML·dataset_info 등록 파일이 존재한다는 전제하에, 학습/평가/Merge 단계는 `scripts/` 쉘 스크립트로 반복 실행한다.
+
 ```bash
 # 데이터 Split (학습 전 1회 실행)
 python scripts/split_data.py --dataset MobiBench
 python scripts/split_data.py --dataset AndroidControl
 
-# LLaMA-Factory 기반 학습 (gui-model.ipynb 셀 순서대로 실행 권장)
+# 공통 인자: MB | AC | all (기본 all). 로그는 logs/<tag>_<ts>.log 로 tee 저장.
 
+# Stage 1
+./scripts/stage1_train.sh        # Cell 15: Full FT (FORCE_TORCHRUN, H100×4)
+./scripts/stage1_eval.sh         # Cell 21+23+24: eval_loss + Hungarian Matching
+./scripts/stage1_merge.sh        # Cell 18: Merge & HF Hub push
+
+# Stage 2
+./scripts/stage2_train.sh        # Cell 31+32: LoRA base / world_model (no torchrun prefix)
+./scripts/stage2_eval.sh         # Cell 38+39+40: 3-Way vllm_infer
+./scripts/stage2_merge.sh        # Cell 35+36: LoRA merge_base / merge_world_model
+
+# 단일 데이터셋
+./scripts/stage1_train.sh MB     # MobiBench 만
+./scripts/stage1_train.sh AC     # AndroidControl 만
+```
+
+스크립트 전제: bash 4+ (macOS 기본 3.2 → `brew install bash`), LLaMA-Factory 설치 완료, `.env` 에 `HF_TOKEN` (merge 스크립트만 요구). `set -euo pipefail` 로 단계 실패 시 즉시 중단.
+
+### B. 수동 llamafactory-cli (디버깅·단일 셀 재현)
+
+```bash
 # Stage 1: World Modeling Full FT (H100 80GB × 4)
 cd LlamaFactory
 FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
   llamafactory-cli train examples/custom/GUI-Model-MB/stage1_full/qwen3_vl_8b_gui.yaml
 
 # Stage 1 평가: eval_loss
-llamafactory-cli eval examples/custom/GUI-Model-MB/stage1_eval/eval_loss.yaml
+llamafactory-cli train examples/custom/GUI-Model-MB/stage1_eval/base/eval_loss.yaml
 
-# Stage 1 평가: predict (생성 기반)
-llamafactory-cli train examples/custom/GUI-Model-MB/stage1_eval/predict.yaml
+# Stage 1 평가: predict (Hungarian Matching)  — vllm_infer.py 사용
+python scripts/vllm_infer.py --model_name_or_path <model> --dataset <ds_test> ...
 
-# Stage 2: Action Prediction LoRA FT (H100 80GB × 4)
-# stage2, stage1+stage2 각각 별도 YAML로 실행 (model_name_or_path만 다름)
-FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
-  llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<exp_yaml>
-
-# Stage 2 평가: vLLM 배치 추론 + 커스텀 메트릭
-# gui-model.ipynb Section 8 참조
+# Stage 2: Action Prediction LoRA FT (노트북 Cell 31/32 에는 torchrun prefix 없음)
+llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_model>.yaml
 ```
 
 ## Architecture
@@ -94,9 +115,12 @@ FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
   - `stage1_eval/`: Stage 1 평가 (eval_loss.yaml, predict.yaml)
   - `stage2_lora/`: Stage 2 LoRA 설정 (stage2, stage1+stage2)
   - `stage2_eval/`: Stage 2 평가 설정
-- **scripts/**: 유틸리티 스크립트
+- **scripts/**: 유틸리티 + 실행 스크립트
   - `split_data.py`: Train/Test Split CLI (Stage 1 random, Stage 2 stratified)
   - `extract_androidcontrol_images.py`: AndroidControl 이미지 추출
+  - `_common.sh`: 쉘 스크립트 공통 헬퍼 (`BASE_DIR`/`LF_ROOT` 자동 감지, `DS_PREFIX`/`HF_SLUG` 매핑, `parse_dataset_arg`, `run_logged` tee 로거, `require_yaml` 가드)
+  - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인 (Cell 15 / 21+23+24 / 18)
+  - `stage2_train.sh` / `stage2_eval.sh` / `stage2_merge.sh`: Stage 2 파이프라인 (Cell 31+32 / 38+39+40 / 35+36). Stage 2 train 은 노트북 원본에 맞춰 `FORCE_TORCHRUN` prefix 미사용
 - **LlamaFactory/outputs/**: 학습 체크포인트 및 평가 결과
   - `stage1_eval/eval_loss/`: Stage 1 loss 메트릭
   - `stage1_eval/hungarian_matching/`: Stage 1 요소 수준 메트릭

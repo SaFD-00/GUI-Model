@@ -183,6 +183,10 @@ python scripts/split_data.py --dataset AndroidControl
 
 ### 4. 학습 실행
 
+두 가지 방법 중 선택합니다. **YAML 생성은 노트북 전용**이므로, 셀 기반으로 YAML 파일이 먼저 만들어져 있어야 쉘 스크립트 실행이 가능합니다.
+
+#### 4-A. 노트북 (풀 파이프라인, 최초 실행 권장)
+
 `gui-model.ipynb` 노트북의 셀을 순서대로 실행합니다:
 
 1. **Section 0**: 환경 설정 및 LLaMA-Factory 설치
@@ -197,6 +201,25 @@ python scripts/split_data.py --dataset AndroidControl
 
 > Cell 3의 `CONFIGS` 딕셔너리에서 두 데이터셋의 경로, 하이퍼파라미터가 자동 설정됩니다.
 
+#### 4-B. 쉘 스크립트 (재실행·자동화)
+
+YAML/데이터 등록 셀(Cell 3/7/10/14/17/20/30/34)을 **한 번 실행**해 설정 파일이 이미 존재한다는 전제하에, 학습/평가/Merge 단계만 `scripts/` 아래 쉘 스크립트로 반복 실행할 수 있습니다.
+
+| 스크립트 | 대응 노트북 Cell | 수행 |
+|---|---|---|
+| `scripts/stage1_train.sh` | Cell 15 | Stage 1 Full FT (torchrun, H100×4) |
+| `scripts/stage1_eval.sh`  | Cell 21+23+24 | eval_loss + Hungarian Matching(base/fine-tuned) |
+| `scripts/stage1_merge.sh` | Cell 18 | Stage 1 Merge & HF Hub push |
+| `scripts/stage2_train.sh` | Cell 31+32 | Stage 2 LoRA (base, world_model) |
+| `scripts/stage2_eval.sh`  | Cell 38+39+40 | 3-Way prediction (vllm_infer) |
+| `scripts/stage2_merge.sh` | Cell 35+36 | Stage 2 LoRA Merge & HF Hub push |
+
+공통 옵션:
+- 인자: `MB | AC | all` (기본 `all`). 예: `./scripts/stage1_train.sh MB`
+- 로그: `logs/<script>_<DS>_<timestamp>.log` 로 `tee` 저장
+- 전제: bash 4+, LLaMA-Factory 환경 활성화, `.env` 에 `HF_TOKEN` (merge 스크립트 전용)
+- 에러: `set -euo pipefail` — 한 단계 실패 시 즉시 중단
+
 ## 프로젝트 구조
 
 ```
@@ -207,7 +230,14 @@ GUI-Model/
 ├── requirements.txt   # Python 의존성
 ├── scripts/           # 유틸리티 스크립트
 │   ├── split_data.py                    # Train/Test Split CLI
-│   └── extract_androidcontrol_images.py # AndroidControl 이미지 추출
+│   ├── extract_androidcontrol_images.py # AndroidControl 이미지 추출
+│   ├── _common.sh                       # 쉘 스크립트 공통 헬퍼 (경로/로깅/인자 파싱)
+│   ├── stage1_train.sh                  # Stage 1 Full FT (Cell 15)
+│   ├── stage1_eval.sh                   # Stage 1 평가 (Cell 21+23+24)
+│   ├── stage1_merge.sh                  # Stage 1 Merge & HF Upload (Cell 18)
+│   ├── stage2_train.sh                  # Stage 2 LoRA (Cell 31+32)
+│   ├── stage2_eval.sh                   # Stage 2 3-Way 평가 (Cell 38+39+40)
+│   └── stage2_merge.sh                  # Stage 2 Merge & HF Upload (Cell 35+36)
 ├── data/              # 데이터셋 (git 미포함)
 │   ├── MobiBench/     # MobiBench 데이터셋 (images/, stage1/2 JSONL)
 │   └── AndroidControl/ # AndroidControl 데이터셋 (images/, stage1/2 JSONL)
