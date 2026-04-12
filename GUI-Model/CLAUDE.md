@@ -36,7 +36,7 @@ Cell 3에서 `CONFIGS` 딕셔너리로 두 데이터셋(MobiBench/AndroidControl
 | Stage 1 epochs / LR | 5 / 1e-5 | 3 / 1e-5 |
 | Stage 2 epochs / LR | 5 / 3e-5 | 3 / 5e-5 |
 | Stage 2 LoRA r / α | 16 / 32 | 32 / 64 |
-| save / eval strategy | epoch | steps (500) |
+| save / eval strategy | epoch | epoch |
 | per_device_eval_batch_size | 1 | 4 |
 
 ## Commands
@@ -54,10 +54,11 @@ python scripts/split_data.py --dataset AndroidControl
 
 # 공통 인자: MB | AC | all (기본 all). 로그는 logs/<tag>_<ts>.log 로 tee 저장.
 
-# Stage 1
-./scripts/stage1_train.sh        # Cell 15: Full FT (FORCE_TORCHRUN, H100×4)
-./scripts/stage1_eval.sh         # Cell 21+23+24: eval_loss + Hungarian Matching
-./scripts/stage1_merge.sh        # Cell 18: Merge & HF Hub push
+# Stage 1  (Hungarian F1 기반 Best Epoch 자동 선택)
+./scripts/stage1_train.sh        # Full FT + checkpoint-* 생성 + load_best_model_at_end safety
+./scripts/stage1_eval.sh         # Baseline + 전체 checkpoint sweep → Hungarian F1 winner 선택
+                                 # → outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 기록
+./scripts/stage1_merge.sh        # BEST_CHECKPOINT 기반 merge → HF Hub push + outputs/{DS}/stage1_merged/ 로컬 복사
 
 # Stage 2
 ./scripts/stage2_train.sh        # Cell 31+32: LoRA base / world_model (no torchrun prefix)
@@ -119,7 +120,8 @@ llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_mode
   - `split_data.py`: Train/Test Split CLI (Stage 1 random, Stage 2 stratified)
   - `extract_androidcontrol_images.py`: AndroidControl 이미지 추출
   - `_common.sh`: 쉘 스크립트 공통 헬퍼 (`BASE_DIR`/`LF_ROOT` 자동 감지, `DS_PREFIX`/`HF_SLUG` 매핑, `parse_dataset_arg`, `run_logged` tee 로거, `require_yaml` 가드)
-  - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인 (Cell 15 / 21+23+24 / 18)
+  - `_hungarian_eval.py`: Stage 1 체크포인트별 Hungarian/BLEU/ROUGE 메트릭 + winner 선택. `score` (단일 prediction → metrics.json), `select` (checkpoint-*/metrics.json 비교 → `BEST_CHECKPOINT` 기록) 서브커맨드. notebook Cell 25+26 포팅으로 shell/notebook 결과 동일 보장
+  - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인. `stage1_eval.sh` 는 Baseline + 체크포인트 sweep + winner 선택, `stage1_merge.sh` 는 BEST_CHECKPOINT 기반 merge (HF + local)
   - `stage2_train.sh` / `stage2_eval.sh` / `stage2_merge.sh`: Stage 2 파이프라인 (Cell 31+32 / 38+39+40 / 35+36). Stage 2 train 은 노트북 원본에 맞춰 `FORCE_TORCHRUN` prefix 미사용
 - **LlamaFactory/outputs/**: 학습 체크포인트 및 평가 결과
   - `stage1_eval/eval_loss/`: Stage 1 loss 메트릭
@@ -136,10 +138,11 @@ llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_mode
 ```
 data/
 ├── MobiBench/
-│   ├── images/                      # 모바일 UI 스크린샷 (3,655개 PNG, episode_{id}_step_{num}.png)
+│   ├── images/                      # 모바일 UI 스크린샷 (3,655개 PNG, MobiBench/images/episode_{id:06d}_step_{idx:04d}.png)
 │   ├── gui-model_stage1.jsonl       # Stage 1 전체 (3,145건 = train 2,987 + test 158)
 │   └── gui-model_stage2.jsonl       # Stage 2 전체 (3,147건 = train 2,987 + test 160)
 └── AndroidControl/
+    ├── images/                      # AC 스크린샷 (extract_androidcontrol_images.py 로 추출, AndroidControl/images/episode_{id:06d}_step_{idx:04d}.png)
     ├── gui-model_stage1.jsonl       # Stage 1 전체 (71,047건 = train 67,494 + test 3,553)
     └── gui-model_stage2.jsonl       # Stage 2 전체 (91,677건 = train 87,090 + test 4,587)
 
@@ -212,6 +215,7 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 - **DeepSpeed**: Stage 1은 ZeRO-3 (H100 × 4), Stage 2는 ZeRO-2 (H100 × 4)
 - **cutoff_len: 8192**: XML이 포함된 긴 입력을 처리하기 위한 설정
 - **커스텀 메트릭 패치**: LLaMA-Factory의 `metric.py`에 Hungarian Matching을 통합하여 eval 시 자동 산출. 패치 가이드는 `.claude/reference/metrics/patch_guide_0315.txt` 참조
+- **Best Epoch 자동 선택 (Hungarian F1)**: `load_best_model_at_end=true` 는 eval_loss 기준(intrinsic)으로 자동 선택하여 safety net 역할. 실제 winner 는 `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산해 선정. 선택 결과는 `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT` 파일에 기록되고, `stage1_merge.sh`/notebook Cell 17 이 이를 읽어 해당 checkpoint 를 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽에 merge. extrinsic generation quality 기준 선택이라 eval_loss 기반 자동 선택과 다른 결과가 나올 수 있음(두 지표는 상관이 있으나 동일하지 않음).
 
 ## Configuration
 
@@ -250,8 +254,8 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 | learning_rate | 1e-5 | 5e-5 |
 | epochs | 3 | 3 |
 | warmup_ratio | 0.03 | 0.03 |
-| save_strategy / save_steps | steps / 500 | steps / 500 |
-| eval_strategy / eval_steps | steps / 500 | steps / 500 |
+| save_strategy / save_steps | epoch / — | epoch / — |
+| eval_strategy / eval_steps | epoch / — | epoch / — |
 | save_total_limit | 5 | 5 |
 | per_device_eval_batch_size | 4 | 4 |
 | weight_decay | 0.01 | 0.01 |
@@ -263,7 +267,7 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 
 `.claude/researchs/vlm-gui-finetuning-research.md` + gWorld(Qwen3-VL-8B, 260K, lr=2e-7, cosine, warmup=0.01) / Code2World(Qwen3-VL-8B SFT, lr=1e-5) / MobileDreamer(Qwen3-8B LoRA, HP 대부분 비공개) 문헌을 참고해 데이터셋 규모 차이를 반영한 분기 설계.
 - **MobiBench (≈3k 샘플)**: 소규모이므로 `epochs=5`로 충분히 학습, `save_strategy=epoch`로 에폭 단위 체크포인트. `warmup_ratio=0.05`로 안정적 워밍업.
-- **AndroidControl (≈71k/92k 샘플, 2026-04-13 재검토)**: 대규모 데이터셋. Stage 1 lr=1e-5(Code2World와 정렬), Stage 2 lr=5e-5(research doc 권장 5e-5~1e-4 하한, Qwen-GUI-3B Stage 2와 정렬). 데이터 규모 증가분을 epoch 상향으로 흡수하여 `epochs=3`으로 학습 여유 확보 — `load_best_model_at_end=true`가 과적합 구간을 자동 회피. LoRA rank 상향(r=16→32, α=32→64)은 50K-100K 샘플 구간 권장 rank 64-128의 보수 선택. 대규모 test split(3,553/4,587) eval 부담은 `per_device_eval_batch_size=4`로 상쇄. Stage 2 accum을 4→8로 올려 effective batch를 gWorld/Code2World와 동일한 64로 맞춤.
+- **AndroidControl (≈71k/92k 샘플, 2026-04-13 재검토)**: 대규모 데이터셋. Stage 1 lr=1e-5(Code2World와 정렬), Stage 2 lr=5e-5(research doc 권장 5e-5~1e-4 하한, Qwen-GUI-3B Stage 2와 정렬). 데이터 규모 증가분을 epoch 상향으로 흡수하여 `epochs=3`으로 학습 여유 확보 — `load_best_model_at_end=true`가 과적합 구간을 자동 회피. LoRA rank 상향(r=16→32, α=32→64)은 50K-100K 샘플 구간 권장 rank 64-128의 보수 선택. 대규모 test split(3,553/4,587) eval 부담은 `per_device_eval_batch_size=4`로 상쇄. Stage 2 accum을 4→8로 올려 effective batch를 gWorld/Code2World와 동일한 64로 맞춤. **save/eval strategy는 MB와 동일한 `epoch` 로 통일**(2026-04-13 최초엔 `steps(500)` 이었으나 관리 일관성 위해 변경) — 3 epoch 동안 checkpoint 3개만 생성되어 디스크 부담이 크게 줄고, `load_best_model_at_end` 는 동일 작동(선택 후보가 3개로 줄어드는 것은 trade-off).
 - **공통 안정화**: `max_grad_norm=1.0`, `weight_decay=0.01`, `save_total_limit=5`, `load_best_model_at_end=true` + `metric_for_best_model=eval_loss`로 학습 실패/OOM 복구 및 best checkpoint 자동 선택을 보장.
 - **Eval 전략**: 별도 validation split을 만들지 않고 기존 `{ds_prefix}_stage{n}_test` 데이터셋을 `eval_dataset`으로 재사용(train 중 best checkpoint 선택 + 이후 quantitative eval 모두 같은 set을 사용).
 
