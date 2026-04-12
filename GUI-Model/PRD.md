@@ -284,16 +284,16 @@ Qwen3-VL-8B                  Merged Model (stage1+stage2)
 
 | 데이터셋 | Stage 1 | Stage 2 | Images | 총 크기 | 용도 |
 |----------|---------|---------|--------|---------|------|
-| **MobiBench** (기본) | 3,145건 (~18.7MB) | 3,655건 (~10.5MB) | 3,655개 | ~28 MB | 소규모 실험, 빠른 반복 |
-| **AndroidControl** | 34,948건 (~202.7MB) | 58,234건 (~276.4MB) | 20,129개 | ~479 MB | 대규모 학습, 본 실험 |
+| **MobiBench** (기본) | 3,145건 (~18.7MB) | 3,147건 (~10.1MB) | 3,655개 | ~28 MB | 소규모 실험, 빠른 반복 |
+| **AndroidControl** (주력) | 71,047건 (~18.8MB) | 91,677건 (~10.6MB) | 20,129개 | ~479 MB | 대규모 학습, 본 실험 (2026-04-13 데이터 갱신) |
 
 ### 6.2 Stage 1 (World Modeling)
 
 | 항목 | MobiBench | AndroidControl |
 |------|-----------|----------------|
-| 원본 데이터 | gui-model_stage1.jsonl (3,145건) | gui-model_stage1.jsonl (34,948건) |
-| Train Split | ~2,988건 (95%) | ~33,200건 (95%) |
-| Test Split | ~157건 (5%) | ~1,748건 (5%) |
+| 원본 데이터 | gui-model_stage1.jsonl (3,145건) | gui-model_stage1.jsonl (71,047건) |
+| Train Split | ~2,987건 (95%) | 67,494건 (95%) |
+| Test Split | ~158건 (5%) | 3,553건 (5%) |
 | Split Method | Random, seed=42 | Random, seed=42 |
 | Format | ShareGPT (multimodal) | ShareGPT (multimodal) |
 | Task | UI State (XML) + Action → Next UI State (XML) | 동일 |
@@ -302,9 +302,9 @@ Qwen3-VL-8B                  Merged Model (stage1+stage2)
 
 | 항목 | MobiBench | AndroidControl |
 |------|-----------|----------------|
-| 원본 데이터 | gui-model_stage2.jsonl (3,655건) | gui-model_stage2.jsonl (58,234건) |
-| Train Split | ~3,472건 (95%) | ~55,322건 (95%) |
-| Test Split | ~183건 (5%) | ~2,912건 (5%) |
+| 원본 데이터 | gui-model_stage2.jsonl (3,147건) | gui-model_stage2.jsonl (91,677건) |
+| Train Split | ~2,987건 (95%) | 87,090건 (95%) |
+| Test Split | ~160건 (5%) | 4,587건 (5%) |
 | Split Method | Stratified by action type, seed=42 | Stratified by action type, seed=42 |
 | Task | Screenshot + UI State + Task → Action (JSON) | 동일 |
 
@@ -390,16 +390,17 @@ Qwen3-VL-8B                  Merged Model (stage1+stage2)
 | Parameter | MobiBench | AndroidControl | 근거 |
 |-----------|-----------|----------------|------|
 | per_device_train_batch_size | 2 | 2 | VLM 이미지 메모리 고려 |
-| gradient_accumulation_steps | 8 | 8 | effective batch 64 (2×8×4GPU) |
-| learning_rate | 1.0e-5 | 2.0e-5 | MB 소규모는 저 LR × 다 epoch 전략, AC 대규모는 상대적 고 LR × 적 epoch 전략 |
+| gradient_accumulation_steps | 8 | 8 | effective batch 64 (2×8×4GPU), gWorld/Code2World와 정렬 |
+| learning_rate | 1.0e-5 | 1.0e-5 | Code2World SFT와 정렬. AC는 기존 2.0e-5에서 하향 (gWorld 방향 절충) |
 | lr_scheduler_type | cosine | cosine | Code2World, gWorld, MobileDreamer 모두 cosine |
-| warmup_ratio | 0.05 | 0.1 | AC는 LR이 높고 초기 스텝 불안정 위험 → warmup 비율 2× |
-| num_train_epochs | 5 | 2 | MB는 gWorld/MobileDreamer를 따라 5 epochs, AC는 데이터 규모(~35k+)로 2 epochs면 충분한 업데이트 |
+| warmup_ratio | 0.05 | 0.03 | AC는 총 step 증가로 절대 warmup steps 유지 (0.03 × 3,164 ≈ 95 step) |
+| num_train_epochs | 5 | 3 | MB는 gWorld/MobileDreamer를 따라 5 epochs, AC는 데이터 규모(~67K)에 맞춰 3 epochs로 수렴 여유 확보 (load_best_model_at_end이 과적합 방어) |
 | weight_decay | 0.01 | 0.01 | gWorld 동일, 표준 정규화 |
 | max_grad_norm | 1.0 | 1.0 | gradient explosion 방지 |
 | save_strategy | epoch | steps (500) | MB는 epoch 단위가 자연스럽고, AC는 step 단위 추적이 운영에 유리 |
-| save_total_limit | 5 | 5 | 디스크 사용량 제한 |
+| save_total_limit | 5 | 5 | 디스크 사용량 제한 (load_best_model_at_end가 best는 별도 유지) |
 | eval_strategy | epoch | steps (500) | `load_best_model_at_end`의 strategy 일치 제약 충족 |
+| per_device_eval_batch_size | 1 | 4 | AC는 test split(3,553)이 커서 eval 부담 상쇄 |
 | eval_dataset | `GUI-Model-MB_stage1_test` | `GUI-Model-AC_stage1_test` | 기존 test split을 재사용 (별도 val split 생성 안 함) |
 | load_best_model_at_end / metric | true / eval_loss↓ | true / eval_loss↓ | best checkpoint 자동 선택 |
 
@@ -408,19 +409,20 @@ Qwen3-VL-8B                  Merged Model (stage1+stage2)
 | Parameter | MobiBench | AndroidControl | 근거 |
 |-----------|-----------|----------------|------|
 | per_device_train_batch_size | 2 | 2 | H100 80GB VRAM 활용 |
-| gradient_accumulation_steps | 4 | 4 | effective batch 32 (2×4×4GPU) |
-| learning_rate | 3.0e-5 | 1.0e-5 | MobileDreamer LoRA 참고. AC는 데이터 대규모로 상대적으로 낮은 LR |
+| gradient_accumulation_steps | 4 | 8 | MB effective batch 32, AC는 gWorld/Code2World와 동일한 64로 정렬 |
+| learning_rate | 3.0e-5 | 5.0e-5 | AC는 vlm-gui-finetuning-research.md 권장 LoRA LR 5e-5~1e-4의 하한, Qwen-GUI-3B Stage 2와 정렬 |
 | lr_scheduler_type | cosine | cosine | 수렴 안정성 |
-| warmup_ratio | 0.05 | 0.05 | 표준 |
-| num_train_epochs | 5 | 2 | MB는 5 epochs, AC는 데이터 규모로 2 epochs |
+| warmup_ratio | 0.05 | 0.03 | AC는 총 step 기반 조정 (0.03 × 4,083 ≈ 122 step) |
+| num_train_epochs | 5 | 3 | MB는 5 epochs, AC는 Stage 1과 대칭으로 3 epochs (load_best_model_at_end이 과적합 방어) |
 | weight_decay | 0.01 | 0.01 | 표준 |
 | max_grad_norm | 1.0 | 1.0 | gradient explosion 방지 |
 | save_strategy | epoch | steps (500) | S1과 동일한 정책 |
 | save_total_limit | 5 | 5 | 디스크 사용량 제한 |
 | eval_strategy | epoch | steps (500) | `load_best_model_at_end` 제약 충족 |
+| per_device_eval_batch_size | 1 | 4 | AC는 test split(4,587)이 커서 eval 부담 상쇄 |
 | eval_dataset | `GUI-Model-MB_stage2_test` | `GUI-Model-AC_stage2_test` | 기존 test split 재사용 |
 | load_best_model_at_end / metric | true / eval_loss↓ | true / eval_loss↓ | best checkpoint 자동 선택 |
-| LoRA r / α / dropout | 16 / 32 / 0.1 | 16 / 32 / 0.1 | 표준 LoRA 설정 |
+| LoRA r / α / dropout | 16 / 32 / 0.1 | 32 / 64 / 0.1 | AC는 50K-100K 샘플 규모 권장(r=64-128)의 보수 선택, α=2r 규칙 적용 |
 
 ---
 
@@ -460,10 +462,10 @@ overwrite_output_dir: true
 ### train
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 8
-learning_rate: 1.0e-5           # AC: 2.0e-5
-num_train_epochs: 5             # AC: 2
+learning_rate: 1.0e-5           # AC: 1.0e-5 (동일)
+num_train_epochs: 5             # AC: 3
 lr_scheduler_type: cosine
-warmup_ratio: 0.05              # AC: 0.1
+warmup_ratio: 0.05              # AC: 0.03
 weight_decay: 0.01
 max_grad_norm: 1.0
 bf16: true
@@ -473,7 +475,7 @@ deepspeed: examples/deepspeed/ds_z3_config.json
 
 ### eval
 eval_dataset: GUI-Model-MB_stage1_test
-per_device_eval_batch_size: 1
+per_device_eval_batch_size: 1   # AC: 4
 eval_strategy: epoch            # AC: steps (eval_steps: 500)
 load_best_model_at_end: true
 metric_for_best_model: eval_loss
@@ -550,8 +552,8 @@ stage: sft
 do_train: true
 finetuning_type: lora
 freeze_vision_tower: true
-lora_rank: 16
-lora_alpha: 32
+lora_rank: 16                            # AC: 32
+lora_alpha: 32                           # AC: 64
 lora_target: all
 lora_dropout: 0.1
 
@@ -566,11 +568,11 @@ save_total_limit: 5
 
 ### train
 per_device_train_batch_size: 2
-gradient_accumulation_steps: 4
-learning_rate: 3.0e-5                    # AC: 1.0e-5
-num_train_epochs: 5                      # AC: 2
+gradient_accumulation_steps: 4           # AC: 8
+learning_rate: 3.0e-5                    # AC: 5.0e-5
+num_train_epochs: 5                      # AC: 3
 lr_scheduler_type: cosine
-warmup_ratio: 0.05
+warmup_ratio: 0.05                       # AC: 0.03
 weight_decay: 0.01
 max_grad_norm: 1.0
 bf16: true
@@ -579,7 +581,7 @@ gradient_checkpointing: true
 
 ### eval
 eval_dataset: GUI-Model-MB_stage2_test   # AC: GUI-Model-AC_stage2_test
-per_device_eval_batch_size: 1
+per_device_eval_batch_size: 1            # AC: 4
 eval_strategy: epoch                     # AC: steps (eval_steps: 500)
 load_best_model_at_end: true
 metric_for_best_model: eval_loss
@@ -967,11 +969,10 @@ GUI-Model/
 │   ├── MobiBench/                  # MobiBench 데이터셋
 │   │   ├── images/                 # 모바일 UI 스크린샷 (3,655개 PNG)
 │   │   ├── gui-model_stage1.jsonl  # Stage 1 (3,145건)
-│   │   └── gui-model_stage2.jsonl  # Stage 2 (3,655건)
-│   └── AndroidControl/             # AndroidControl 데이터셋
-│       ├── images/                 # 스크린샷 (episode_{id}_step_{num}.png)
-│       ├── gui-model_stage1.jsonl  # Stage 1 (34,948건)
-│       └── gui-model_stage2.jsonl  # Stage 2 (58,234건)
+│   │   └── gui-model_stage2.jsonl  # Stage 2 (3,147건)
+│   └── AndroidControl/             # AndroidControl 데이터셋 (2026-04-13 갱신)
+│       ├── gui-model_stage1.jsonl  # Stage 1 (71,047건)
+│       └── gui-model_stage2.jsonl  # Stage 2 (91,677건)
 │
 ├── LlamaFactory/                   # LLaMA-Factory 프레임워크
 │   ├── src/llamafactory/           # Python 패키지 소스

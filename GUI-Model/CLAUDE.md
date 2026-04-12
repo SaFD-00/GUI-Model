@@ -33,9 +33,11 @@ Cell 3에서 `CONFIGS` 딕셔너리로 두 데이터셋(MobiBench/AndroidControl
 | DS prefix | `GUI-Model-MB` | `GUI-Model-AC` |
 | Output prefix | `MB/` | `AC/` |
 | HF slug | `mb-` | `ac-` |
-| Stage 1 epochs / LR | 5 / 1e-5 | 2 / 2e-5 |
-| Stage 2 epochs / LR | 5 / 3e-5 | 2 / 1e-5 |
+| Stage 1 epochs / LR | 5 / 1e-5 | 3 / 1e-5 |
+| Stage 2 epochs / LR | 5 / 3e-5 | 3 / 5e-5 |
+| Stage 2 LoRA r / α | 16 / 32 | 32 / 64 |
 | save / eval strategy | epoch | steps (500) |
+| per_device_eval_batch_size | 1 | 4 |
 
 ## Commands
 
@@ -111,12 +113,11 @@ FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
 data/
 ├── MobiBench/
 │   ├── images/                      # 모바일 UI 스크린샷 (3,655개 PNG, episode_{id}_step_{num}.png)
-│   ├── gui-model_stage1.jsonl       # Stage 1 전체 (3,145건)
-│   └── gui-model_stage2.jsonl       # Stage 2 전체 (3,655건)
+│   ├── gui-model_stage1.jsonl       # Stage 1 전체 (3,145건 = train 2,987 + test 158)
+│   └── gui-model_stage2.jsonl       # Stage 2 전체 (3,147건 = train 2,987 + test 160)
 └── AndroidControl/
-    ├── images/                      # 스크린샷 (episode_{id:06d}_step_{num:04d}.png)
-    ├── gui-model_stage1.jsonl       # Stage 1 전체 (34,947건)
-    └── gui-model_stage2.jsonl       # Stage 2 전체 (58,233건)
+    ├── gui-model_stage1.jsonl       # Stage 1 전체 (71,047건 = train 67,494 + test 3,553)
+    └── gui-model_stage2.jsonl       # Stage 2 전체 (91,677건 = train 87,090 + test 4,587)
 
 data/
 ├── MobiBench/
@@ -217,28 +218,32 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 | DeepSpeed | ZeRO-3 | — |
 | image_max_pixels | 4,233,600 | 4,233,600 |
 
-### AndroidControl (~15배 대규모)
+### AndroidControl (MobiBench 대비 Stage 1 ~23배 / Stage 2 ~29배 대규모)
 
 | 항목 | Stage 1 (Full FT) | Stage 2 (LoRA) |
 |------|-------------------|----------------|
-| learning_rate | 2e-5 | 1e-5 |
-| epochs | 2 | 2 |
-| warmup_ratio | 0.1 | 0.05 |
+| batch × accum × GPU | 2 × 8 × 4 = 64 | 2 × 8 × 4 = 64 |
+| learning_rate | 1e-5 | 5e-5 |
+| epochs | 3 | 3 |
+| warmup_ratio | 0.03 | 0.03 |
 | save_strategy / save_steps | steps / 500 | steps / 500 |
 | eval_strategy / eval_steps | steps / 500 | steps / 500 |
 | save_total_limit | 5 | 5 |
+| per_device_eval_batch_size | 4 | 4 |
+| weight_decay | 0.01 | 0.01 |
 | max_grad_norm | 1.0 | 1.0 |
+| LoRA r / α / dropout | — | 32 / 64 / 0.1 |
 | 기타 설정 | MobiBench와 동일 | MobiBench와 동일 |
 
 ### Training Recipe 근거
 
-Code2World, gWorld, MobileDreamer 논문의 training recipe를 참고하되 데이터셋 규모 차이를 반영해 분기:
+`.claude/researchs/vlm-gui-finetuning-research.md` + gWorld(Qwen3-VL-8B, 260K, lr=2e-7, cosine, warmup=0.01) / Code2World(Qwen3-VL-8B SFT, lr=1e-5) / MobileDreamer(Qwen3-8B LoRA, HP 대부분 비공개) 문헌을 참고해 데이터셋 규모 차이를 반영한 분기 설계.
 - **MobiBench (≈3k 샘플)**: 소규모이므로 `epochs=5`로 충분히 학습, `save_strategy=epoch`로 에폭 단위 체크포인트. `warmup_ratio=0.05`로 안정적 워밍업.
-- **AndroidControl (≈35k~58k 샘플)**: 대규모 데이터셋에서는 epoch을 낮추고 step 단위 체크포인트가 운영상 유리 → `epochs=2`, `save/eval=steps(500)`. 데이터량으로 충분한 업데이트가 보장되므로 LR을 상대적으로 상향(2e-5 / 1e-5)하고 `warmup_ratio=0.1`로 초반 스텝 불안정을 완화.
-- **공통 안정화**: `max_grad_norm=1.0`, `save_total_limit=5`, `load_best_model_at_end=true` + `metric_for_best_model=eval_loss`로 학습 실패/OOM 복구 및 best checkpoint 자동 선택을 보장.
+- **AndroidControl (≈71k/92k 샘플, 2026-04-13 재검토)**: 대규모 데이터셋. Stage 1 lr=1e-5(Code2World와 정렬), Stage 2 lr=5e-5(research doc 권장 5e-5~1e-4 하한, Qwen-GUI-3B Stage 2와 정렬). 데이터 규모 증가분을 epoch 상향으로 흡수하여 `epochs=3`으로 학습 여유 확보 — `load_best_model_at_end=true`가 과적합 구간을 자동 회피. LoRA rank 상향(r=16→32, α=32→64)은 50K-100K 샘플 구간 권장 rank 64-128의 보수 선택. 대규모 test split(3,553/4,587) eval 부담은 `per_device_eval_batch_size=4`로 상쇄. Stage 2 accum을 4→8로 올려 effective batch를 gWorld/Code2World와 동일한 64로 맞춤.
+- **공통 안정화**: `max_grad_norm=1.0`, `weight_decay=0.01`, `save_total_limit=5`, `load_best_model_at_end=true` + `metric_for_best_model=eval_loss`로 학습 실패/OOM 복구 및 best checkpoint 자동 선택을 보장.
 - **Eval 전략**: 별도 validation split을 만들지 않고 기존 `{ds_prefix}_stage{n}_test` 데이터셋을 `eval_dataset`으로 재사용(train 중 best checkpoint 선택 + 이후 quantitative eval 모두 같은 set을 사용).
 
-> Cell 3의 `_DATASET_CONFIG[ds_name]["stage{1,2}"]`에서 데이터셋×스테이지별 하이퍼파라미터 자유 조정 가능 (lr, epochs, warmup_ratio, save_strategy, save_steps, eval_strategy, eval_steps).
+> Cell 3의 `_DATASET_CONFIG[ds_name]["stage{1,2}"]`에서 데이터셋×스테이지별 하이퍼파라미터 자유 조정 가능 (lr, epochs, warmup_ratio, save_strategy, save_steps, eval_strategy, eval_steps, gradient_accumulation_steps, per_device_eval_batch_size, lora_rank, lora_alpha, lora_dropout).
 
 ## Dependencies
 
