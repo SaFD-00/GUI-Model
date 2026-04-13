@@ -31,8 +31,20 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from bs4 import BeautifulSoup
-from munkres import Munkres
+# bs4 / munkres 는 score 서브커맨드에서만 사용. select 는 미설치 환경에서도 돌아야 하므로
+# 지연 로딩 (매크로 import 대신 _lazy_deps() 호출).
+BeautifulSoup = None  # type: ignore
+Munkres = None  # type: ignore
+
+def _lazy_deps():
+    """bs4 / munkres 를 지연 로드. score 서브커맨드 진입 시 한 번 호출."""
+    global BeautifulSoup, Munkres
+    if BeautifulSoup is None:
+        from bs4 import BeautifulSoup as _BS
+        BeautifulSoup = _BS
+    if Munkres is None:
+        from munkres import Munkres as _M
+        Munkres = _M
 
 
 # ── Hungarian Metric 상수 (Cell 25 상수 복제) ──────────────────────────────
@@ -252,6 +264,7 @@ def evaluate_stage1_predictions(test_path, pred_path):
 
 # ── CLI ──────────────────────────────────────────────────────────────────
 def _cmd_score(args):
+    _lazy_deps()
     metrics = evaluate_stage1_predictions(args.test, args.pred)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, 'w', encoding='utf-8') as f:

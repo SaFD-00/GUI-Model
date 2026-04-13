@@ -60,10 +60,13 @@ python scripts/split_data.py --dataset AndroidControl
                                  # → outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 기록
 ./scripts/stage1_merge.sh        # BEST_CHECKPOINT 기반 merge → HF Hub push + outputs/{DS}/stage1_merged/ 로컬 복사
 
-# Stage 2
-./scripts/stage2_train.sh        # Cell 31+32: LoRA base / world_model (no torchrun prefix)
-./scripts/stage2_eval.sh         # Cell 38+39+40: 3-Way vllm_infer
-./scripts/stage2_merge.sh        # Cell 35+36: LoRA merge_base / merge_world_model
+# Stage 2  (Overall Score 기반 Best Epoch 자동 선택, lora_base/lora_world_model 각각)
+./scripts/stage2_train.sh        # LoRA base / world_model + checkpoint-* 생성
+./scripts/stage2_eval.sh         # Baseline + 각 variant 별 체크포인트 sweep → Overall Score winner 선택
+                                 # → outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT 기록
+                                 # (로컬 경로 + --adapter_name_or_path 사용, HF 의존 X)
+./scripts/stage2_merge.sh        # 각 variant BEST_CHECKPOINT 읽어 winner adapter merge → HF Hub push
+                                 # (world_model variant 의 base 는 로컬 outputs/{DS}/stage1_merged)
 
 # 단일 데이터셋
 ./scripts/stage1_train.sh MB     # MobiBench 만
@@ -121,8 +124,9 @@ llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_mode
   - `extract_androidcontrol_images.py`: AndroidControl 이미지 추출
   - `_common.sh`: 쉘 스크립트 공통 헬퍼 (`BASE_DIR`/`LF_ROOT` 자동 감지, `DS_PREFIX`/`HF_SLUG` 매핑, `parse_dataset_arg`, `run_logged` tee 로거, `require_yaml` 가드)
   - `_hungarian_eval.py`: Stage 1 체크포인트별 Hungarian/BLEU/ROUGE 메트릭 + winner 선택. `score` (단일 prediction → metrics.json), `select` (checkpoint-*/metrics.json 비교 → `BEST_CHECKPOINT` 기록) 서브커맨드. notebook Cell 25+26 포팅으로 shell/notebook 결과 동일 보장
-  - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인. `stage1_eval.sh` 는 Baseline + 체크포인트 sweep + winner 선택, `stage1_merge.sh` 는 BEST_CHECKPOINT 기반 merge (HF + local)
-  - `stage2_train.sh` / `stage2_eval.sh` / `stage2_merge.sh`: Stage 2 파이프라인 (Cell 31+32 / 38+39+40 / 35+36). Stage 2 train 은 노트북 원본에 맞춰 `FORCE_TORCHRUN` prefix 미사용
+  - `_action_eval.py`: Stage 2 체크포인트별 Action 메트릭 (Parse/Type/IoU/Params/Overall) + winner 선택. `score`/`select` 서브커맨드. notebook Cell 41+42 포팅. 기본 선택 지표는 `overall_score` (Type × (0.5×IoU + 0.5×Params))
+  - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인. `stage1_eval.sh` 는 Baseline + 체크포인트 sweep + Hungarian F1 winner 선택, `stage1_merge.sh` 는 BEST_CHECKPOINT 기반 merge (HF + local)
+  - `stage2_train.sh` / `stage2_eval.sh` / `stage2_merge.sh`: Stage 2 파이프라인. `stage2_eval.sh` 는 Baseline + `lora_base`/`lora_world_model` 각각 체크포인트 sweep + Overall Score winner 선택 (로컬 base + `--adapter_name_or_path`, HF 의존 없음). `stage2_merge.sh` 는 각 variant BEST_CHECKPOINT 읽어 winner adapter 로 merge. Stage 2 train 은 노트북 원본에 맞춰 `FORCE_TORCHRUN` prefix 미사용
 - **LlamaFactory/outputs/**: 학습 체크포인트 및 평가 결과
   - `stage1_eval/eval_loss/`: Stage 1 loss 메트릭
   - `stage1_eval/hungarian_matching/`: Stage 1 요소 수준 메트릭
@@ -215,7 +219,10 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 - **DeepSpeed**: Stage 1은 ZeRO-3 (H100 × 4), Stage 2는 ZeRO-2 (H100 × 4)
 - **cutoff_len: 8192**: XML이 포함된 긴 입력을 처리하기 위한 설정
 - **커스텀 메트릭 패치**: LLaMA-Factory의 `metric.py`에 Hungarian Matching을 통합하여 eval 시 자동 산출. 패치 가이드는 `.claude/reference/metrics/patch_guide_0315.txt` 참조
-- **Best Epoch 자동 선택 (Hungarian F1)**: `load_best_model_at_end=true` 는 eval_loss 기준(intrinsic)으로 자동 선택하여 safety net 역할. 실제 winner 는 `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산해 선정. 선택 결과는 `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT` 파일에 기록되고, `stage1_merge.sh`/notebook Cell 17 이 이를 읽어 해당 checkpoint 를 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽에 merge. extrinsic generation quality 기준 선택이라 eval_loss 기반 자동 선택과 다른 결과가 나올 수 있음(두 지표는 상관이 있으나 동일하지 않음).
+- **Best Epoch 자동 선택 (Stage 1: Hungarian F1, Stage 2: Overall Score)**: `load_best_model_at_end=true` 는 eval_loss 기준(intrinsic)으로 자동 선택하여 safety net 역할. 실제 winner 는 extrinsic generation quality 기준으로 선택:
+  - **Stage 1**: `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산. 결과는 `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT`. `stage1_merge.sh`/Cell 17 이 이를 읽어 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽 merge
+  - **Stage 2**: `stage2_eval.sh` 가 `lora_base` / `lora_world_model` 각각 체크포인트 sweep (Base: Qwen or `outputs/{DS}/stage1_merged`, Adapter: `checkpoint-*/`) → `_action_eval.py` 로 `overall_score` 계산 → 각 variant 의 `outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT` 기록. `stage2_merge.sh`/Cell 34 가 각각 읽어 winner adapter 로 merge → HF Hub push (변수 수만큼 2개 모델 push). lora_base 와 lora_world_model 둘 다 동일 로직으로 3-Way 비교 공정성 유지
+  - Shell 파이프라인은 로컬 경로만 사용해 HF 의존을 제거 (stage2_merge 이전에도 stage2_eval 실행 가능, 404/네트워크 이슈 없음)
 
 ## Configuration
 
