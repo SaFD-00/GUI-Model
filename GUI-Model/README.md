@@ -183,36 +183,36 @@ python scripts/split_data.py --dataset AndroidControl
 
 ### 4. 학습 실행
 
-두 가지 방법 중 선택합니다. **YAML 생성은 노트북 전용**이므로, 셀 기반으로 YAML 파일이 먼저 만들어져 있어야 쉘 스크립트 실행이 가능합니다.
+두 가지 방법 중 선택합니다. **YAML 생성은 노트북 전용**이며, Section 0(Environment Setup)의 _YAML Configs 일괄 생성_ 블록에서 모든 학습·평가·Merge YAML 이 한 번에 만들어집니다. 쉘 스크립트는 YAML 이 이미 존재한다는 전제하에 동작합니다.
 
 #### 4-A. 노트북 (풀 파이프라인, 최초 실행 권장)
 
 `gui-model.ipynb` 노트북의 셀을 순서대로 실행합니다:
 
-1. **Section 0**: 환경 설정 및 LLaMA-Factory 설치
+1. **Section 0 (Cell 2–16)**: 환경 설정 + LLaMA-Factory 설치 + **YAML Configs 일괄 생성** (Stage 1/2 Training·Evaluation·Merge YAML 5종을 Cell 8/10/12/14/16 에서 작성)
 2. **Cell 3**: 프로젝트 경로(`BASE_DIR`) 설정 (두 데이터셋 모두 자동 설정)
-3. **Section 1-2**: Stage 1/2 데이터 등록 (상대 경로로 dataset_info.json에 등록, 파일 복사 없음)
-4. **Section 3**: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
-5. **Section 4**: Stage 1 모델 Merge & HuggingFace 업로드
-6. **Section 5**: Stage 1 평가 (Exp-1 vs Baseline Zero-shot)
-7. **Section 6**: Stage 2 학습 (stage2, stage1+stage2)
-8. **Section 7**: Stage 2 모델 Merge & HuggingFace 업로드
-9. **Section 8**: Stage 2 평가 (3-Way + Baseline Zero-shot 비교)
+3. **Section 1-2 (Cell 17–23)**: Stage 1/2 데이터 등록 (상대 경로로 dataset_info.json에 등록, 파일 복사 없음)
+4. **Section 3 (Cell 24–25)**: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
+5. **Section 4 (Cell 26–27)**: Stage 1 모델 Merge & HuggingFace 업로드 — Merge 직전 Section 0 의 **Stage 1 Merge YAML 블록(Cell 12)** 을 재실행해 Hungarian F1 winner 경로를 반영
+6. **Section 5 (Cell 28–36)**: Stage 1 평가 (Exp-1 vs Baseline Zero-shot, Hungarian F1 winner 선택 → `BEST_CHECKPOINT` 기록)
+7. **Section 6 (Cell 37–39)**: Stage 2 학습 (stage2, stage1+stage2)
+8. **Section 7 (Cell 40–42)**: Stage 2 모델 Merge & HuggingFace 업로드 — Merge 직전 Section 0 의 **Stage 2 Merge YAML 블록(Cell 16)** 을 재실행해 Overall Score winner 어댑터를 반영
+9. **Section 8 (Cell 43–50)**: Stage 2 평가 (3-Way + Baseline Zero-shot 비교)
 
 > Cell 3의 `CONFIGS` 딕셔너리에서 두 데이터셋의 경로, 하이퍼파라미터가 자동 설정됩니다.
 
 #### 4-B. 쉘 스크립트 (재실행·자동화)
 
-YAML/데이터 등록 셀(Cell 3/7/10/14/17/20/30/34)을 **한 번 실행**해 설정 파일이 이미 존재한다는 전제하에, 학습/평가/Merge 단계만 `scripts/` 아래 쉘 스크립트로 반복 실행할 수 있습니다.
+노트북 Section 0 (Cell 3-16) 과 데이터 등록 셀(Cell 18/21)을 **한 번 실행**해 YAML·`dataset_info.json` 이 이미 존재한다는 전제하에, 학습/평가/Merge 단계만 `scripts/` 아래 쉘 스크립트로 반복 실행할 수 있습니다.
 
 | 스크립트 | 대응 노트북 Cell | 수행 |
 |---|---|---|
-| `scripts/stage1_train.sh` | Cell 15 | Stage 1 Full FT (torchrun, H100×4) — `load_best_model_at_end=true` safety net |
-| `scripts/stage1_eval.sh`  | Cell 23+24+26 | **Baseline + 전체 체크포인트 sweep(vllm_infer) → `_hungarian_eval.py score` → `select` 로 Hungarian F1 winner 자동 선택 → `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT` 기록** |
-| `scripts/stage1_merge.sh` | Cell 17+18 | `BEST_CHECKPOINT` 읽어 해당 체크포인트 merge → HF Hub push + `outputs/{DS}/stage1_merged/` 로컬 복사 |
-| `scripts/stage2_train.sh` | Cell 31+32 | Stage 2 LoRA (base, world_model) |
-| `scripts/stage2_eval.sh`  | Cell 38+39+40+42 | **Baseline + `lora_base`/`lora_world_model` 각각 체크포인트 sweep(vllm_infer + `--adapter_name_or_path`) → `_action_eval.py score/select` → 각 variant 에 `BEST_CHECKPOINT` 기록**. 로컬 경로 사용(HF 의존 X) |
-| `scripts/stage2_merge.sh` | Cell 34+35+36 | 각 `BEST_CHECKPOINT` 읽어 winner adapter 로 merge YAML override → HF Hub push. `lora_world_model` 의 base 는 로컬 `outputs/{DS}/stage1_merged/` 사용 |
+| `scripts/stage1_train.sh` | Cell 25 | Stage 1 Full FT (torchrun, H100×4) — `load_best_model_at_end=true` safety net |
+| `scripts/stage1_eval.sh`  | Cell 31+32+34 | **Baseline + 전체 체크포인트 sweep(vllm_infer) → `_hungarian_eval.py score` → `select` 로 Hungarian F1 winner 자동 선택 → `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT` 기록** |
+| `scripts/stage1_merge.sh` | Cell 12 (YAML) + Cell 27 | `BEST_CHECKPOINT` 읽어 해당 체크포인트 merge → HF Hub push + `outputs/{DS}/stage1_merged/` 로컬 복사 |
+| `scripts/stage2_train.sh` | Cell 38+39 | Stage 2 LoRA (base, world_model) |
+| `scripts/stage2_eval.sh`  | Cell 44+45+46+48 | **Baseline + `lora_base`/`lora_world_model` 각각 체크포인트 sweep(vllm_infer + `--adapter_name_or_path`) → `_action_eval.py score/select` → 각 variant 에 `BEST_CHECKPOINT` 기록**. 로컬 경로 사용(HF 의존 X) |
+| `scripts/stage2_merge.sh` | Cell 16 (YAML) + Cell 41+42 | 각 `BEST_CHECKPOINT` 읽어 winner adapter 로 merge YAML override → HF Hub push. `lora_world_model` 의 base 는 로컬 `outputs/{DS}/stage1_merged/` 사용 |
 
 **Best Epoch 자동 선택 파이프라인** (Stage 1 & Stage 2 공통, 지표만 다름):
 ```
@@ -259,10 +259,10 @@ GUI-Model/
 │   ├── _common.sh                       # 쉘 스크립트 공통 헬퍼 (경로/로깅/인자 파싱)
 │   ├── _hungarian_eval.py               # Stage 1 체크포인트별 Hungarian/BLEU/ROUGE + winner (score/select)
 │   ├── _action_eval.py                  # Stage 2 체크포인트별 Action 메트릭 + winner (score/select)
-│   ├── stage1_train.sh                  # Stage 1 Full FT (Cell 15)
+│   ├── stage1_train.sh                  # Stage 1 Full FT (Cell 25)
 │   ├── stage1_eval.sh                   # Stage 1 평가 — Baseline + 체크포인트 sweep → Hungarian F1 winner 자동 선택
 │   ├── stage1_merge.sh                  # Stage 1 Merge — BEST_CHECKPOINT 기반 HF push + 로컬 복사
-│   ├── stage2_train.sh                  # Stage 2 LoRA (Cell 31+32)
+│   ├── stage2_train.sh                  # Stage 2 LoRA (Cell 38+39)
 │   ├── stage2_eval.sh                   # Stage 2 3-Way 평가 — lora_base/lora_world_model 각각 체크포인트 sweep + winner 선택 (로컬 경로, HF 의존 X)
 │   └── stage2_merge.sh                  # Stage 2 Merge — 각 variant BEST_CHECKPOINT 기반 winner adapter merge + HF push (base: stage1_merged 로컬)
 ├── data/              # 데이터셋 (git 미포함)

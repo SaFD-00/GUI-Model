@@ -41,11 +41,11 @@ Cell 3에서 `CONFIGS` 딕셔너리로 두 데이터셋(MobiBench/AndroidControl
 
 ## Commands
 
-두 가지 실행 경로. **YAML 생성은 notebook 전용**이므로, 최초 실행은 notebook, 반복 실행은 shell script 가 표준이다.
+두 가지 실행 경로. **YAML 생성은 notebook 전용**이며, Section 0 (Environment Setup) 의 _YAML Configs 일괄 생성_ 블록(Cell 8/10/12/14/16)이 Stage 1/2 Training·Evaluation·Merge YAML 5종을 한 번에 작성한다. 최초 실행은 notebook, 반복 실행은 shell script 가 표준이다.
 
 ### A. Shell Scripts (권장, 재실행·자동화)
 
-`gui-model.ipynb` Cell 3/7/10/14/17/20/30/34 를 먼저 실행해 YAML·dataset_info 등록 파일이 존재한다는 전제하에, 학습/평가/Merge 단계는 `scripts/` 쉘 스크립트로 반복 실행한다.
+`gui-model.ipynb` Section 0 (Cell 3–16) 과 데이터 등록 셀(Cell 18/21) 을 먼저 실행해 YAML·dataset_info 파일이 이미 존재한다는 전제하에, 학습/평가/Merge 단계는 `scripts/` 쉘 스크립트로 반복 실행한다. Merge 단계 직전에는 Stage 1/2 각각 Section 0 의 **Merge YAML 블록(Cell 12 / Cell 16)** 을 재실행하여 `BEST_CHECKPOINT` 기반 winner 경로를 YAML 에 반영해야 한다.
 
 ```bash
 # 데이터 Split (학습 전 1회 실행)
@@ -89,7 +89,7 @@ llamafactory-cli train examples/custom/GUI-Model-MB/stage1_eval/base/eval_loss.y
 # Stage 1 평가: predict (Hungarian Matching)  — vllm_infer.py 사용
 python scripts/vllm_infer.py --model_name_or_path <model> --dataset <ds_test> ...
 
-# Stage 2: Action Prediction LoRA FT (노트북 Cell 31/32 에는 torchrun prefix 없음)
+# Stage 2: Action Prediction LoRA FT (노트북 Cell 38/39 에는 torchrun prefix 없음)
 llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_model>.yaml
 ```
 
@@ -123,8 +123,8 @@ llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_mode
   - `split_data.py`: Train/Test Split CLI (Stage 1 random, Stage 2 stratified)
   - `extract_androidcontrol_images.py`: AndroidControl 이미지 추출
   - `_common.sh`: 쉘 스크립트 공통 헬퍼 (`BASE_DIR`/`LF_ROOT` 자동 감지, `DS_PREFIX`/`HF_SLUG` 매핑, `parse_dataset_arg`, `run_logged` tee 로거, `require_yaml` 가드)
-  - `_hungarian_eval.py`: Stage 1 체크포인트별 Hungarian/BLEU/ROUGE 메트릭 + winner 선택. `score` (단일 prediction → metrics.json), `select` (checkpoint-*/metrics.json 비교 → `BEST_CHECKPOINT` 기록) 서브커맨드. notebook Cell 25+26 포팅으로 shell/notebook 결과 동일 보장
-  - `_action_eval.py`: Stage 2 체크포인트별 Action 메트릭 (Parse/Type/IoU/Params/Overall) + winner 선택. `score`/`select` 서브커맨드. notebook Cell 41+42 포팅. 기본 선택 지표는 `overall_score` (Type × (0.5×IoU + 0.5×Params))
+  - `_hungarian_eval.py`: Stage 1 체크포인트별 Hungarian/BLEU/ROUGE 메트릭 + winner 선택. `score` (단일 prediction → metrics.json), `select` (checkpoint-*/metrics.json 비교 → `BEST_CHECKPOINT` 기록) 서브커맨드. notebook Cell 33+34 포팅으로 shell/notebook 결과 동일 보장
+  - `_action_eval.py`: Stage 2 체크포인트별 Action 메트릭 (Parse/Type/IoU/Params/Overall) + winner 선택. `score`/`select` 서브커맨드. notebook Cell 47+48 포팅. 기본 선택 지표는 `overall_score` (Type × (0.5×IoU + 0.5×Params))
   - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인. `stage1_eval.sh` 는 Baseline + 체크포인트 sweep + Hungarian F1 winner 선택, `stage1_merge.sh` 는 BEST_CHECKPOINT 기반 merge (HF + local)
   - `stage2_train.sh` / `stage2_eval.sh` / `stage2_merge.sh`: Stage 2 파이프라인. `stage2_eval.sh` 는 Baseline + `lora_base`/`lora_world_model` 각각 체크포인트 sweep + Overall Score winner 선택 (로컬 base + `--adapter_name_or_path`, HF 의존 없음). `stage2_merge.sh` 는 각 variant BEST_CHECKPOINT 읽어 winner adapter 로 merge. Stage 2 train 은 노트북 원본에 맞춰 `FORCE_TORCHRUN` prefix 미사용
 - **LlamaFactory/outputs/**: 학습 체크포인트 및 평가 결과
@@ -220,17 +220,17 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 - **cutoff_len: 8192**: XML이 포함된 긴 입력을 처리하기 위한 설정
 - **커스텀 메트릭 패치**: LLaMA-Factory의 `metric.py`에 Hungarian Matching을 통합하여 eval 시 자동 산출. 패치 가이드는 `.claude/reference/metrics/patch_guide_0315.txt` 참조
 - **Best Epoch 자동 선택 (Stage 1: Hungarian F1, Stage 2: Overall Score)**: `load_best_model_at_end=true` 는 eval_loss 기준(intrinsic)으로 자동 선택하여 safety net 역할. 실제 winner 는 extrinsic generation quality 기준으로 선택:
-  - **Stage 1**: `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산. 결과는 `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT`. `stage1_merge.sh`/Cell 17 이 이를 읽어 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽 merge
-  - **Stage 2**: `stage2_eval.sh` 가 `lora_base` / `lora_world_model` 각각 체크포인트 sweep (Base: Qwen or `outputs/{DS}/stage1_merged`, Adapter: `checkpoint-*/`) → `_action_eval.py` 로 `overall_score` 계산 → 각 variant 의 `outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT` 기록. `stage2_merge.sh`/Cell 34 가 각각 읽어 winner adapter 로 merge → HF Hub push (변수 수만큼 2개 모델 push). lora_base 와 lora_world_model 둘 다 동일 로직으로 3-Way 비교 공정성 유지
+  - **Stage 1**: `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산. 결과는 `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT`. `stage1_merge.sh` 가 (또는 notebook 이라면 Section 0 의 **Stage 1 Merge YAML 블록(Cell 12)** 재실행 후 Cell 27 의 Merge 실행이) 이를 읽어 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽 merge
+  - **Stage 2**: `stage2_eval.sh` 가 `lora_base` / `lora_world_model` 각각 체크포인트 sweep (Base: Qwen or `outputs/{DS}/stage1_merged`, Adapter: `checkpoint-*/`) → `_action_eval.py` 로 `overall_score` 계산 → 각 variant 의 `outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT` 기록. `stage2_merge.sh` 가 (또는 notebook 이라면 Section 0 의 **Stage 2 Merge YAML 블록(Cell 16)** 재실행 후 Cell 41/42 의 Merge 실행이) 각각 읽어 winner adapter 로 merge → HF Hub push (변수 수만큼 2개 모델 push). lora_base 와 lora_world_model 둘 다 동일 로직으로 3-Way 비교 공정성 유지
   - Shell 파이프라인은 로컬 경로만 사용해 HF 의존을 제거 (stage2_merge 이전에도 stage2_eval 실행 가능, 404/네트워크 이슈 없음)
 
 ## Configuration
 
 - **데이터 Split**: `python scripts/split_data.py --dataset {DATASET_NAME}` (학습 전 1회 실행)
 - **데이터셋 설정**: `gui-model.ipynb` Cell 3에서 `CONFIGS` 딕셔너리로 양 데이터셋 자동 설정
-- **데이터 등록**: Cell 8/11 실행 시 `dataset_info.json`에 상대 경로(`../../data/{DATASET_NAME}/...`)로 자동 등록. 파일 복사 없음
-- **Stage 1 학습**: `LlamaFactory/examples/custom/GUI-Model-MB/stage1_full/qwen3_vl_8b_gui.yaml` (노트북에서 동적 생성)
-- **Stage 2 학습**: `gui-model.ipynb` Section 6에서 직접 설정 (LoRA config는 노트북 내 정의)
+- **데이터 등록**: Cell 19/22 실행 시 `dataset_info.json`에 상대 경로(`../../data/{DATASET_NAME}/...`)로 자동 등록. 파일 복사 없음
+- **Stage 1 학습 YAML**: `LlamaFactory/examples/custom/GUI-Model-MB/stage1_full/qwen3_vl_8b_gui.yaml` (노트북 Section 0 의 Stage 1 Training YAML 블록(Cell 8)에서 동적 생성)
+- **Stage 2 학습 YAML**: `LlamaFactory/examples/custom/{GUI-Model-MB,GUI-Model-AC}/stage2_lora/{base,world_model}.yaml` (노트북 Section 0 의 Stage 2 Training YAML 블록(Cell 14)에서 동적 생성)
 - **환경변수**: `.env.example` 참조 (HuggingFace token 등)
 
 ## Key Hyperparameters
