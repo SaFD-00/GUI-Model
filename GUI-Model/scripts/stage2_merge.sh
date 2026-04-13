@@ -2,15 +2,16 @@
 # Stage 2 Merge & Upload — BEST_CHECKPOINT 기반 winner adapter 자동 선택
 #
 # 두 variant 각각:
-#   merge_base          - Qwen/Qwen3-VL-8B-Instruct       + lora_base/<winner>
-#   merge_world_model   - outputs/{DS}/stage1_merged       + lora_world_model/<winner>
+#   merge_base          - Qwen/Qwen3-VL-8B-Instruct          + lora_base/<winner>
+#   merge_world_model   - outputs/{DS}/stage1_merged          + lora_world_model/<winner>
 #
 # 선택 근거:
-#   outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT
-#   (stage2_eval.sh 또는 notebook Cell 42 가 기록)
+#   saves/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT
+#   (stage2_eval.sh 또는 notebook Section 7 evaluation cell 이 기록)
 #
-# BEST_CHECKPOINT 없으면 load_best_model_at_end 루트(=eval_loss winner adapter) 로 fallback.
+# BEST_CHECKPOINT 없으면 hard-fail — stage2_eval.sh 먼저 실행 필요.
 # HF push 는 merge YAML 의 export_hub_model_id 필드 기준.
+# HF push 후 exports/ → outputs/{DS}/stage2_merged/{base,world_model}/ 로 rsync (Stage 1 과 동일 패턴).
 #
 # 전제: .env 의 HF_TOKEN, rsync, pyyaml. stage1_merge.sh 가 outputs/{DS}/stage1_merged/ 를 생성해둔 상태.
 
@@ -36,27 +37,36 @@ for DS in "${DATASETS[@]}"; do
     [merge_world_model]="./${STAGE1_MERGED_REL}"
   )
   declare -A LORA_DIR_REL=(
-    [merge_base]="outputs/${DS}/stage2_lora/lora_base"
-    [merge_world_model]="outputs/${DS}/stage2_lora/lora_world_model"
+    [merge_base]="saves/${DS}/stage2_lora/lora_base"
+    [merge_world_model]="saves/${DS}/stage2_lora/lora_world_model"
+  )
+  # variant → (exports/ 하위 디렉토리 이름, outputs/ 하위 로컬 복사 디렉토리 이름)
+  declare -A EXPORT_SUFFIX=(
+    [merge_base]="stage2-base"
+    [merge_world_model]="stage2-world-model"
+  )
+  declare -A LOCAL_VARIANT_DIR=(
+    [merge_base]="base"
+    [merge_world_model]="world_model"
   )
 
   for VARIANT in merge_base merge_world_model; do
     ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/stage2/${VARIANT}.yaml"
     require_yaml "examples/merge_custom/GUI-Model-${DS}/stage2/${VARIANT}.yaml" \
-      "run notebook Cell 34 to generate this YAML"
+      "run notebook Cell 16 (after stage2_eval.sh generates BEST_CHECKPOINT) to generate this YAML"
 
     LORA_REL="${LORA_DIR_REL[$VARIANT]}"
     BEST_FILE="$LF_ROOT/$LORA_REL/BEST_CHECKPOINT"
 
     # 1. BEST_CHECKPOINT → ADAPTER_REL 결정
-    if [ -f "$BEST_FILE" ]; then
-      CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
-      ADAPTER_REL="./${LORA_REL}/${CKPT_NAME}"
-      echo "[+] [$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
-    else
-      ADAPTER_REL="./${LORA_REL}"
-      echo "[!] [$DS][$VARIANT] BEST_CHECKPOINT not found — fallback to load_best_model_at_end root ($ADAPTER_REL)" >&2
+    if [ ! -f "$BEST_FILE" ]; then
+      echo "[!] [$DS][$VARIANT] BEST_CHECKPOINT not found at $BEST_FILE" >&2
+      echo "    Run 'bash scripts/stage2_eval.sh $DS' first to select the Overall Score winner." >&2
+      exit 1
     fi
+    CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
+    ADAPTER_REL="./${LORA_REL}/${CKPT_NAME}"
+    echo "[+] [$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
 
     # 2. 임시 YAML 렌더 (model_name_or_path + adapter_name_or_path override)
     TMP_YAML=$(mktemp -t "stage2_merge_${DS}_${VARIANT}_XXXXXX.yaml")
@@ -73,8 +83,20 @@ with open(dst, 'w', encoding='utf-8') as f:
 PY
 
     # 3. HF push (llamafactory-cli export)
-    run_logged "${SCRIPT_TAG}_${DS}_${VARIANT}" \
+    run_logged "${SCRIPT_TAG}_${DS}_${VARIANT}_hf" \
       bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
+
+    # 4. 로컬 복사 (exports/ → outputs/{DS}/stage2_merged/{base,world_model}/)
+    EXPORT_DIR="$LF_ROOT/exports/qwen3-vl-8b-${SLUG}${EXPORT_SUFFIX[$VARIANT]}"
+    LOCAL_DIR="$LF_ROOT/outputs/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VARIANT]}"
+    if [ ! -d "$EXPORT_DIR" ]; then
+      echo "[!] [$DS][$VARIANT] Expected export dir missing: $EXPORT_DIR" >&2
+      echo "    Check merge YAML export_dir / export_hub_model_id fields." >&2
+      exit 1
+    fi
+    mkdir -p "$(dirname "$LOCAL_DIR")"
+    run_logged "${SCRIPT_TAG}_${DS}_${VARIANT}_local" \
+      rsync -a --delete "$EXPORT_DIR/" "$LOCAL_DIR/"
 
     rm -f "$TMP_YAML"
     trap - EXIT

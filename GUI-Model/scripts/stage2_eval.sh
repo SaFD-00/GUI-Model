@@ -3,8 +3,8 @@
 #
 # 3-Way:
 #   base              - Qwen/Qwen3-VL-8B-Instruct                   (Zero-shot baseline, 1회)
-#   lora_base         - base + outputs/{DS}/stage2_lora/lora_base/checkpoint-*        (sweep)
-#   lora_world_model  - stage1_merged + stage2_lora/lora_world_model/checkpoint-*     (sweep)
+#   lora_base         - base + saves/{DS}/stage2_lora/lora_base/checkpoint-*          (sweep)
+#   lora_world_model  - stage1_merged + saves/{DS}/stage2_lora/lora_world_model/checkpoint-* (sweep)
 #
 # 각 lora 변형별로:
 #   Phase B. 체크포인트 sweep (vllm_infer + _action_eval.py score)
@@ -31,7 +31,7 @@ for DS in "${DATASETS[@]}"; do
   PREFIX="${DS_PREFIX[$DS]}"
   DS_TEST="${PREFIX}_stage2_test"
   TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage2_test.jsonl"
-  S2_EVAL_OUT_REL="outputs/${DS}/stage2_eval"
+  S2_EVAL_OUT_REL="saves/${DS}/stage2_eval"
 
   BASE_MODEL="Qwen/Qwen3-VL-8B-Instruct"
   STAGE1_MERGED="./outputs/${DS}/stage1_merged"
@@ -73,7 +73,7 @@ for DS in "${DATASETS[@]}"; do
 
   for VARIANT in lora_base lora_world_model; do
     MODEL="${VARIANT_BASE[$VARIANT]}"
-    LORA_DIR_REL="outputs/${DS}/stage2_lora/${VARIANT}"
+    LORA_DIR_REL="saves/${DS}/stage2_lora/${VARIANT}"
     LORA_DIR="$LF_ROOT/$LORA_DIR_REL"
     EVAL_DIR_REL="${S2_EVAL_OUT_REL}/${VARIANT}"
     EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"

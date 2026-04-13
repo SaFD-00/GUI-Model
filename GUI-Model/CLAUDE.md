@@ -55,18 +55,20 @@ python scripts/split_data.py --dataset AndroidControl
 # 공통 인자: MB | AC | all (기본 all). 로그는 logs/<tag>_<ts>.log 로 tee 저장.
 
 # Stage 1  (Hungarian F1 기반 Best Epoch 자동 선택)
-./scripts/stage1_train.sh        # Full FT + checkpoint-* 생성 + load_best_model_at_end safety
+./scripts/stage1_train.sh        # Full FT + checkpoint-* 생성 → saves/{DS}/stage1_full/full_world_model/
 ./scripts/stage1_eval.sh         # Baseline + 전체 checkpoint sweep → Hungarian F1 winner 선택
-                                 # → outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 기록
+                                 # → saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 기록
 ./scripts/stage1_merge.sh        # BEST_CHECKPOINT 기반 merge → HF Hub push + outputs/{DS}/stage1_merged/ 로컬 복사
+                                 # (BEST_CHECKPOINT 없으면 hard-fail — stage1_eval.sh 먼저 실행 필요)
 
 # Stage 2  (Overall Score 기반 Best Epoch 자동 선택, lora_base/lora_world_model 각각)
-./scripts/stage2_train.sh        # LoRA base / world_model + checkpoint-* 생성
+./scripts/stage2_train.sh        # LoRA base / world_model + checkpoint-* 생성 → saves/{DS}/stage2_lora/
 ./scripts/stage2_eval.sh         # Baseline + 각 variant 별 체크포인트 sweep → Overall Score winner 선택
-                                 # → outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT 기록
+                                 # → saves/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT 기록
                                  # (로컬 경로 + --adapter_name_or_path 사용, HF 의존 X)
 ./scripts/stage2_merge.sh        # 각 variant BEST_CHECKPOINT 읽어 winner adapter merge → HF Hub push
-                                 # (world_model variant 의 base 는 로컬 outputs/{DS}/stage1_merged)
+                                 # + outputs/{DS}/stage2_merged/{base,world_model}/ 로컬 복사
+                                 # (BEST_CHECKPOINT 없으면 hard-fail — stage2_eval.sh 먼저 실행 필요)
 
 # 단일 데이터셋
 ./scripts/stage1_train.sh MB     # MobiBench 만
@@ -127,10 +129,17 @@ llamafactory-cli train examples/custom/GUI-Model-MB/stage2_lora/<base|world_mode
   - `_action_eval.py`: Stage 2 체크포인트별 Action 메트릭 (Parse/Type/IoU/Params/Overall) + winner 선택. `score`/`select` 서브커맨드. notebook Cell 47+48 포팅. 기본 선택 지표는 `overall_score` (Type × (0.5×IoU + 0.5×Params))
   - `stage1_train.sh` / `stage1_eval.sh` / `stage1_merge.sh`: Stage 1 파이프라인. `stage1_eval.sh` 는 Baseline + 체크포인트 sweep + Hungarian F1 winner 선택, `stage1_merge.sh` 는 BEST_CHECKPOINT 기반 merge (HF + local)
   - `stage2_train.sh` / `stage2_eval.sh` / `stage2_merge.sh`: Stage 2 파이프라인. `stage2_eval.sh` 는 Baseline + `lora_base`/`lora_world_model` 각각 체크포인트 sweep + Overall Score winner 선택 (로컬 base + `--adapter_name_or_path`, HF 의존 없음). `stage2_merge.sh` 는 각 variant BEST_CHECKPOINT 읽어 winner adapter 로 merge. Stage 2 train 은 노트북 원본에 맞춰 `FORCE_TORCHRUN` prefix 미사용
-- **LlamaFactory/outputs/**: 학습 체크포인트 및 평가 결과
-  - `stage1_eval/eval_loss/`: Stage 1 loss 메트릭
-  - `stage1_eval/hungarian_matching/`: Stage 1 요소 수준 메트릭
-  - `stage2_eval/{base,lora_base,lora_world_model}/`: 3-Way 평가 리포트
+- **LlamaFactory/saves/**: 학습 중간 결과 (training checkpoints + post-training eval 결과)
+  - `{DS}/stage1_full/full_world_model/checkpoint-*`: Stage 1 training checkpoint
+  - `{DS}/stage1_full/full_world_model/BEST_CHECKPOINT`: Hungarian F1 winner 기록 파일
+  - `{DS}/stage1_eval/eval_loss/`: Stage 1 loss 메트릭
+  - `{DS}/stage1_eval/hungarian_matching/`: Stage 1 요소 수준 메트릭
+  - `{DS}/stage2_lora/{lora_base,lora_world_model}/checkpoint-*`: Stage 2 LoRA adapter
+  - `{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT`: Overall Score winner 기록 파일
+  - `{DS}/stage2_eval/{base,lora_base,lora_world_model}/`: 3-Way 평가 리포트
+- **LlamaFactory/outputs/**: Merged 모델 artifact 전용 (llamafactory export 결과물)
+  - `{DS}/stage1_merged/`: Stage 1 winner checkpoint merge 결과
+  - `{DS}/stage2_merged/{base,world_model}/`: Stage 2 winner adapter merge 결과
 - **.claude/reference/metrics/**: 커스텀 평가 메트릭 구현
   - `metric.py`: LLaMA-Factory SFT eval에 BLEU, ROUGE, Hungarian 통합한 커스텀 메트릭
   - `hungarian_metric.py`: BeautifulSoup + Munkres 알고리즘 기반 XML 요소 1:1 매칭 정확도
@@ -219,9 +228,10 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 - **DeepSpeed**: Stage 1은 ZeRO-3 (H100 × 4), Stage 2는 ZeRO-2 (H100 × 4)
 - **cutoff_len: 8192**: XML이 포함된 긴 입력을 처리하기 위한 설정
 - **커스텀 메트릭 패치**: LLaMA-Factory의 `metric.py`에 Hungarian Matching을 통합하여 eval 시 자동 산출. 패치 가이드는 `.claude/reference/metrics/patch_guide_0315.txt` 참조
-- **Best Epoch 자동 선택 (Stage 1: Hungarian F1, Stage 2: Overall Score)**: `load_best_model_at_end=true` 는 eval_loss 기준(intrinsic)으로 자동 선택하여 safety net 역할. 실제 winner 는 extrinsic generation quality 기준으로 선택:
-  - **Stage 1**: `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산. 결과는 `outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT`. `stage1_merge.sh` 가 (또는 notebook 이라면 Section 0 의 **Stage 1 Merge YAML 블록(Cell 12)** 재실행 후 Cell 27 의 Merge 실행이) 이를 읽어 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽 merge
-  - **Stage 2**: `stage2_eval.sh` 가 `lora_base` / `lora_world_model` 각각 체크포인트 sweep (Base: Qwen or `outputs/{DS}/stage1_merged`, Adapter: `checkpoint-*/`) → `_action_eval.py` 로 `overall_score` 계산 → 각 variant 의 `outputs/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT` 기록. `stage2_merge.sh` 가 (또는 notebook 이라면 Section 0 의 **Stage 2 Merge YAML 블록(Cell 16)** 재실행 후 Cell 41/42 의 Merge 실행이) 각각 읽어 winner adapter 로 merge → HF Hub push (변수 수만큼 2개 모델 push). lora_base 와 lora_world_model 둘 다 동일 로직으로 3-Way 비교 공정성 유지
+- **학습 중 eval 비활성화 + Post-training Best Epoch 자동 선택**: 학습 YAML 은 eval 이 비활성화되어 순수 학습만 수행. Best checkpoint 는 학습 완료 후 별도의 sweep 으로 선정:
+  - **Stage 1** (Hungarian F1): `stage1_eval.sh` 가 각 `checkpoint-*` 를 vllm_infer 로 생성평가 + `_hungarian_eval.py` 로 Hungarian F1 계산. 결과는 `saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT`. `stage1_merge.sh` 가 (또는 notebook 의 Section 4 평가 완료 후 Section 0 의 **Cell 12** 재실행 → Section 5 의 Merge cell 실행이) 이를 읽어 HF Hub + `outputs/{DS}/stage1_merged/` 양쪽 merge
+  - **Stage 2** (Overall Score): `stage2_eval.sh` 가 `lora_base` / `lora_world_model` 각각 체크포인트 sweep (Base: Qwen or `outputs/{DS}/stage1_merged`, Adapter: `checkpoint-*/`) → `_action_eval.py` 로 `overall_score` 계산 → 각 variant 의 `saves/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT` 기록. `stage2_merge.sh` 가 (또는 notebook 의 Section 7 평가 완료 후 Section 0 의 **Cell 16** 재실행 → Section 8 의 Merge cell 실행이) 각각 읽어 winner adapter 로 merge → HF Hub push + `outputs/{DS}/stage2_merged/{base,world_model}/` 로컬 복사
+  - Merge scripts/cells 는 BEST_CHECKPOINT 없으면 **hard-fail** (fallback 없음) — eval 누락을 조기 감지
   - Shell 파이프라인은 로컬 경로만 사용해 HF 의존을 제거 (stage2_merge 이전에도 stage2_eval 실행 가능, 404/네트워크 이슈 없음)
 
 ## Configuration
@@ -247,8 +257,7 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 | weight_decay | 0.01 | 0.01 |
 | max_grad_norm | 1.0 | 1.0 |
 | save_strategy / save_total_limit | epoch / 5 | epoch / 5 |
-| eval_strategy | epoch | epoch |
-| load_best_model_at_end | true (eval_loss ↓) | true (eval_loss ↓) |
+| 학습 중 eval | 비활성화 (post-training sweep 으로 winner 선택) | 비활성화 |
 | LoRA r / α / dropout | — | 16 / 32 / 0.1 |
 | DeepSpeed | ZeRO-3 | — |
 | image_max_pixels | 4,233,600 | 4,233,600 |
@@ -262,9 +271,8 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 | epochs | 3 | 3 |
 | warmup_ratio | 0.03 | 0.03 |
 | save_strategy / save_steps | epoch / — | epoch / — |
-| eval_strategy / eval_steps | epoch / — | epoch / — |
+| 학습 중 eval | 비활성화 (post-training sweep) | 비활성화 |
 | save_total_limit | 5 | 5 |
-| per_device_eval_batch_size | 4 | 4 |
 | weight_decay | 0.01 | 0.01 |
 | max_grad_norm | 1.0 | 1.0 |
 | LoRA r / α / dropout | — | 32 / 64 / 0.1 |
@@ -274,11 +282,11 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 
 `.claude/researchs/vlm-gui-finetuning-research.md` + gWorld(Qwen3-VL-8B, 260K, lr=2e-7, cosine, warmup=0.01) / Code2World(Qwen3-VL-8B SFT, lr=1e-5) / MobileDreamer(Qwen3-8B LoRA, HP 대부분 비공개) 문헌을 참고해 데이터셋 규모 차이를 반영한 분기 설계.
 - **MobiBench (≈3k 샘플)**: 소규모이므로 `epochs=5`로 충분히 학습, `save_strategy=epoch`로 에폭 단위 체크포인트. `warmup_ratio=0.05`로 안정적 워밍업.
-- **AndroidControl (≈71k/92k 샘플, 2026-04-13 재검토)**: 대규모 데이터셋. Stage 1 lr=1e-5(Code2World와 정렬), Stage 2 lr=5e-5(research doc 권장 5e-5~1e-4 하한, Qwen-GUI-3B Stage 2와 정렬). 데이터 규모 증가분을 epoch 상향으로 흡수하여 `epochs=3`으로 학습 여유 확보 — `load_best_model_at_end=true`가 과적합 구간을 자동 회피. LoRA rank 상향(r=16→32, α=32→64)은 50K-100K 샘플 구간 권장 rank 64-128의 보수 선택. 대규모 test split(3,553/4,587) eval 부담은 `per_device_eval_batch_size=4`로 상쇄. Stage 2 accum을 4→8로 올려 effective batch를 gWorld/Code2World와 동일한 64로 맞춤. **save/eval strategy는 MB와 동일한 `epoch` 로 통일**(2026-04-13 최초엔 `steps(500)` 이었으나 관리 일관성 위해 변경) — 3 epoch 동안 checkpoint 3개만 생성되어 디스크 부담이 크게 줄고, `load_best_model_at_end` 는 동일 작동(선택 후보가 3개로 줄어드는 것은 trade-off).
-- **공통 안정화**: `max_grad_norm=1.0`, `weight_decay=0.01`, `save_total_limit=5`, `load_best_model_at_end=true` + `metric_for_best_model=eval_loss`로 학습 실패/OOM 복구 및 best checkpoint 자동 선택을 보장.
-- **Eval 전략**: 별도 validation split을 만들지 않고 기존 `{ds_prefix}_stage{n}_test` 데이터셋을 `eval_dataset`으로 재사용(train 중 best checkpoint 선택 + 이후 quantitative eval 모두 같은 set을 사용).
+- **AndroidControl (≈71k/92k 샘플, 2026-04-13 재검토)**: 대규모 데이터셋. Stage 1 lr=1e-5(Code2World와 정렬), Stage 2 lr=5e-5(research doc 권장 5e-5~1e-4 하한, Qwen-GUI-3B Stage 2와 정렬). 데이터 규모 증가분을 epoch 상향으로 흡수하여 `epochs=3`으로 학습 여유 확보 — post-training Hungarian F1 / Overall Score sweep 이 과적합 epoch 을 자동 회피. LoRA rank 상향(r=16→32, α=32→64)은 50K-100K 샘플 구간 권장 rank 64-128의 보수 선택. Stage 2 accum을 4→8로 올려 effective batch를 gWorld/Code2World와 동일한 64로 맞춤. **save strategy는 MB와 동일한 `epoch` 로 통일**(2026-04-13 최초엔 `steps(500)` 이었으나 관리 일관성 위해 변경) — 3 epoch 동안 checkpoint 3개만 생성되어 디스크 부담이 크게 줄어듦.
+- **공통 안정화**: `max_grad_norm=1.0`, `weight_decay=0.01`, `save_total_limit=5`로 학습 실패/OOM 복구를 보장. Best checkpoint 선택은 학습 중이 아닌 post-training sweep (`stage{1,2}_eval.sh`) 에서 Hungarian F1 (Stage 1) / Overall Score (Stage 2) 기준으로 수행.
+- **Eval 전략**: 학습 중 eval 을 비활성화하여 VRAM/시간을 절약하고, 학습 완료 후 `{ds_prefix}_stage{n}_test` 데이터셋으로 checkpoint 별 extrinsic generation quality 를 평가. Loss-based eval (`stage{1,2}_eval.sh` Phase A 또는 notebook eval_loss YAML) 은 baseline vs. trained 모델 비교용으로 별도 실행 가능.
 
-> Cell 3의 `_DATASET_CONFIG[ds_name]["stage{1,2}"]`에서 데이터셋×스테이지별 하이퍼파라미터 자유 조정 가능 (lr, epochs, warmup_ratio, save_strategy, save_steps, eval_strategy, eval_steps, gradient_accumulation_steps, per_device_eval_batch_size, lora_rank, lora_alpha, lora_dropout).
+> Cell 3의 `_DATASET_CONFIG[ds_name]["stage{1,2}"]`에서 데이터셋×스테이지별 하이퍼파라미터 자유 조정 가능 (lr, epochs, warmup_ratio, save_strategy, save_steps, gradient_accumulation_steps, lora_rank, lora_alpha, lora_dropout). `eval_*` 키는 notebook Cell 10 의 post-training eval YAML 생성에만 참조됨 (학습 YAML 에는 반영되지 않음).
 
 ## Dependencies
 

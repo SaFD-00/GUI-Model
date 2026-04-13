@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stage 1 Merge — BEST_CHECKPOINT 기반 자동 선택 + HF Hub push + 로컬 복사
 #
-#   1. outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 읽기
-#      (없으면 load_best_model_at_end 루트로 fallback, WARN)
+#   1. saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 읽기
+#      (없으면 hard-fail — stage1_eval.sh 먼저 실행 필요)
 #   2. merge YAML (examples/merge_custom/GUI-Model-{DS}/gui/qwen3_vl_8b_gui.yaml) 의
 #      model_name_or_path 를 런타임 override 한 임시 YAML 생성
 #   3. llamafactory-cli export → HF Hub push + exports/ 에 가중치 저장
@@ -19,22 +19,22 @@ SCRIPT_TAG="stage1_merge"
 
 for DS in "${DATASETS[@]}"; do
   SLUG="${HF_SLUG[$DS]}"
-  TRAIN_DIR_REL="outputs/${DS}/stage1_full/full_world_model"
+  TRAIN_DIR_REL="saves/${DS}/stage1_full/full_world_model"
   TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
   BEST_FILE="$TRAIN_DIR/BEST_CHECKPOINT"
   ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/gui/qwen3_vl_8b_gui.yaml"
   require_yaml "examples/merge_custom/GUI-Model-${DS}/gui/qwen3_vl_8b_gui.yaml" \
-    "run notebook Cell 17 to generate this YAML"
+    "run notebook Cell 12 (after stage1_eval.sh generates BEST_CHECKPOINT) to generate this YAML"
 
   # 1. BEST_CHECKPOINT → MODEL_REL 결정 (cwd=LF_ROOT 기준)
-  if [ -f "$BEST_FILE" ]; then
-    CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
-    MODEL_REL="./${TRAIN_DIR_REL}/${CKPT_NAME}"
-    echo "[+] [$DS] Using Hungarian F1 winner: ${CKPT_NAME}" >&2
-  else
-    MODEL_REL="./${TRAIN_DIR_REL}"
-    echo "[!] [$DS] BEST_CHECKPOINT not found — fallback to load_best_model_at_end root ($MODEL_REL)" >&2
+  if [ ! -f "$BEST_FILE" ]; then
+    echo "[!] [$DS] BEST_CHECKPOINT not found at $BEST_FILE" >&2
+    echo "    Run 'bash scripts/stage1_eval.sh $DS' first to select the Hungarian F1 winner." >&2
+    exit 1
   fi
+  CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
+  MODEL_REL="./${TRAIN_DIR_REL}/${CKPT_NAME}"
+  echo "[+] [$DS] Using Hungarian F1 winner: ${CKPT_NAME}" >&2
 
   # 2. 임시 YAML 렌더 (원본은 보존)
   TMP_YAML=$(mktemp -t "stage1_merge_${DS}_XXXXXX.yaml")
@@ -61,6 +61,7 @@ PY
     echo "    Check merge YAML export_dir / export_hub_model_id fields." >&2
     exit 1
   fi
+  mkdir -p "$(dirname "$LOCAL_DIR")"
   run_logged "${SCRIPT_TAG}_${DS}_local" \
     rsync -a --delete "$EXPORT_DIR/" "$LOCAL_DIR/"
 

@@ -6,10 +6,10 @@
 #   Phase C. Winner 선택 (_hungarian_eval.py select) → BEST_CHECKPOINT 파일 기록
 #
 # 산출물:
-#   outputs/{DS}/stage1_eval/hungarian_matching/base/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/stage1_eval/hungarian_matching/checkpoint-N/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT       (plain text)
-#   outputs/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT.json  (상세 순위)
+#   saves/{DS}/stage1_eval/hungarian_matching/base/(generated_predictions|hungarian_metrics).json
+#   saves/{DS}/stage1_eval/hungarian_matching/checkpoint-N/(generated_predictions|hungarian_metrics).json
+#   saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT       (plain text)
+#   saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT.json  (상세 순위)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -30,8 +30,8 @@ for DS in "${DATASETS[@]}"; do
   PREFIX="${DS_PREFIX[$DS]}"
   DS_TEST="${PREFIX}_stage1_test"
   TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage1_test.jsonl"
-  TRAIN_DIR_REL="outputs/${DS}/stage1_full/full_world_model"
-  EVAL_DIR_REL="outputs/${DS}/stage1_eval/hungarian_matching"
+  TRAIN_DIR_REL="saves/${DS}/stage1_full/full_world_model"
+  EVAL_DIR_REL="saves/${DS}/stage1_eval/hungarian_matching"
   TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
   EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
 
@@ -59,7 +59,7 @@ for DS in "${DATASETS[@]}"; do
         --output '$OUT_BASE/hungarian_metrics.json'"
 
   # ─────────────────────────────────────────────────────────────────────
-  # Phase B. Checkpoint sweep — outputs/{DS}/stage1_full/full_world_model/checkpoint-*/
+  # Phase B. Checkpoint sweep — saves/{DS}/stage1_full/full_world_model/checkpoint-*/
   # ─────────────────────────────────────────────────────────────────────
   shopt -s nullglob
   CKPTS=("$TRAIN_DIR"/checkpoint-*/)

@@ -14,12 +14,12 @@ Examples
 --------
   python scripts/_action_eval.py score \\
       --test   data/AndroidControl/gui-model_stage2_test.jsonl \\
-      --pred   outputs/AC/stage2_eval/lora_world_model/checkpoint-1360/generated_predictions.jsonl \\
-      --output outputs/AC/stage2_eval/lora_world_model/checkpoint-1360/action_metrics.json
+      --pred   saves/AC/stage2_eval/lora_world_model/checkpoint-1360/generated_predictions.jsonl \\
+      --output saves/AC/stage2_eval/lora_world_model/checkpoint-1360/action_metrics.json
 
   python scripts/_action_eval.py select \\
-      --eval-dir  outputs/AC/stage2_eval/lora_world_model \\
-      --train-dir outputs/AC/stage2_lora/lora_world_model \\
+      --eval-dir  saves/AC/stage2_eval/lora_world_model \\
+      --train-dir saves/AC/stage2_lora/lora_world_model \\
       --metric    overall_score
 """
 from __future__ import annotations
