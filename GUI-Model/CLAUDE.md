@@ -278,14 +278,6 @@ LlamaFactory/data/dataset_info.json     # 상대 경로로 원본 참조 (../../
 | LoRA r / α / dropout | — | 32 / 64 / 0.1 |
 | 기타 설정 | MobiBench와 동일 | MobiBench와 동일 |
 
-### Training Recipe 근거
-
-`.claude/researchs/vlm-gui-finetuning-research.md` + gWorld(Qwen3-VL-8B, 260K, lr=2e-7, cosine, warmup=0.01) / Code2World(Qwen3-VL-8B SFT, lr=1e-5) / MobileDreamer(Qwen3-8B LoRA, HP 대부분 비공개) 문헌을 참고해 데이터셋 규모 차이를 반영한 분기 설계.
-- **MobiBench (≈3k 샘플)**: 소규모이므로 `epochs=5`로 충분히 학습, `save_strategy=epoch`로 에폭 단위 체크포인트. `warmup_ratio=0.05`로 안정적 워밍업.
-- **AndroidControl (≈71k/92k 샘플, 2026-04-13 재검토)**: 대규모 데이터셋. Stage 1 lr=1e-5(Code2World와 정렬), Stage 2 lr=5e-5(research doc 권장 5e-5~1e-4 하한, Qwen-GUI-3B Stage 2와 정렬). 데이터 규모 증가분을 epoch 상향으로 흡수하여 `epochs=3`으로 학습 여유 확보 — post-training Hungarian F1 / Overall Score sweep 이 과적합 epoch 을 자동 회피. LoRA rank 상향(r=16→32, α=32→64)은 50K-100K 샘플 구간 권장 rank 64-128의 보수 선택. Stage 2 accum을 4→8로 올려 effective batch를 gWorld/Code2World와 동일한 64로 맞춤. **save strategy는 MB와 동일한 `epoch` 로 통일**(2026-04-13 최초엔 `steps(500)` 이었으나 관리 일관성 위해 변경) — 3 epoch 동안 checkpoint 3개만 생성되어 디스크 부담이 크게 줄어듦.
-- **공통 안정화**: `max_grad_norm=1.0`, `weight_decay=0.01`, `save_total_limit=5`로 학습 실패/OOM 복구를 보장. Best checkpoint 선택은 학습 중이 아닌 post-training sweep (`stage{1,2}_eval.sh`) 에서 Hungarian F1 (Stage 1) / Overall Score (Stage 2) 기준으로 수행.
-- **Eval 전략**: 학습 중 eval 을 비활성화하여 VRAM/시간을 절약하고, 학습 완료 후 `{ds_prefix}_stage{n}_test` 데이터셋으로 checkpoint 별 extrinsic generation quality 를 평가. Loss-based eval (`stage{1,2}_eval.sh` Phase A 또는 notebook eval_loss YAML) 은 baseline vs. trained 모델 비교용으로 별도 실행 가능.
-
 > Cell 3의 `_DATASET_CONFIG[ds_name]["stage{1,2}"]`에서 데이터셋×스테이지별 하이퍼파라미터 자유 조정 가능 (lr, epochs, warmup_ratio, save_strategy, save_steps, gradient_accumulation_steps, lora_rank, lora_alpha, lora_dropout). `eval_*` 키는 notebook Cell 10 의 post-training eval YAML 생성에만 참조됨 (학습 YAML 에는 반영되지 않음).
 
 ## Dependencies

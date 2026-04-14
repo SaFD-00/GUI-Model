@@ -8,14 +8,14 @@ from loguru import logger
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Run data collection with App+Server architecture."""
-    from server.activity_coverage import ActivityCoverageTracker
-    from server.adb import AdbClient
-    from server.collector import Collector
-    from server.cost_tracker import CostTracker
-    from server.explorer import SmartExplorer
-    from server.server import CollectionServer
-    from server.storage import DataWriter
-    from server.text_generator import create_text_generator
+    from server.domain.activity_coverage import ActivityCoverageTracker
+    from server.domain.cost_tracker import CostTracker
+    from server.infra.device.adb import AdbClient
+    from server.infra.network.server import CollectionServer
+    from server.infra.storage.storage import DataWriter
+    from server.pipeline.collector import Collector
+    from server.pipeline.explorer import SmartExplorer
+    from server.pipeline.text_generator import create_text_generator
 
     adb = AdbClient(device_serial=args.device)
     activity_tracker = ActivityCoverageTracker()
@@ -59,7 +59,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_convert(args: argparse.Namespace) -> None:
     """Convert a single session to JSONL."""
-    from server.converter import Converter
+    from server.export.converter import Converter
 
     converter = Converter(
         output_path=args.output,
@@ -73,8 +73,8 @@ def cmd_page_map(args: argparse.Namespace) -> None:
     """Build page map from a saved session."""
     import os
 
-    from server.graph_visualizer import visualize_session
-    from server.page_graph import build_graph_from_session
+    from server.domain.page_graph import build_graph_from_session
+    from server.export.graph_visualizer import visualize_session
 
     graph = build_graph_from_session(args.session, threshold=args.threshold)
     graph.save(os.path.join(args.session, "page_graph.json"))
@@ -93,8 +93,8 @@ def cmd_page_map_all(args: argparse.Namespace) -> None:
     """Build page maps for all sessions in a directory."""
     import os
 
-    from server.graph_visualizer import visualize_session
-    from server.page_graph import build_graph_from_session
+    from server.domain.page_graph import build_graph_from_session
+    from server.export.graph_visualizer import visualize_session
 
     raw_dir = args.raw_dir
     if not os.path.isdir(raw_dir):
@@ -122,7 +122,7 @@ def cmd_page_map_all(args: argparse.Namespace) -> None:
 
 def cmd_regenerate(args: argparse.Namespace) -> None:
     """Regenerate all XML variants from raw XML files."""
-    from server.storage import regenerate_xml_variants
+    from server.infra.storage.storage import regenerate_xml_variants
 
     logger.info(f"Regenerating XML variants under: {args.raw_dir}")
     count = regenerate_xml_variants(args.raw_dir)
@@ -131,7 +131,7 @@ def cmd_regenerate(args: argparse.Namespace) -> None:
 
 def cmd_convert_all(args: argparse.Namespace) -> None:
     """Convert all sessions in a directory to JSONL."""
-    from server.converter import Converter
+    from server.export.converter import Converter
 
     converter = Converter(
         output_path=args.output,

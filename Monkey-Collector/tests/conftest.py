@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger
 
-from server.adb import AdbClient
-from server.xml_parser import UIElement, UITree
+from server.infra.device.adb import AdbClient
+from server.infra.xml.ui_tree import UIElement, UITree
 from tests.fixtures.xml_samples import COMPLEX_XML, MINIMAL_XML, SIMPLE_XML
 
 

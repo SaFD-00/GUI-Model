@@ -4,16 +4,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from server.actions import Tap
-from server.collector import Collector
-from server.page_graph import PageGraph
+from server.domain.actions import Tap
+from server.pipeline.collector import Collector
+from server.domain.page_graph import PageGraph
 from tests.fixtures.xml_samples import MINIMAL_XML, SIMPLE_XML
 
 
 @pytest.fixture(autouse=True)
 def _mock_build_graph():
     """Mock build_graph_from_session for all collector tests."""
-    with patch("server.collector.build_graph_from_session") as mock:
+    with patch("server.pipeline.session_manager.build_graph_from_session") as mock:
         mock.return_value = PageGraph()
         yield mock
 
@@ -29,9 +29,9 @@ def _make_xml_signal(xml=SIMPLE_XML, pkg="com.test.app", is_first=False, activit
 
 def _make_collector(mock_adb, signals, max_steps=10):
     """Create a Collector with all dependencies mocked."""
-    from server.explorer import SmartExplorer
-    from server.server import CollectionServer
-    from server.storage import DataWriter
+    from server.pipeline.explorer import SmartExplorer
+    from server.infra.network.server import CollectionServer
+    from server.infra.storage.storage import DataWriter
 
     mock_explorer = MagicMock(spec=SmartExplorer)
     mock_explorer.select_action.return_value = Tap(x=500, y=500, element_index=0)
@@ -65,7 +65,7 @@ def _make_collector(mock_adb, signals, max_steps=10):
 
 @pytest.mark.integration
 class TestSessionResume:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_resumes_existing_session(self, mock_sleep, mock_adb):
         """When existing session found, resume is used instead of init."""
         signals = [
@@ -83,7 +83,7 @@ class TestSessionResume:
         writer.resume_session.assert_called_once_with("com.test.app")
         writer.init_session.assert_not_called()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_new_session_flag(self, mock_sleep, mock_adb):
         """--new-session flag forces new session creation."""
         signals = [
@@ -99,7 +99,7 @@ class TestSessionResume:
         writer.resume_session.assert_not_called()
         writer.init_session.assert_called_once()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_no_existing_session(self, mock_sleep, mock_adb):
         """No existing session → normal init."""
         signals = [
@@ -117,7 +117,7 @@ class TestSessionResume:
 
 @pytest.mark.integration
 class TestRunSessionHappyPath:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_three_steps(self, mock_sleep, mock_adb):
         signals = [
             _make_xml_signal(),
@@ -138,7 +138,7 @@ class TestRunSessionHappyPath:
 
 @pytest.mark.integration
 class TestRunSessionNoChangeRetry:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_retry_then_continue(self, mock_sleep, mock_adb):
         signals = [
             _make_xml_signal(),           # step 0: normal
@@ -158,7 +158,7 @@ class TestRunSessionNoChangeRetry:
 
 @pytest.mark.integration
 class TestRunSessionExternalApp:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_recovery_escalation(self, mock_sleep, mock_adb):
         # 4 external_app signals: first 3 → return_to_app, 4th → recover
         signals = [
@@ -181,7 +181,7 @@ class TestRunSessionExternalApp:
 
 @pytest.mark.integration
 class TestRunSessionFinish:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_finish_signal(self, mock_sleep, mock_adb):
         signals = [
             _make_xml_signal(),
@@ -197,7 +197,7 @@ class TestRunSessionFinish:
 
 @pytest.mark.integration
 class TestSessionEndSignal:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_session_end_sent_on_finish(self, mock_sleep, mock_adb):
         """send_session_end() is called when session finishes normally."""
         signals = [
@@ -209,7 +209,7 @@ class TestSessionEndSignal:
         collector.run(package="com.test.app")
         server.send_session_end.assert_called_once()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_session_end_sent_on_timeout(self, mock_sleep, mock_adb):
         """send_session_end() is called even when session ends due to timeouts."""
         signals = [None, None, None, None, None]
@@ -218,7 +218,7 @@ class TestSessionEndSignal:
         collector.run(package="com.test.app")
         server.send_session_end.assert_called_once()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_session_end_sent_on_max_external_app(self, mock_sleep, mock_adb):
         """send_session_end() is called when session ends due to max external app retries."""
         signals = [_make_xml_signal()]
@@ -231,7 +231,7 @@ class TestSessionEndSignal:
 
 @pytest.mark.integration
 class TestRunSessionTimeout:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_max_timeouts(self, mock_sleep, mock_adb):
         # 5 consecutive timeouts (None) should end session
         signals = [None, None, None, None, None]
@@ -245,11 +245,11 @@ class TestRunSessionTimeout:
 
 @pytest.mark.integration
 class TestRunSessionNoConnection:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_no_client(self, mock_sleep, mock_adb):
-        from server.explorer import SmartExplorer
-        from server.server import CollectionServer
-        from server.storage import DataWriter
+        from server.pipeline.explorer import SmartExplorer
+        from server.infra.network.server import CollectionServer
+        from server.infra.storage.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         mock_server.is_client_connected.return_value = False
@@ -270,15 +270,15 @@ class TestRunSessionNoConnection:
 
 @pytest.mark.integration
 class TestRunMulti:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     @patch.object(Collector, "_run_session")
     def test_two_sessions(self, mock_run_session, mock_sleep, mock_adb):
         """Two sessions complete, then KeyboardInterrupt stops the loop."""
         mock_run_session.side_effect = ["session_1", "session_2", KeyboardInterrupt()]
 
-        from server.explorer import SmartExplorer
-        from server.server import CollectionServer
-        from server.storage import DataWriter
+        from server.pipeline.explorer import SmartExplorer
+        from server.infra.network.server import CollectionServer
+        from server.infra.storage.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         mock_explorer = MagicMock(spec=SmartExplorer)
@@ -292,15 +292,15 @@ class TestRunMulti:
         assert mock_server.reset_for_new_session.call_count == 2  # called before sessions 2 and 3
         mock_server.stop.assert_called_once()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     @patch.object(Collector, "_run_session")
     def test_interrupt_during_session(self, mock_run_session, mock_sleep, mock_adb):
         """KeyboardInterrupt during session → only completed sessions returned."""
         mock_run_session.side_effect = ["session_1", KeyboardInterrupt()]
 
-        from server.explorer import SmartExplorer
-        from server.server import CollectionServer
-        from server.storage import DataWriter
+        from server.pipeline.explorer import SmartExplorer
+        from server.infra.network.server import CollectionServer
+        from server.infra.storage.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -312,7 +312,7 @@ class TestRunMulti:
         assert result == ["session_1"]
         mock_server.stop.assert_called_once()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     @patch.object(Collector, "_run_session")
     def test_interrupt_between_sessions(self, mock_run_session, mock_sleep, mock_adb):
         """KeyboardInterrupt at the outer loop level."""
@@ -327,9 +327,9 @@ class TestRunMulti:
             raise KeyboardInterrupt()
         mock_run_session.side_effect = side_effect
 
-        from server.explorer import SmartExplorer
-        from server.server import CollectionServer
-        from server.storage import DataWriter
+        from server.pipeline.explorer import SmartExplorer
+        from server.infra.network.server import CollectionServer
+        from server.infra.storage.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -344,7 +344,7 @@ class TestRunMulti:
 
 @pytest.mark.integration
 class TestPackageFromClient:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_package_none_receives(self, mock_sleep, mock_adb):
         """package=None → receives package from client."""
         signals = [_make_xml_signal(pkg="com.from.client"), ("finish", None, None)]
@@ -354,7 +354,7 @@ class TestPackageFromClient:
         session_id = collector.run(package=None)
         assert "com.from.client" in session_id
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_package_none_timeout(self, mock_sleep, mock_adb):
         """package=None + package timeout → empty string."""
         collector, explorer, server, writer = _make_collector(mock_adb, [])
@@ -363,7 +363,7 @@ class TestPackageFromClient:
         session_id = collector.run(package=None)
         assert session_id == ""
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_package_override(self, mock_sleep, mock_adb):
         """Specified package overridden by client P message."""
         signals = [_make_xml_signal(pkg="com.override"), ("finish", None, None)]
@@ -376,7 +376,7 @@ class TestPackageFromClient:
 
 @pytest.mark.integration
 class TestNoChangeExhaustion:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_first_screen_tap_fallback(self, mock_sleep, mock_adb):
         """3 no-change on first screen → tap (not back)."""
         signals = [
@@ -396,7 +396,7 @@ class TestNoChangeExhaustion:
         # (it may be called from explorer.execute_action for PressBack actions, but
         # we verify it's not called for the exhaustion path by checking adb directly)
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_not_first_screen_back(self, mock_sleep, mock_adb):
         """3 no-change (not first screen) → press_back."""
         signals = [
@@ -412,7 +412,7 @@ class TestNoChangeExhaustion:
         collector.run(package="com.test.app")
         mock_adb.press_back.assert_called()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_back_causes_exit_recovery(self, mock_sleep, mock_adb):
         """3 no-change → back → has_left_app=True → return_to_app."""
         signals = [
@@ -431,7 +431,7 @@ class TestNoChangeExhaustion:
 
 @pytest.mark.integration
 class TestNoChangeNoUITree:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_no_tree_back(self, mock_sleep, mock_adb):
         """no-change with no UI tree (not first screen) → back."""
         # First signal is xml with empty tree (MINIMAL_XML), then no-change
@@ -446,7 +446,7 @@ class TestNoChangeNoUITree:
         collector.run(package="com.test.app")
         mock_adb.press_back.assert_called()
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_no_tree_first_screen_tap(self, mock_sleep, mock_adb):
         """no-change with no UI tree + first screen → tap fallback."""
         signals = [
@@ -463,7 +463,7 @@ class TestNoChangeNoUITree:
 
 @pytest.mark.integration
 class TestExternalAppMax:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_max_retries_ends_session(self, mock_sleep, mock_adb):
         """10 external_app signals → session ends."""
         signals = [_make_xml_signal()]
@@ -476,7 +476,7 @@ class TestExternalAppMax:
         assert explorer.return_to_app.call_count == 3
         assert explorer.recover.call_count == 6
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_recovery_exception(self, mock_sleep, mock_adb):
         """Exception during recovery doesn't crash."""
         signals = [
@@ -494,7 +494,7 @@ class TestExternalAppMax:
 
 @pytest.mark.integration
 class TestXmlEdgeCases:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_stale_xml_skipped(self, mock_sleep, mock_adb):
         """XML with mismatched top_package is skipped."""
         signals = [
@@ -513,7 +513,7 @@ class TestXmlEdgeCases:
         # Only 1 action should be selected (the stale one is skipped)
         assert explorer.select_action.call_count == 1
 
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_empty_tree_recovery(self, mock_sleep, mock_adb):
         """Empty UI tree + not first screen + has_left_app → waits then recovery."""
         empty_meta = {"top_package": "com.test.app", "activity_name": "com.test.app/.MainActivity", "target_package": "com.test.app", "is_first_screen": False}
@@ -535,7 +535,7 @@ class TestXmlEdgeCases:
 
 @pytest.mark.integration
 class TestScreenshotSaving:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_screenshot_saved(self, mock_sleep, mock_adb):
         """Screenshot stored via callback is saved with next XML."""
         signals = [
@@ -561,22 +561,24 @@ class TestOnScreenshot:
 @pytest.mark.integration
 class TestTapRandomFallback:
     def test_success(self, mock_adb):
-        """_tap_random_fallback taps center of screen."""
-        collector, _, _, _ = _make_collector(mock_adb, [])
-        collector._tap_random_fallback()
+        """tap_random_fallback taps center of screen."""
+        from server.pipeline.recovery import tap_random_fallback
+
+        tap_random_fallback(mock_adb)
         mock_adb.get_device_resolution.assert_called_once()
         mock_adb.tap.assert_called_once_with(540, 960)
 
     def test_exception_caught(self, mock_adb):
-        """Exception in _tap_random_fallback is caught."""
-        collector, _, _, _ = _make_collector(mock_adb, [])
+        """Exception in tap_random_fallback is caught."""
+        from server.pipeline.recovery import tap_random_fallback
+
         mock_adb.get_device_resolution.side_effect = Exception("no device")
-        collector._tap_random_fallback()  # should not raise
+        tap_random_fallback(mock_adb)  # should not raise
 
 
 @pytest.mark.integration
 class TestStepException:
-    @patch("server.collector.time.sleep")
+    @patch("server.pipeline.collection_loop.time.sleep")
     def test_recover_and_continue(self, mock_sleep, mock_adb):
         """Exception during step → recover + continue to next step."""
         signals = [

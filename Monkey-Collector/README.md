@@ -8,15 +8,15 @@ Android App (AccessibilityService) + Python Server (TCP) 아키텍처로 UI 상�
 
 ```
 App (Kotlin, AccessibilityService)       TCP        Server (Python)
-├── CollectorService                 ──P(package)────→  server.py
+├── CollectorService                 ──P(package)────→  infra/network/server.py
 │   ├── AccessibilityEvent 감지      ──S(screenshot)──→    ├── 데이터 수신
-│   ├── ScreenStabilizer             ──X(XML+Activity)─→    ├── storage.py (저장)
+│   ├── ScreenStabilizer             ──X(XML+Activity)─→    ├── infra/storage/ (저장)
 │   │   └── BitmapComparator         ──E(external)────→    └── wait_for_xml()
 │   ├── XmlDumper (A11y tree)        ──N(no-change)───→          ↓
-│   ├── ScreenCapture (MediaProj.)   ──F(finish)──────→    collector.py
-│   └── FloatingCollectorButton                            ├── explorer.py (action 선택 + 앱 복귀)
-├── TcpClient                        ←──action JSON────    └── adb.py (action 실행)
-└── MainActivity (설정 UI)
+│   ├── ScreenCapture (MediaProj.)   ──F(finish)──────→    pipeline/collector.py
+│   └── FloatingCollectorButton                            ├── collection_loop + recovery
+├── TcpClient                        ←──action JSON────    ├── pipeline/explorer.py (action 선택)
+└── MainActivity (설정 UI)                                 └── infra/device/adb.py (action 실행)
 ```
 
 ### 핵심 설계 결정
@@ -57,25 +57,37 @@ Monkey-Collector/
 │           ├── values/strings.xml
 │           └── xml/accessibility_config.xml
 │
-├── server/                                # Python Server
-│   ├── cli.py              # CLI 진입점 (run, convert, convert-all, page-map)
-│   ├── server.py            # TCP 서버 (P/S/X/E/N/F 프로토콜)
-│   ├── collector.py         # 메인 수집 루프 (Server 기반)
-│   ├── storage.py           # DataWriter (세션 디렉토리 관리)
-│   ├── explorer.py          # SmartExplorer (가중 랜덤 action 선택)
-│   ├── text_generator.py    # InputText 생성 전략 (LLM / 랜덤)
-│   ├── activity_coverage.py # Activity 커버리지 추적 (CSV)
-│   ├── cost_tracker.py      # LLM API 비용 추적 (CSV)
-│   ├── actions.py           # Action dataclass (Tap, Swipe, Input, ...)
-│   ├── adb.py               # ADB 명령어 래핑 (action 실행)
-│   ├── xml_parser.py        # UIElement/UITree 파싱 (SmartExplorer용)
-│   ├── parser/              # 구조적 XML 파서 (5단계 파이프라인)
-│   │   ├── __init__.py
-│   │   ├── base.py          # 추상 Parser 베이스 클래스
-│   │   └── structured_parser.py  # StructuredXmlParser (HTML-like 변환)
-│   ├── converter.py         # Encoded XML (_encoded.xml) → gui-model_stage1.jsonl 변환
-│   ├── page_graph.py        # 페이지 맵 빌드 (parser 전처리 + fingerprint)
-│   └── graph_visualizer.py  # 페이지 맵 PyVis HTML 시각화
+├── server/                                # Python Server (4-layer subpackages)
+│   ├── __init__.py                            # 공개 API (Collector, Converter, ...)
+│   ├── cli.py                                 # CLI 진입점 (run, convert, page-map, ...)
+│   │
+│   ├── domain/                                # 도메인 모델 (I/O 의존 없음)
+│   │   ├── actions.py                             # Action dataclass (Tap, Swipe, Input, ...)
+│   │   ├── activity_coverage.py                   # Activity 커버리지 추적 (CSV)
+│   │   ├── cost_tracker.py                        # LLM API 비용 추적 (CSV)
+│   │   └── page_graph.py                          # 페이지 맵 엔진 (fingerprint + graph)
+│   │
+│   ├── pipeline/                              # 수집 오케스트레이션
+│   │   ├── collector.py                           # Collector facade (run, run_multi)
+│   │   ├── session_manager.py                     # 세션 생명주기 (init/resume/finalize)
+│   │   ├── collection_loop.py                     # 메인 while-루프 + CollectionState
+│   │   ├── recovery.py                            # 복구 헬퍼 + 상수
+│   │   ├── explorer.py                            # SmartExplorer (가중 랜덤 action 선택)
+│   │   └── text_generator.py                      # InputText 생성 전략 (LLM / 랜덤)
+│   │
+│   ├── export/                                # 산출물 생성
+│   │   ├── converter.py                           # encoded XML → gui-model_stage1.jsonl
+│   │   └── graph_visualizer.py                    # 페이지 맵 PyVis HTML 시각화
+│   │
+│   └── infra/                                 # 외부 시스템 어댑터
+│       ├── device/adb.py                          # ADB 명령어 래핑 (action 실행)
+│       ├── network/server.py                      # TCP 서버 (P/S/X/E/N/F 프로토콜)
+│       ├── storage/storage.py                     # DataWriter (세션 디렉토리 관리)
+│       └── xml/
+│           ├── ui_tree.py                         # UIElement/UITree 파싱
+│           └── parser/                            # 구조적 XML 파서 (5단계 파이프라인)
+│               ├── base.py                            # 추상 Parser 베이스 클래스
+│               └── structured_parser.py               # StructuredXmlParser
 │
 ├── data/
 │   └── raw/                               # 수집된 세션 데이터

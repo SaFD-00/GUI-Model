@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from server.activity_coverage import ActivityCoverageTracker, _normalize_activity_name
+from server.domain.activity_coverage import ActivityCoverageTracker, _normalize_activity_name
 
 
 class TestInitialize:

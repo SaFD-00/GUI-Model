@@ -11,7 +11,7 @@ from xml.etree import ElementTree as ET
 
 from loguru import logger
 
-from server.parser.structured_parser import StructuredXmlParser
+from server.infra.xml.parser.structured_parser import StructuredXmlParser
 
 # ---------------------------------------------------------------------------
 # XML structural fingerprinting (with parser preprocessing)

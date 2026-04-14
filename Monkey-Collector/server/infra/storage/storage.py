@@ -105,7 +105,7 @@ class DataWriter:
 
         # 2-5. parsed variants
         try:
-            from server.parser.structured_parser import (
+            from server.infra.xml.parser.structured_parser import (
                 StructuredXmlParser,
                 hierarchy_parse,
                 indent_xml,
@@ -198,7 +198,7 @@ def regenerate_xml_variants(raw_dir: str) -> int:
 
     Returns the number of files successfully regenerated.
     """
-    from server.parser.structured_parser import (
+    from server.infra.xml.parser.structured_parser import (
         StructuredXmlParser,
         indent_xml,
     )
@@ -214,7 +214,7 @@ def regenerate_xml_variants(raw_dir: str) -> int:
                 continue
             stem = fname.removesuffix(".xml")
             raw_path = os.path.join(xml_dir, fname)
-            with open(raw_path, "r", encoding="utf-8") as f:
+            with open(raw_path, encoding="utf-8") as f:
                 raw_xml = f.read()
 
             parser = StructuredXmlParser()

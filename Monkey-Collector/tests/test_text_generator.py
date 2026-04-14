@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from server.text_generator import (
+from server.pipeline.text_generator import (
     SAMPLE_TEXTS,
     LLMTextGenerator,
     RandomTextGenerator,

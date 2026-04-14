@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from server.cost_tracker import MODEL_PRICING, CostTracker
+from server.domain.cost_tracker import MODEL_PRICING, CostTracker
 
 
 class TestInitialize:

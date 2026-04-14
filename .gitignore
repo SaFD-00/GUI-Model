@@ -2,13 +2,32 @@
 **/data/
 **/outputs/
 **/exports/
+**/saves/
+**/logs/
 GUI-Model/LlamaFactory/
+Monkey-Collector/app_candidates.csv
+
+# Cache (HuggingFace models, Python tooling, ML logs)
+**/.cache/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/wandb/
+**/lightning_logs/
+**/runs/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+
+# Refactor temp artifacts
+*.bak
+*.orig
+*.tmp
+*.rej
+*~
 
 # Jupyter
 .ipynb_checkpoints/

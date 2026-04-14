@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from server.adb import AdbClient, _escape_text_for_adb, _find_adb
+from server.infra.device.adb import AdbClient, _escape_text_for_adb, _find_adb
 
 
 class TestEscapeText:
@@ -41,7 +41,7 @@ class TestFindAdb:
 
 @pytest.fixture
 def mock_subprocess():
-    with patch("server.adb.subprocess.run") as mock_run:
+    with patch("server.infra.device.adb.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr=""
         )
@@ -50,7 +50,7 @@ def mock_subprocess():
 
 @pytest.fixture
 def adb_client(mock_subprocess):
-    with patch("server.adb._find_adb", return_value="/usr/bin/adb"):
+    with patch("server.infra.device.adb._find_adb", return_value="/usr/bin/adb"):
         return AdbClient()
 
 
@@ -62,7 +62,7 @@ class TestShell:
         assert args == ["/usr/bin/adb", "shell", "ls /sdcard"]
 
     def test_with_device_serial(self, mock_subprocess):
-        with patch("server.adb._find_adb", return_value="/usr/bin/adb"):
+        with patch("server.infra.device.adb._find_adb", return_value="/usr/bin/adb"):
             client = AdbClient(device_serial="emulator-5554")
         client.shell("ls")
         args = mock_subprocess.call_args[0][0]

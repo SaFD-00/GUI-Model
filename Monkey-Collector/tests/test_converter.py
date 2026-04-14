@@ -2,14 +2,14 @@
 
 import json
 
-from server.converter import (
+from server.export.converter import (
     Converter,
     _find_element_at,
     _map_event_to_action,
     generate_example,
 )
-from server.parser.structured_parser import parse_to_html_xml
-from server.xml_parser import parse_uiautomator_xml
+from server.infra.xml.parser.structured_parser import parse_to_html_xml
+from server.infra.xml.ui_tree import parse_uiautomator_xml
 from tests.conftest import make_element
 from tests.fixtures.session_fixtures import create_mock_session
 from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML

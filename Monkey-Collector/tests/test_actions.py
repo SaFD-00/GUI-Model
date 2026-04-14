@@ -2,7 +2,7 @@
 
 import pytest
 
-from server.actions import (
+from server.domain.actions import (
     ACTION_REGISTRY,
     Action,
     InputText,

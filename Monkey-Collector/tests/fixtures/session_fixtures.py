@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from server.parser.structured_parser import parse_to_html_xml
+from server.infra.xml.parser.structured_parser import parse_to_html_xml
 from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML
 
 # Minimal 1x1 white PNG (67 bytes)
