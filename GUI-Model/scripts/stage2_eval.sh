@@ -56,6 +56,7 @@ for DS in "${DATASETS[@]}"; do
         --model_name_or_path '$BASE_MODEL' \
         --dataset '$DS_TEST' \
         ${VLLM_COMMON_ARGS[*]} \
+        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
         --save_name        '$OUT_BASE_REL/generated_predictions.jsonl' \
         --matrix_save_name '$OUT_BASE_REL/predict_results.json' && \
       python '$BASE_DIR/scripts/_action_eval.py' score \
@@ -101,6 +102,7 @@ for DS in "${DATASETS[@]}"; do
             --adapter_name_or_path '$ADAPTER_REL' \
             --dataset '$DS_TEST' \
             ${VLLM_COMMON_ARGS[*]} \
+        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
             --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \
             --matrix_save_name '$OUT_CKPT_REL/predict_results.json' && \
           python '$BASE_DIR/scripts/_action_eval.py' score \

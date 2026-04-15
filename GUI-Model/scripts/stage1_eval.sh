@@ -51,6 +51,7 @@ for DS in "${DATASETS[@]}"; do
         --model_name_or_path Qwen/Qwen3-VL-8B-Instruct \
         --dataset '$DS_TEST' \
         ${VLLM_COMMON_ARGS[*]} \
+        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
         --save_name        '$OUT_BASE_REL/generated_predictions.jsonl' \
         --matrix_save_name '$OUT_BASE_REL/predict_results.json' && \
       python '$BASE_DIR/scripts/_hungarian_eval.py' score \
@@ -83,6 +84,7 @@ for DS in "${DATASETS[@]}"; do
           --model_name_or_path '$MODEL_REL' \
           --dataset '$DS_TEST' \
           ${VLLM_COMMON_ARGS[*]} \
+        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
           --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \
           --matrix_save_name '$OUT_CKPT_REL/predict_results.json' && \
         python '$BASE_DIR/scripts/_hungarian_eval.py' score \
