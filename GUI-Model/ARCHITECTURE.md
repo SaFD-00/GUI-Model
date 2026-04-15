@@ -144,7 +144,7 @@ gui-model.ipynb
 └── Section 8: Stage 2 Merge YAML 생성 + HuggingFace 업로드
 ```
 
-최초 실행은 notebook, 반복 실행은 `scripts/` 쉘 스크립트가 표준이다. 초기 환경 설치는 `bash scripts/setup.sh` 로 노트북 없이도 재현할 수 있다.
+최초 실행은 notebook, 반복 실행은 `scripts/` 쉘 스크립트가 표준이다. 초기 환경 설치는 notebook Section 0 Cell 4/5 또는 동일한 수동 명령(`pip install -e .` + `LlamaFactory/` editable install)으로 재현한다.
 
 ---
 
@@ -535,9 +535,10 @@ YAML 설정 파일 위치: `LlamaFactory/examples/custom/GUI-Model-{MB,AC}/`
 
 ### 7.1 쉘 스크립트 (권장, 재실행·자동화)
 
+초기 환경 설치는 `pip install -e .` 와 `LlamaFactory/` 수동 설치로 처리하며, `scripts/` 아래에는 학습/평가/Merge 재실행용 스크립트만 둔다.
+
 | 스크립트 | 대응 Section | 수행 |
 |---|---|---|
-| `scripts/setup.sh` | Section 0 Cell 4/5 | 초기 환경 설치 (requirements.txt + LlamaFactory clone + metrics/deepspeed/vllm). idempotent (LlamaFactory 존재 시 clone skip) |
 | `scripts/stage1_train.sh` | Section 3 | Stage 1 Full FT (FORCE_TORCHRUN=1, H100×4) → `saves/{DS}/stage1_full/full_world_model/` |
 | `scripts/stage1_eval.sh`  | Section 4 | **Phase A** Baseline(Zero-shot) Hungarian → **Phase B** 전체 checkpoint sweep (vllm_infer + `_hungarian_eval.py score`) → **Phase C** winner 선택 (`_hungarian_eval.py select`) → `saves/{DS}/.../BEST_CHECKPOINT` 기록 |
 | `scripts/stage1_merge.sh` | Section 5 | **BEST_CHECKPOINT 필수(없으면 hard-fail)**. Merge YAML 을 winner 경로로 override → `llamafactory-cli export` (HF Hub push) → `exports/.../` 를 `outputs/{DS}/stage1_merged/` 로 rsync |
@@ -649,7 +650,9 @@ GUI-Model/
 ├── CLAUDE.md                       # Claude Code 컨텍스트
 ├── README.md                       # 프로젝트 개요 및 실행 가이드
 ├── gui-model.ipynb                 # 전체 파이프라인 실행 노트북
-├── requirements.txt                # Python 의존성
+├── pyproject.toml                  # setuptools build backend 설정
+├── setup.py                        # `pip install -e .` 메타데이터
+├── gui_model/                      # editable install 용 최소 패키지 메타데이터
 ├── .env.example                    # 환경변수 템플릿
 │
 ├── data/                           # 데이터셋 (git-ignored)
