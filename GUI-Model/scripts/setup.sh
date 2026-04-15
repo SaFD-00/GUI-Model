@@ -5,6 +5,9 @@ set -euo pipefail
 # 사용법: bash scripts/setup.sh   (repo 루트에서 실행)
 
 # conda create -n gui-model python=3.12 -y
+CONDA_BASE="$(conda info --base)"
+# shellcheck disable=SC1091
+source "$CONDA_BASE/etc/profile.d/conda.sh"
 conda activate gui-model
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
