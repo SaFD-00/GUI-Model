@@ -26,6 +26,37 @@ def split_stage1(entries: list, ratio: float, seed: int) -> tuple[list, list]:
     return shuffled[:split_idx], shuffled[split_idx:]
 
 
+def stratified_subsample(entries: list, target_size: int, seed: int) -> list:
+    """Subsample entries preserving action type ratio (largest-remainder method)."""
+    random.seed(seed)
+
+    type_groups = defaultdict(list)
+    for entry in entries:
+        action = json.loads(entry["messages"][-1]["value"])
+        type_groups[action.get("type", "unknown")].append(entry)
+
+    total = len(entries)
+    if target_size >= total:
+        return entries.copy()
+
+    quotas: dict[str, int] = {}
+    remainders: dict[str, float] = {}
+    for atype, group in type_groups.items():
+        exact = len(group) / total * target_size
+        quotas[atype] = int(exact)
+        remainders[atype] = exact - int(exact)
+
+    leftover = target_size - sum(quotas.values())
+    for atype, _ in sorted(remainders.items(), key=lambda kv: -kv[1])[:leftover]:
+        quotas[atype] += 1
+
+    sampled: list = []
+    for atype, group in type_groups.items():
+        random.shuffle(group)
+        sampled.extend(group[: quotas[atype]])
+    return sampled
+
+
 def split_stage2(entries: list, ratio: float, seed: int) -> tuple[list, list]:
     """Stratified split by action type for Stage 2 (Action Prediction)."""
     random.seed(seed)
@@ -90,6 +121,13 @@ def main():
         type=int,
         default=42,
         help="Random seed (default: 42)",
+    )
+    parser.add_argument(
+        "--stage2-sample-size",
+        type=int,
+        default=None,
+        help="Stage 2 stratified subsample size before split "
+        "(default: 30000 for AndroidControl, none for others)",
     )
     parser.add_argument(
         "--data-dir",
@@ -164,6 +202,21 @@ def main():
                     skipped += 1
         if skipped:
             print(f"  [WARN] Skipped {skipped} malformed lines in Stage 2")
+
+        sample_size = args.stage2_sample_size
+        if sample_size is None and args.dataset == "AndroidControl":
+            sample_size = 30000
+
+        original_total = len(stage2_entries)
+        if sample_size is not None and sample_size < original_total:
+            stage2_entries = stratified_subsample(
+                stage2_entries, sample_size, args.seed
+            )
+            print(
+                f"  [SUBSAMPLE] {original_total} → {len(stage2_entries)} "
+                f"(stratified by action type)"
+            )
+            print_stage2_distribution(stage2_entries, "Subsampled")
 
         train, test = split_stage2(stage2_entries, args.ratio, args.seed)
         train_path = dataset_dir / "gui-model_stage2_train.jsonl"
