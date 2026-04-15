@@ -1,263 +1,146 @@
 # GUI-Model
 
-모바일 UI의 상태 전이(World Modeling)와 액션 예측(Action Prediction)을 위한 2-Stage Fine-tuning 파이프라인.
-
-**핵심 가설**: GUI World Modeling으로 사전학습된 VLM은 Action Prediction에서 더 높은 성능을 보인다.
+모바일 GUI World Modeling 이 Action Prediction 성능에 미치는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 현재 코드 기준으로는 notebook 이 전체 실행의 기준이고, `scripts/` 가 반복 실행용 자동화 레이어이며, 실제 학습/평가 엔진은 저장소 내부 `LlamaFactory/` 가 담당한다.
 
 ## 개요
 
+- Stage 1: `screenshot + UI XML + action -> next UI XML`
+- Stage 2: `screenshot + UI XML + task -> action JSON`
+- 비교 실험:
+  - `Exp-1`: Stage 1 world model 품질 평가
+  - `stage2`: base model 에서 바로 Stage 2 LoRA
+  - `stage1+stage2`: Stage 1 merged model 위에서 Stage 2 LoRA
+
+실제 파이프라인 로직은 [`gui-model.ipynb`](./gui-model.ipynb), [`scripts/`](./scripts), [`LlamaFactory/`](./LlamaFactory) 조합으로 구성된다. [`gui_model/`](./gui_model) 패키지는 배포용 스텁만 포함한다.
+
+## 디렉토리 구조
+
 ```
-Stage 1: World Modeling          Stage 2: Action Prediction
-┌─────────────────────┐          ┌──────────────────────────┐
-│ UI State (XML)      │          │ Screenshot (Image)       │
-│ + Action            │          │ + UI State (XML)         │
-│ + Screenshot        │          │ + Task Description       │
-│         ↓           │          │         ↓                │
-│ Next UI State (XML) │          │ Action (JSON)            │
-└─────────────────────┘          └──────────────────────────┘
+GUI-Model/
+├── gui-model.ipynb
+├── scripts/
+├── data/
+├── LlamaFactory/
+├── gui_model/
+├── setup.py
+├── README.md
+├── ARCHITECTURE.md
+└── AGENTS.md
 ```
 
-- **Stage 1**: UI 상태(XML)와 액션이 주어졌을 때, 다음 UI 상태를 예측하는 World Model 학습
-- **Stage 2**: 스크린샷 + UI 상태 + 태스크 설명으로부터 수행할 액션을 예측
-
-## 3-Way 비교 실험
-
-World Model 사전학습이 Action Prediction 성능에 미치는 영향을 검증하기 위한 3-Way ablation study.
-
-| Exp | Stage 1 | Stage 2 | Base Model | 목적 |
-|-----|---------|---------|------------|------|
-| Exp-1 | Full FT | — | Qwen3-VL-8B-Instruct | World Model 학습 및 평가 |
-| stage1+stage2 | Full FT → Merge | LoRA FT | SaFD-00/qwen3-vl-8b-stage1-world-model | World Model + Action Prediction |
-| stage2 | — | LoRA FT | Qwen3-VL-8B-Instruct | Baseline (Control Group) |
-
-**핵심 비교:**
-- stage2 vs stage1+stage2 → World Modeling 사전학습이 Action Prediction에 미치는 효과
-- Baseline (Zero-shot) → Stage 1/2 모두에서 Qwen3-VL-8B-Instruct 원본 대비 성능 측정
-
-## 모델
-
-| 항목 | 값 |
-|------|-----|
-| Base Model | [Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct) |
-| Template | qwen3_vl_nothink |
-| Vision Tower | Frozen |
-| Framework | [LLaMA-Factory](https://github.com/hiyouga/LlamaFactory) |
-
-## 데이터셋
-
-`gui-model.ipynb` Cell 3에서 두 데이터셋 모두 자동 설정됩니다:
-
-| Dataset | Stage 1 | Stage 2 | Images | 규모 |
-|---------|---------|---------|--------|------|
-| **MobiBench** (기본) | 3,145건 | 3,147건 | 3,655개 | ~28 MB |
-| **AndroidControl** (주력) | 71,047건 | 91,677건 | 20,129개 | ~479 MB |
-
-각 데이터셋은 95:5 비율로 Train/Test Split됩니다.
-- MobiBench: S1 2,987/158, S2 2,987/160
-- AndroidControl: S1 67,494/3,553, S2 87,090/4,587
-
-AndroidControl은 MobiBench 대비 Stage 1 ~23배 / Stage 2 ~29배 대규모이며, 하이퍼파라미터가 자동 조정됩니다 (2026-04-13 데이터 갱신 & 레시피 재검토).
-
-## 평가 메트릭
-
-### Stage 1: World Modeling
-
-| Metric | Description |
-|--------|-------------|
-| eval_loss / Perplexity | Next token prediction loss |
-| BLEU-4 | n-gram 기반 텍스트 유사도 |
-| ROUGE-L | Longest Common Subsequence F1 |
-| Exact Match | GT XML과 완전 일치 비율 |
-| Hungarian EA | Element Accuracy (매칭수 / max(pred, gt)) |
-| Hungarian F1 | Precision-Recall F1 Score |
-| Hungarian Text | 매칭 쌍의 Jaccard 텍스트 유사도 평균 |
-| Hungarian Idx | 매칭 쌍의 index 위치 정확도 (|diff| ≤ 2) |
-
-> 헝가리안 알고리즘으로 pred-gt 간 최적 1:1 요소 매칭 후 정확도 산출
-
-### Stage 2: Action Prediction
-
-| Metric | Description |
-|--------|-------------|
-| Parse Rate | 출력 JSON 파싱 성공률 |
-| Type Accuracy | Action type 일치율 |
-| Bounds IoU | Bounding box 겹침 비율 |
-| Params Accuracy | Action params 일치율 |
-| **Overall Score** | Type × (0.5×IoU + 0.5×Params) |
-
-## 학습 설정
-
-### Stage 1: World Modeling (Full Fine-tuning)
-
-| 항목 | MobiBench | AndroidControl |
-|------|-----------|----------------|
-| Method | Full (all parameters) | Full (all parameters) |
-| Effective Batch | 64 (2 × 8 × 4 GPU) | 64 (2 × 8 × 4 GPU) |
-| Learning Rate | 1e-5 (cosine) | **1e-5** (cosine) |
-| Warmup Ratio | 0.05 | **0.03** |
-| Epochs | 5 | **3** |
-| weight_decay | 0.01 | 0.01 |
-| max_grad_norm | 1.0 | 1.0 |
-| save strategy | epoch | epoch |
-| save_total_limit | 5 | 5 |
-| 학습 중 eval | 비활성화 (post-training Hungarian F1 sweep 으로 winner 선택) | 동일 |
-| DeepSpeed | ZeRO-3 | ZeRO-3 |
-| Hardware | H100 80GB × 4 | H100 80GB × 4 |
-
-### Stage 2: Action Prediction (LoRA, 3-Way 비교)
-
-| 항목 | MobiBench | AndroidControl |
-|------|-----------|----------------|
-| Method | LoRA (r=16, α=32, dropout=0.1) | LoRA (**r=32, α=64**, dropout=0.1) |
-| Effective Batch | 32 (2 × 4 × 4 GPU) | **64 (2 × 8 × 4 GPU)** |
-| Learning Rate | 3e-5 (cosine, warmup=0.05) | **5e-5** (cosine, warmup=**0.03**) |
-| Epochs | 5 | **3** |
-| weight_decay | 0.01 | 0.01 |
-| max_grad_norm | 1.0 | 1.0 |
-| save strategy | epoch | epoch |
-| save_total_limit | 5 | 5 |
-| 학습 중 eval | 비활성화 (post-training Overall Score sweep 으로 winner 선택) | 동일 |
-| Hardware | H100 80GB × 4 | H100 80GB × 4 |
-
-**Stage 2 실험:**
-
-| ID | Base Model | HuggingFace ID |
-|----|------------|----------------|
-| stage1+stage2 | Stage 1 Merged | `SaFD-00/qwen3-vl-8b-stage1-world-model` |
-| stage2 | Qwen3-VL-8B (Baseline) | `Qwen/Qwen3-VL-8B-Instruct` |
-
-## 사용법
-
-### 1. 환경 설정
+## 환경 설치
 
 ```bash
-git clone https://github.com/SaFD-00/GUI-Model.git
-cd GUI-Model
-bash scripts/setup.sh    # requirements.txt + LlamaFactory clone + metrics/deepspeed/vllm 일괄 설치
+pip install -e .
+if [ ! -d LlamaFactory ]; then
+  git clone https://github.com/hiyouga/LlamaFactory.git
+fi
+pip install -e "./LlamaFactory[torch,metrics]"
+pip install -r LlamaFactory/requirements/metrics.txt -r LlamaFactory/requirements/deepspeed.txt
+pip install vllm
 ```
 
-> `scripts/setup.sh` 는 노트북 Section 0 Cell 4/5 와 동일한 작업을 수행하며 idempotent 합니다 (`LlamaFactory/` 존재 시 clone skip). 노트북 환경에서는 Cell 4/5 를 대신 실행해도 됩니다.
+추가 전제:
 
-### 2. 데이터 준비
+- Python 3.10+
+- bash 4+ (`scripts/_common.sh` 기준)
+- merge/export 단계에서는 `HF_TOKEN`, `rsync`, `pyyaml`
 
-[Google Drive](https://drive.google.com/drive/folders/1w55poUT6Sj2HrFERBFw4FeX_Rqja_mr4?usp=sharing)에서 데이터를 다운로드하여 `data/` 디렉토리에 배치합니다:
+## 데이터 준비
+
+`data/` 아래에 아래 형태로 원본 JSONL 과 이미지를 둔다.
 
 ```
 data/
 ├── MobiBench/
-│   ├── images/                      # 모바일 UI 스크린샷 (3,655개 PNG)
-│   ├── gui-model_stage1.jsonl       # Stage 1 (3,145건)
-│   └── gui-model_stage2.jsonl       # Stage 2 (3,147건)
+│   ├── gui-model_stage1.jsonl
+│   ├── gui-model_stage2.jsonl
+│   └── images/
 └── AndroidControl/
-    ├── gui-model_stage1.jsonl       # Stage 1 (71,047건)
-    └── gui-model_stage2.jsonl       # Stage 2 (91,677건)
+    ├── gui-model_stage1.jsonl
+    ├── gui-model_stage2.jsonl
+    └── images/
 ```
 
-### 3. 데이터 Split
-
-학습 전 Train/Test Split을 사전 수행합니다:
+train/test split 생성:
 
 ```bash
 python scripts/split_data.py --dataset MobiBench
 python scripts/split_data.py --dataset AndroidControl
 ```
 
-옵션: `--ratio 0.95` (기본), `--seed 42` (기본)
+현재 코드 기준 분할 규칙:
 
-### 4. 학습 실행
+- Stage 1: random split
+- Stage 2: action type 기준 stratified split
+- `AndroidControl` Stage 2: `split_data.py` 기본값으로 `30000`개 stratified subsample 후 split
 
-두 가지 방법 중 선택합니다. **YAML 생성은 노트북 전용**입니다. Section 0 에서는 Stage 1/2 **Training** YAML 과 Stage 1 **Evaluation** YAML 만 선행 작성하고, **Stage 1/2 Merge YAML 은 각각 Section 5 / Section 8 Merge 섹션 내부 셀** 에서 직전 평가의 `BEST_CHECKPOINT` 를 읽어 생성됩니다. 쉘 스크립트는 Training/Eval YAML 이 이미 존재한다는 전제하에 동작합니다.
+생성 파일:
 
-#### 4-A. 노트북 (풀 파이프라인, 최초 실행 권장)
+- `gui-model_stage1_train.jsonl`
+- `gui-model_stage1_test.jsonl`
+- `gui-model_stage2_train.jsonl`
+- `gui-model_stage2_test.jsonl`
 
-`gui-model.ipynb` 노트북을 Section 0 부터 순서대로 실행합니다:
+## 실행 방법
 
-1. **Section 0 — Environment Setup & YAML Configs**
-   - Cell 3: `BASE_DIR` + `CONFIGS` (두 데이터셋 자동 설정)
-   - Cell 4/5: requirements + LlamaFactory 설치 (노트북 대신 `bash scripts/setup.sh` 로 대체 가능)
-   - **YAML Configs 일괄 생성** 블록: Stage 1 Training → Stage 1 Evaluation → Stage 2 Training YAML 순으로 생성
-2. **Section 1–2**: Stage 1/2 데이터 등록 (상대 경로로 dataset_info.json 에 등록, 파일 복사 없음)
-3. **Section 3**: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
-4. **Section 4**: Stage 1 평가 (Baseline Zero-shot + 체크포인트 sweep, Hungarian F1 winner 선택 → `BEST_CHECKPOINT` 기록)
-5. **Section 5**: Stage 1 Merge & HuggingFace 업로드 — 섹션 맨 앞의 **Stage 1 Merge YAML 셀** 이 `BEST_CHECKPOINT` 를 읽어 YAML 을 생성하고, 바로 아래 Merge 실행 셀이 이를 export (재실행 불필요)
-6. **Section 6**: Stage 2 학습 (stage2, stage1+stage2)
-7. **Section 7**: Stage 2 평가 (3-Way + Baseline Zero-shot, Overall Score winner 선택 → 각 variant `BEST_CHECKPOINT` 기록)
-8. **Section 8**: Stage 2 Merge & HuggingFace 업로드 — 섹션 맨 앞의 **Stage 2 Merge YAML 셀** 이 각 variant `BEST_CHECKPOINT` 를 읽어 YAML 을 생성하고, 바로 아래 Merge 실행 셀이 이를 export (재실행 불필요)
+### 1. notebook 경로
 
-> Cell 3의 `CONFIGS` 딕셔너리에서 두 데이터셋의 경로·하이퍼파라미터가 자동 설정됩니다. 학습 YAML 공통 상수(`cutoff_len: 16384`, `overwrite_cache: false`, `preprocessing_num_workers: 16`, `ddp_timeout: 18000000`)는 Training YAML 셀 템플릿에 하드코딩되어 있습니다.
+[`gui-model.ipynb`](./gui-model.ipynb) 의 섹션 순서대로 실행한다.
 
-#### 4-B. 쉘 스크립트 (재실행·자동화)
+1. Section 0: 환경 설정, dataset config, YAML 생성
+2. Section 1-2: `dataset_info.json` 등록
+3. Section 3: Stage 1 학습
+4. Section 4: Stage 1 평가 및 winner 선택
+5. Section 5: Stage 1 merge/export
+6. Section 6: Stage 2 학습
+7. Section 7: Stage 2 평가 및 winner 선택
+8. Section 8: Stage 2 merge/export
 
-노트북 Section 0 (환경 설정 + Training/Eval YAML 생성) 과 Section 1/2 (데이터 등록) 을 **한 번 실행**해 YAML · `dataset_info.json` 이 이미 존재한다는 전제하에, 학습/평가/Merge 단계는 `scripts/` 아래 쉘 스크립트로 반복 실행합니다.
+### 2. shell script 경로
 
-| 스크립트 | 대응 노트북 Section | 수행 |
-|---|---|---|
-| `scripts/setup.sh` | Section 0 Cell 4/5 | 초기 환경 설치 (requirements.txt + LlamaFactory clone + metrics/deepspeed/vllm). Repo clone 직후 1회 실행 |
-| `scripts/stage1_train.sh` | Section 3 | Stage 1 Full FT (torchrun, H100×4) → `saves/{DS}/stage1_full/full_world_model/` |
-| `scripts/stage1_eval.sh`  | Section 4 | **Baseline + 전체 체크포인트 sweep(vllm_infer) → `_hungarian_eval.py score` → `select` 로 Hungarian F1 winner 자동 선택 → `saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT` 기록** |
-| `scripts/stage1_merge.sh` | Section 5 | `BEST_CHECKPOINT` 읽어 해당 체크포인트 merge → HF Hub push + `outputs/{DS}/stage1_merged/` 로컬 복사. 파일 없으면 hard-fail |
-| `scripts/stage2_train.sh` | Section 6 | Stage 2 LoRA (base, world_model) → `saves/{DS}/stage2_lora/{lora_base,lora_world_model}/` |
-| `scripts/stage2_eval.sh`  | Section 7 | **Baseline + `lora_base`/`lora_world_model` 각각 체크포인트 sweep(vllm_infer + `--adapter_name_or_path`) → `_action_eval.py score/select` → 각 variant 에 `BEST_CHECKPOINT` 기록**. 로컬 경로 사용(HF 의존 X) |
-| `scripts/stage2_merge.sh` | Section 8 | 각 `BEST_CHECKPOINT` 읽어 winner adapter 로 merge YAML override → HF Hub push + `outputs/{DS}/stage2_merged/{base,world_model}/` 로컬 복사. `lora_world_model` 의 base 는 로컬 `outputs/{DS}/stage1_merged/` 사용. 파일 없으면 hard-fail |
+shell script 는 notebook 으로 한 번 생성된 YAML 과 `LlamaFactory/data/dataset_info.json` 이 이미 있다는 전제에서 동작한다.
 
-**Best Epoch 자동 선택 파이프라인** (Stage 1 & Stage 2 공통, 지표만 다름):
-```
-Stage 1 (지표: Hungarian F1)
-  stage1_train.sh          stage1_eval.sh                       stage1_merge.sh
-  ┌─────────┐              ┌────────────────────────┐           ┌─────────────────┐
-  │ ckpt-N/ │ ────┐        │ A) Baseline Zero-shot  │           │ BEST_CHECKPOINT │
-  │ ckpt-M/ │     ├──────▶ │ B) sweep checkpoint-*  │ ── F1 ──▶ │  읽기           │
-  │ ckpt-K/ │ ────┘        │ C) Hungarian F1 winner │           │  → winner merge │
-  └─────────┘              └────────────────────────┘           │  → HF + local   │
-                                    │                           └─────────────────┘
-                           BEST_CHECKPOINT 파일 기록
+```bash
+bash scripts/stage1_train.sh MB
+bash scripts/stage1_eval.sh MB
+bash scripts/stage1_merge.sh MB
 
-Stage 2 (지표: Overall Score, lora_base / lora_world_model 각각 독립 선택)
-  stage2_train.sh         stage2_eval.sh                                stage2_merge.sh
-  ┌─────────────────┐     ┌─────────────────────────────────────┐       ┌──────────────────┐
-  │ lora_base/      │ ──┐ │ A) Baseline Zero-shot               │       │ 각 variant의     │
-  │  ckpt-*/        │   │ │ B-1) lora_base + ckpt sweep         │──┬──▶│ BEST_CHECKPOINT  │
-  │ lora_world_model/│  ├▶│ B-2) lora_world_model + ckpt sweep  │  │    │ 읽어 각각 merge  │
-  │  ckpt-*/        │ ──┘ │ C) 각 variant 의 Overall winner 선택 │  │    │ → HF push        │
-  └─────────────────┘     └─────────────────────────────────────┘  │    └──────────────────┘
-                           Base: Qwen / stage1_merged (로컬 경로)   │
-                           Adapter: checkpoint-* (로컬 경로)        ▼
-                                                         각 lora_*/ 에 BEST_CHECKPOINT 기록
+bash scripts/stage2_train.sh MB
+bash scripts/stage2_eval.sh MB
+bash scripts/stage2_merge.sh MB
 ```
 
-공통 옵션:
-- 인자: `MB | AC | all` (기본 `all`). 예: `./scripts/stage1_train.sh MB`
-- 로그: `logs/<script>_<DS>_<timestamp>.log` 로 `tee` 저장
-- 전제: bash 4+, LLaMA-Factory 환경 활성화, `.env` 에 `HF_TOKEN` (merge 스크립트 전용)
-- 에러: `set -euo pipefail` — 한 단계 실패 시 즉시 중단
+지원 인자:
 
-## 프로젝트 구조
+- `MB`: MobiBench
+- `AC`: AndroidControl
+- `all`: 둘 다 순차 실행
 
-```
-GUI-Model/
-├── gui-model.ipynb    # 전체 파이프라인 (데이터 준비 → 학습 → 평가 → 배포)
-├── ARCHITECTURE.md    # 시스템 아키텍처 & 파이프라인
-├── README.md          # 이 파일
-├── requirements.txt   # Python 의존성
-├── scripts/           # 유틸리티 스크립트
-│   ├── setup.sh                         # 초기 환경 설치 (requirements + LlamaFactory + metrics/deepspeed/vllm)
-│   ├── split_data.py                    # Train/Test Split CLI
-│   ├── extract_androidcontrol_images.py # AndroidControl 이미지 추출
-│   ├── _common.sh                       # 쉘 스크립트 공통 헬퍼 (경로/로깅/인자 파싱)
-│   ├── _hungarian_eval.py               # Stage 1 체크포인트별 Hungarian/BLEU/ROUGE + winner (score/select)
-│   ├── _action_eval.py                  # Stage 2 체크포인트별 Action 메트릭 + winner (score/select)
-│   ├── stage1_train.sh                  # Stage 1 Full FT (Section 3 대응)
-│   ├── stage1_eval.sh                   # Stage 1 평가 — Baseline + 체크포인트 sweep → Hungarian F1 winner 자동 선택
-│   ├── stage1_merge.sh                  # Stage 1 Merge — BEST_CHECKPOINT 기반 HF push + 로컬 복사
-│   ├── stage2_train.sh                  # Stage 2 LoRA (Section 6 대응)
-│   ├── stage2_eval.sh                   # Stage 2 3-Way 평가 — lora_base/lora_world_model 각각 체크포인트 sweep + winner 선택 (로컬 경로, HF 의존 X)
-│   └── stage2_merge.sh                  # Stage 2 Merge — 각 variant BEST_CHECKPOINT 기반 winner adapter merge + HF push (base: stage1_merged 로컬)
-├── data/              # 데이터셋 (git 미포함)
-│   ├── MobiBench/     # MobiBench 데이터셋 (images/, stage1/2 JSONL)
-│   └── AndroidControl/ # AndroidControl 데이터셋 (images/, stage1/2 JSONL)
-└── .env.example       # 환경변수 템플릿
-```
+주요 동작:
 
-## 라이선스
+- `stage1_eval.sh` 는 baseline + checkpoint sweep 뒤 `avg_hungarian_f1` 기준 winner 를 `BEST_CHECKPOINT` 로 기록한다.
+- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/stage1_merged/` 를 만든다.
+- `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model` checkpoint sweep 뒤 `overall_score` 기준 winner 를 기록한다.
+- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/stage2_merged/{base,world_model}/` 를 만든다.
 
-이 프로젝트는 Apache License 2.0을 따릅니다.
+## 산출물
+
+주요 결과물은 모두 `LlamaFactory/` 아래에 쌓인다.
+
+- `LlamaFactory/saves/{MB|AC}/...`
+  - checkpoints
+  - eval 결과
+  - `BEST_CHECKPOINT`
+- `LlamaFactory/outputs/{MB|AC}/stage1_merged/`
+- `LlamaFactory/outputs/{MB|AC}/stage2_merged/{base,world_model}/`
+
+## 코드 읽기 시작점
+
+- [`gui-model.ipynb`](./gui-model.ipynb): 전체 파이프라인 기준
+- [`scripts/_common.sh`](./scripts/_common.sh): path, dataset, logging 규약
+- [`scripts/split_data.py`](./scripts/split_data.py): split 규칙
+- [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py): Stage 1 metric
+- [`scripts/_action_eval.py`](./scripts/_action_eval.py): Stage 2 metric
+
+구조 설명은 [`ARCHITECTURE.md`](./ARCHITECTURE.md), 작업 규칙은 [`AGENTS.md`](./AGENTS.md) 를 본다.
