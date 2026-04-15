@@ -176,7 +176,7 @@ python scripts/split_data.py --dataset AndroidControl
    - Cell 3: `BASE_DIR` + `CONFIGS` (두 데이터셋 자동 설정)
    - Cell 4/5: requirements + LlamaFactory 설치 (노트북 대신 `bash scripts/setup.sh` 로 대체 가능)
    - **YAML Configs 일괄 생성** 블록: Stage 1 Training → Stage 1 Evaluation → Stage 2 Training YAML 순으로 생성
-2. **Section 1–2**: Stage 1/2 데이터 등록 (상대 경로로 dataset_info.json 에 등록, 파일 복사 없음)
+2. **Section 1–2**: Stage 1/2 데이터 등록 (`dataset_info.json` 은 상대 경로로 등록, JSONL `images` 는 각 JSONL 파일 기준 `images/...` 상대 경로)
 3. **Section 3**: Stage 1 학습 (Exp-1, Full FT, DeepSpeed ZeRO-3)
 4. **Section 4**: Stage 1 평가 (Baseline Zero-shot + 체크포인트 sweep, Hungarian F1 winner 선택 → `BEST_CHECKPOINT` 기록)
 5. **Section 5**: Stage 1 Merge & HuggingFace 업로드 — 섹션 맨 앞의 **Stage 1 Merge YAML 셀** 이 `BEST_CHECKPOINT` 를 읽어 YAML 을 생성하고, 바로 아래 Merge 실행 셀이 이를 export (재실행 불필요)
@@ -189,6 +189,8 @@ python scripts/split_data.py --dataset AndroidControl
 #### 4-B. 쉘 스크립트 (재실행·자동화)
 
 노트북 Section 0 (환경 설정 + Training/Eval YAML 생성) 과 Section 1/2 (데이터 등록) 을 **한 번 실행**해 YAML · `dataset_info.json` 이 이미 존재한다는 전제하에, 학습/평가/Merge 단계는 `scripts/` 아래 쉘 스크립트로 반복 실행합니다.
+
+`dataset_info.json` 의 `file_name` 은 `../../data/{DATASET_NAME}/...jsonl` 을 가리키고, 각 JSONL 내부의 `images` 값은 `images/...` 형식으로 해당 JSONL 파일 위치를 기준으로 해석됩니다. `media_dir: ../data` 는 기존 prefix 경로와의 호환 fallback 입니다.
 
 | 스크립트 | 대응 노트북 Section | 수행 |
 |---|---|---|

@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-One-off migration: normalize JSONL `images` field paths.
+One-off migration: normalize JSONL `images` field paths to JSONL-relative form.
 
 MobiBench:       GUI-Model/images/episode_{id:06d}_step_{idx:04d}.png
-              -> MobiBench/images/episode_{id:06d}_step_{idx:04d}.png
+              -> images/episode_{id:06d}_step_{idx:04d}.png
+
+MobiBench:       MobiBench/images/episode_{id:06d}_step_{idx:04d}.png
+              -> images/episode_{id:06d}_step_{idx:04d}.png
 
 AndroidControl:  myset/images/episode_{id}_step_{idx}.png (no padding)
-              -> AndroidControl/images/episode_{id:06d}_step_{idx:04d}.png
+              -> images/episode_{id:06d}_step_{idx:04d}.png
+
+AndroidControl:  AndroidControl/images/episode_{id:06d}_step_{idx:04d}.png
+              -> images/episode_{id:06d}_step_{idx:04d}.png
 
 Usage:
     python scripts/fix_jsonl_image_paths.py --dry-run
@@ -22,11 +28,11 @@ from pathlib import Path
 
 REPO_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-MB_OLD_PREFIX = "GUI-Model/images/"
-MB_NEW_PREFIX = "MobiBench/images/"
+RELATIVE_PREFIX = "images/"
+MB_PREFIXES = ("GUI-Model/images/", "MobiBench/images/")
 
 AC_PATTERN = re.compile(r"^myset/images/episode_(\d+)_step_(\d+)\.png$")
-AC_NEW_PREFIX = "AndroidControl/images/"
+AC_PREFIX = "AndroidControl/images/"
 
 JSONL_FILES = [
     "gui-model_stage1.jsonl",
@@ -39,10 +45,11 @@ JSONL_FILES = [
 
 
 def convert_mb(path: str) -> tuple[str, str]:
-    if path.startswith(MB_OLD_PREFIX):
-        return MB_NEW_PREFIX + path[len(MB_OLD_PREFIX):], "converted"
-    if path.startswith(MB_NEW_PREFIX):
+    if path.startswith(RELATIVE_PREFIX):
         return path, "already"
+    for prefix in MB_PREFIXES:
+        if path.startswith(prefix):
+            return RELATIVE_PREFIX + path[len(prefix):], "converted"
     return path, "unmatched"
 
 
@@ -50,9 +57,11 @@ def convert_ac(path: str) -> tuple[str, str]:
     m = AC_PATTERN.match(path)
     if m:
         eid, sidx = int(m.group(1)), int(m.group(2))
-        return f"{AC_NEW_PREFIX}episode_{eid:06d}_step_{sidx:04d}.png", "converted"
-    if path.startswith(AC_NEW_PREFIX):
+        return f"{RELATIVE_PREFIX}episode_{eid:06d}_step_{sidx:04d}.png", "converted"
+    if path.startswith(RELATIVE_PREFIX):
         return path, "already"
+    if path.startswith(AC_PREFIX):
+        return RELATIVE_PREFIX + path[len(AC_PREFIX):], "converted"
     return path, "unmatched"
 
 
