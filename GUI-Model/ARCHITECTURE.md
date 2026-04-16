@@ -109,7 +109,7 @@ data/
 ### Stage 1 automation
 
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh)
-  - `examples/custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`
+  - `train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`
   - `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4`
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
   - baseline zero-shot + checkpoint sweep
