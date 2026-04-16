@@ -31,7 +31,112 @@ fi
 declare -A DS_PREFIX=( [MB]="GUI-Model-MB" [AC]="GUI-Model-AC" )
 declare -A HF_SLUG=(   [MB]="mb-"          [AC]="ac-"           )
 
-# --- CLI 인자 파싱: MB | AC | all (기본 all) ---------------------------------
+# --- 모델 레지스트리 (Cell 3 _MODEL_CONFIG 와 일치) ---------------------------
+declare -A MODEL_ID=(
+  [qwen2-vl-2b]="Qwen/Qwen2-VL-2B-Instruct"
+  [qwen2-vl-7b]="Qwen/Qwen2-VL-7B-Instruct"
+  [qwen2.5-vl-3b]="Qwen/Qwen2.5-VL-3B-Instruct"
+  [qwen2.5-vl-7b]="Qwen/Qwen2.5-VL-7B-Instruct"
+  [qwen3-vl-2b]="Qwen/Qwen3-VL-2B-Instruct"
+  [qwen3-vl-4b]="Qwen/Qwen3-VL-4B-Instruct"
+  [qwen3-vl-8b]="Qwen/Qwen3-VL-8B-Instruct"
+  [gemma-4-e2b]="google/gemma-4-E2B-it"
+  [gemma-4-e4b]="google/gemma-4-E4B-it"
+  [llava-v1.6-mistral-7b]="llava-hf/llava-v1.6-mistral-7b-hf"
+  [llava-v1.6-vicuna-7b]="llava-hf/llava-v1.6-vicuna-7b-hf"
+  [llama3-llava-next-8b]="llava-hf/llama3-llava-next-8b-hf"
+)
+declare -A MODEL_TEMPLATE=(
+  [qwen2-vl-2b]="qwen2_vl"
+  [qwen2-vl-7b]="qwen2_vl"
+  [qwen2.5-vl-3b]="qwen2_vl"
+  [qwen2.5-vl-7b]="qwen2_vl"
+  [qwen3-vl-2b]="qwen3_vl_nothink"
+  [qwen3-vl-4b]="qwen3_vl_nothink"
+  [qwen3-vl-8b]="qwen3_vl_nothink"
+  [gemma-4-e2b]="gemma4"
+  [gemma-4-e4b]="gemma4"
+  [llava-v1.6-mistral-7b]="llava_next"
+  [llava-v1.6-vicuna-7b]="llava_next"
+  [llama3-llava-next-8b]="llava_next"
+)
+# 정렬 순서: Qwen 이전세대→최신세대, Google, LLaVA-HF. 세대 내 작은 모델 먼저.
+ALL_MODELS=(
+  qwen2-vl-2b qwen2-vl-7b
+  qwen2.5-vl-3b qwen2.5-vl-7b
+  qwen3-vl-2b qwen3-vl-4b qwen3-vl-8b
+  gemma-4-e2b gemma-4-e4b
+  llava-v1.6-mistral-7b llava-v1.6-vicuna-7b llama3-llava-next-8b
+)
+
+# --- CLI 인자 파싱: --model MODEL --dataset DS --------------------------------
+# 사용법:
+#   bash script.sh --model qwen3-vl-8b --dataset MB
+#   bash script.sh --model qwen3-vl-8b          # 전체 데이터셋
+#   bash script.sh --dataset MB                  # 전체 모델
+#   bash script.sh                               # 전체 모델 + 전체 데이터셋
+parse_args() {
+  local model_arg="all"
+  local dataset_arg="all"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --model)
+        if [[ -z "${2:-}" ]]; then echo "Error: --model requires a value." >&2; exit 2; fi
+        model_arg="$2"; shift 2 ;;
+      --dataset)
+        if [[ -z "${2:-}" ]]; then echo "Error: --dataset requires a value." >&2; exit 2; fi
+        dataset_arg="$2"; shift 2 ;;
+      -h|--help)
+        cat <<EOF
+Usage: $(basename "$0") [--model MODEL] [--dataset DS]
+
+Options:
+  --model MODEL   모델 short_name 또는 "all" (기본: all)
+  --dataset DS    MB | AC | all (기본: all)
+  -h, --help      이 도움말 표시
+
+Available models:
+  ${ALL_MODELS[*]}
+
+Examples:
+  $(basename "$0") --model qwen3-vl-8b --dataset MB
+  $(basename "$0") --model qwen3-vl-8b
+  $(basename "$0") --dataset MB
+  $(basename "$0")
+EOF
+        exit 0
+        ;;
+      *)
+        echo "Error: Unknown argument '$1'. Use --help for usage." >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  # model_arg → MODELS 배열
+  if [[ "$model_arg" == "all" ]]; then
+    MODELS=("${ALL_MODELS[@]}")
+  elif [[ -n "${MODEL_ID[$model_arg]+x}" ]]; then
+    MODELS=("$model_arg")
+  else
+    echo "Error: Unknown model '$model_arg'." >&2
+    echo "Available: ${ALL_MODELS[*]} | all" >&2
+    exit 2
+  fi
+
+  # dataset_arg → DATASETS 배열
+  case "$dataset_arg" in
+    MB)  DATASETS=(MB) ;;
+    AC)  DATASETS=(AC) ;;
+    all) DATASETS=(MB AC) ;;
+    *)
+      echo "Error: Unknown dataset '$dataset_arg'. Use MB | AC | all." >&2
+      exit 2
+      ;;
+  esac
+}
+
+# --- (deprecated) 하위 호환용 ---
 parse_dataset_arg() {
   local arg="${1:-all}"
   case "$arg" in
@@ -40,7 +145,7 @@ parse_dataset_arg() {
     all|"") DATASETS=(MB AC) ;;
     -h|--help)
       cat <<EOF
-Usage: $(basename "$0") [MB|AC|all]
+Usage: $(basename "$0") [MB|AC|all]  (deprecated: use --model/--dataset flags)
   MB   - MobiBench 만 실행
   AC   - AndroidControl 만 실행
   all  - 둘 다 순차 실행 (기본)

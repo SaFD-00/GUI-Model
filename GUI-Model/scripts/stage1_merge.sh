@@ -1,45 +1,43 @@
 #!/usr/bin/env bash
-# Stage 1 Merge — BEST_CHECKPOINT 기반 자동 선택 + HF Hub push + 로컬 복사
+# Stage 1 Merge — BEST_CHECKPOINT 기반 자동 선택 + HF Hub push
 #
-#   1. saves/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 읽기
+#   1. saves/{MODEL}/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT 읽기
 #      (없으면 hard-fail — stage1_eval.sh 먼저 실행 필요)
-#   2. merge YAML (examples/merge_custom/GUI-Model-{DS}/gui/qwen3_vl_8b_gui.yaml) 의
+#   2. merge YAML (examples/merge_custom/GUI-Model-{DS}/gui/{MODEL}.yaml) 의
 #      model_name_or_path 를 런타임 override 한 임시 YAML 생성
-#   3. llamafactory-cli export → HF Hub push + exports/ 에 가중치 저장
-#   4. exports/qwen3-vl-8b-<slug>stage1-world-model/ 을
-#      outputs/{DS}/stage1_merged/ 로 rsync (로컬 복사)
+#   3. llamafactory-cli export → HF Hub push + outputs/{MODEL}/{DS}/stage1_merged/ 에 가중치 저장
 #
-# 요구: HF_TOKEN (.env 또는 환경변수), rsync, pyyaml
+# 요구: HF_TOKEN (.env 또는 환경변수), pyyaml
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
-parse_dataset_arg "${1:-all}"
+parse_args "$@"
 
 SCRIPT_TAG="stage1_merge"
 
-for DS in "${DATASETS[@]}"; do
-  SLUG="${HF_SLUG[$DS]}"
-  TRAIN_DIR_REL="saves/${DS}/stage1_full/full_world_model"
-  TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
-  BEST_FILE="$TRAIN_DIR/BEST_CHECKPOINT"
-  ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/gui/qwen3_vl_8b_gui.yaml"
-  require_yaml "examples/merge_custom/GUI-Model-${DS}/gui/qwen3_vl_8b_gui.yaml" \
-    "run notebook Cell 12 (after stage1_eval.sh generates BEST_CHECKPOINT) to generate this YAML"
+for MODEL_SHORT in "${MODELS[@]}"; do
+  for DS in "${DATASETS[@]}"; do
+    TRAIN_DIR_REL="saves/${MODEL_SHORT}/${DS}/stage1_full/full_world_model"
+    TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
+    BEST_FILE="$TRAIN_DIR/BEST_CHECKPOINT"
+    ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/gui/${MODEL_SHORT}.yaml"
+    require_yaml "examples/merge_custom/GUI-Model-${DS}/gui/${MODEL_SHORT}.yaml" \
+      "run notebook Cell 56 (after stage1_eval.sh generates BEST_CHECKPOINT) to generate this YAML"
 
-  # 1. BEST_CHECKPOINT → MODEL_REL 결정 (cwd=LF_ROOT 기준)
-  if [ ! -f "$BEST_FILE" ]; then
-    echo "[!] [$DS] BEST_CHECKPOINT not found at $BEST_FILE" >&2
-    echo "    Run 'bash scripts/stage1_eval.sh $DS' first to select the Hungarian F1 winner." >&2
-    exit 1
-  fi
-  CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
-  MODEL_REL="./${TRAIN_DIR_REL}/${CKPT_NAME}"
-  echo "[+] [$DS] Using Hungarian F1 winner: ${CKPT_NAME}" >&2
+    # 1. BEST_CHECKPOINT → MODEL_REL 결정 (cwd=LF_ROOT 기준)
+    if [ ! -f "$BEST_FILE" ]; then
+      echo "[!] [$MODEL_SHORT][$DS] BEST_CHECKPOINT not found at $BEST_FILE" >&2
+      echo "    Run 'bash scripts/stage1_eval.sh --model $MODEL_SHORT --dataset $DS' first to select the Hungarian F1 winner." >&2
+      exit 1
+    fi
+    CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
+    MODEL_REL="./${TRAIN_DIR_REL}/${CKPT_NAME}"
+    echo "[+] [$MODEL_SHORT][$DS] Using Hungarian F1 winner: ${CKPT_NAME}" >&2
 
-  # 2. 임시 YAML 렌더 (원본은 보존)
-  TMP_YAML=$(mktemp -t "stage1_merge_${DS}_XXXXXX.yaml")
-  trap 'rm -f "$TMP_YAML"' EXIT
-  python3 - "$ORIG_YAML" "$MODEL_REL" "$TMP_YAML" <<'PY'
+    # 2. 임시 YAML 렌더 (원본은 보존)
+    TMP_YAML=$(mktemp -t "stage1_merge_${MODEL_SHORT}_${DS}_XXXXXX.yaml")
+    trap 'rm -f "$TMP_YAML"' EXIT
+    python3 - "$ORIG_YAML" "$MODEL_REL" "$TMP_YAML" <<'PY'
 import sys, yaml
 src, model_path, dst = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(src, 'r', encoding='utf-8') as f:
@@ -49,22 +47,21 @@ with open(dst, 'w', encoding='utf-8') as f:
     yaml.safe_dump(y, f, allow_unicode=True, sort_keys=False)
 PY
 
-  # 3. HF push (llamafactory-cli export)
-  run_logged "${SCRIPT_TAG}_${DS}_hf" \
-    bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
+    # 3. HF push + 로컬 저장 (llamafactory-cli export)
+    #    YAML export_dir 이 outputs/{MODEL}/{DS}/stage1_merged/ 를 직접 가리킴
+    run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}" \
+      bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
 
-  # 4. 로컬 복사 (exports/ → outputs/{DS}/stage1_merged/)
-  EXPORT_DIR="$LF_ROOT/exports/qwen3-vl-8b-${SLUG}stage1-world-model"
-  LOCAL_DIR="$LF_ROOT/outputs/${DS}/stage1_merged"
-  if [ ! -d "$EXPORT_DIR" ]; then
-    echo "[!] [$DS] Expected export dir missing: $EXPORT_DIR" >&2
-    echo "    Check merge YAML export_dir / export_hub_model_id fields." >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname "$LOCAL_DIR")"
-  run_logged "${SCRIPT_TAG}_${DS}_local" \
-    rsync -a --delete "$EXPORT_DIR/" "$LOCAL_DIR/"
+    # 검증: export_dir 결과물 존재 확인
+    LOCAL_DIR="$LF_ROOT/outputs/${MODEL_SHORT}/${DS}/stage1_merged"
+    if [ ! -d "$LOCAL_DIR" ]; then
+      echo "[!] [$MODEL_SHORT][$DS] Expected output dir missing: $LOCAL_DIR" >&2
+      echo "    Check merge YAML export_dir field." >&2
+      exit 1
+    fi
+    echo "[+] [$MODEL_SHORT][$DS] Stage 1 merged model: $LOCAL_DIR" >&2
 
-  rm -f "$TMP_YAML"
-  trap - EXIT
+    rm -f "$TMP_YAML"
+    trap - EXIT
+  done
 done
