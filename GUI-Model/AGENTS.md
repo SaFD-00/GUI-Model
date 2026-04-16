@@ -25,6 +25,7 @@
 - `LlamaFactory/` 내부 파일은 마지막 수단으로만 수정하라. 가능하면 notebook, local shell script, custom YAML, 평가 helper 로 해결한다.
 - 문서나 스크립트에서 `saves/{MODEL}/{DS}/...` 의 `{MODEL}` 은 모델 short_name (예: `qwen3-vl-8b`), `{DS}` 는 `MB` 또는 `AC` 이다.
 - `data/` 아래 실제 디렉토리명은 `MobiBench`, `AndroidControl` 이다.
+- eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.
 - Stage 1 merge 는 `saves/{MODEL}/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT` 가 없으면 실패한다.
 - Stage 2 eval 과 merge 는 로컬 `outputs/{MODEL}/{DS}/stage1_merged/` 를 전제로 한다.
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh) 는 `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4` 를 붙여 실행하지만, [`scripts/stage2_train.sh`](./scripts/stage2_train.sh) 는 의도적으로 torchrun prefix 를 붙이지 않는다.

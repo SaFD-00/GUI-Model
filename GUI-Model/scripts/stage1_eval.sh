@@ -58,6 +58,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         python scripts/vllm_infer.py \
           --model_name_or_path '$BASE_MODEL' \
           --dataset '$DS_TEST' \
+          --dataset_dir '$LF_ROOT/data' \
           ${VLLM_COMMON_ARGS[*]} \
           --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
           --save_name        '$OUT_BASE_REL/generated_predictions.jsonl' \
@@ -90,6 +91,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           python scripts/vllm_infer.py \
             --model_name_or_path '$MODEL_REL' \
             --dataset '$DS_TEST' \
+            --dataset_dir '$LF_ROOT/data' \
             ${VLLM_COMMON_ARGS[*]} \
           --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
             --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \

@@ -20,9 +20,12 @@ LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 # --- data symlinks --------------------------------------
-# vllm_infer.py 의 media_dir 는 dataset_dir(=LF_ROOT/data/) 를 기본으로 사용.
+# vllm_infer.py 의 media_dir 는 dataset_dir 를 기본으로 사용.
 # JSONL 이미지 경로가 "AndroidControl/images/..." 형태이므로
 # LF_ROOT/data/ 아래에 심볼릭 링크가 필요함.
+# 주의: eval script 에서 vllm_infer.py 호출 시 반드시 --dataset_dir '$LF_ROOT/data'
+#       (절대 경로)를 전달해야 한다. 상대 경로("data") 사용 시 HF datasets 캐시가
+#       다른 cwd 에서 생성된 stale 경로를 재사용하여 이미지 FileNotFoundError 발생.
 for _ds_dir in "$BASE_DIR"/data/*/; do
   _ds_name=$(basename "$_ds_dir")
   _link="$LF_ROOT/data/$_ds_name"

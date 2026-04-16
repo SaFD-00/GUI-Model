@@ -93,7 +93,8 @@ data/
 
 - notebook Section 1-2 가 `LlamaFactory/data/dataset_info.json` 를 갱신한다.
 - JSONL 파일 경로는 `../../data/{DATASET_NAME}/...` 형태의 상대 경로로 등록된다.
-- JSONL 내부 `images` 값은 각 JSONL 파일 기준 `images/...` 상대 경로를 유지한다.
+- JSONL 내부 `images` 값은 `{DATASET_NAME}/images/...` 형태의 상대 경로를 유지한다.
+- `vllm_infer.py` 호출 시 `--dataset_dir`에 **절대 경로** (`$LF_ROOT/data`)를 전달해야 한다. 상대 경로(`"data"`)를 사용하면 HF datasets 캐시가 다른 cwd 에서 생성된 미해석 이미지 경로를 재사용하여 `FileNotFoundError`가 발생할 수 있다.
 
 ## 4. 파이프라인 컴포넌트
 
@@ -112,7 +113,7 @@ data/
   - `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4`
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
   - baseline zero-shot + checkpoint sweep
-  - `scripts/vllm_infer.py` 로 생성
+  - `scripts/vllm_infer.py` 로 생성 (`--dataset_dir '$LF_ROOT/data'` 절대 경로 필수)
   - `_hungarian_eval.py` 로 score/select
 - [`scripts/stage1_merge.sh`](./scripts/stage1_merge.sh)
   - `BEST_CHECKPOINT` 를 읽어 임시 merge YAML 렌더
@@ -125,6 +126,7 @@ data/
   - notebook 원본과 맞추기 위해 torchrun prefix 를 붙이지 않는다
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
   - baseline zero-shot + `lora_base` / `lora_world_model` checkpoint sweep
+  - `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수
   - `lora_world_model` 평가는 로컬 `outputs/{MODEL}/{DS}/stage1_merged/` 를 base model 로 사용한다
 - [`scripts/stage2_merge.sh`](./scripts/stage2_merge.sh)
   - 각 LoRA variant 의 `BEST_CHECKPOINT` 를 읽어 merge
