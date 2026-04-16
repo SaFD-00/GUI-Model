@@ -14,6 +14,7 @@
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
 parse_args "$@"
+export DISABLE_VERSION_CHECK=1
 
 SCRIPT_TAG="stage1_eval"
 

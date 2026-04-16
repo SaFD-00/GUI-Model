@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Stage 1 Full Fine-tuning
 # - 지정 모델 + World Modeling data
-# - FORCE_TORCHRUN=1 NPROC_PER_NODE=4 (H100 x 4, DeepSpeed Z3)
+# - FORCE_TORCHRUN=1 NPROC_PER_NODE=2 (H100 x 2, DeepSpeed Z3)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
 parse_args "$@"
+export DISABLE_VERSION_CHECK=1
 
 SCRIPT_TAG="stage1_train"
 
@@ -15,7 +16,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     require_yaml "$YAML" "run notebook Cell 8 to generate this YAML"
 
     run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}" \
-      env FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4 \
+      env FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=2 \
       bash -c "cd '$LF_ROOT' && llamafactory-cli train '$YAML'"
   done
 done
