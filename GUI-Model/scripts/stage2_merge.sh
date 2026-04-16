@@ -13,7 +13,7 @@
 # HF push 는 merge YAML 의 export_hub_model_id 필드 기준.
 # YAML export_dir 이 outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/ 를 직접 가리킴.
 #
-# 전제: .env 의 HF_TOKEN, pyyaml. stage1_merge.sh 가 outputs/{MODEL}/{DS}/stage1_merged/ 를 생성해둔 상태.
+# 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{MODEL}/{DS}/stage1_merged/ 를 생성해둔 상태.
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -61,35 +61,31 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         continue
       fi
 
-      ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/stage2/${MODEL_SHORT}/${VARIANT}.yaml"
-
-      # 2. Merge YAML 존재 확인 (없으면 variant skip)
-      if [ ! -f "$ORIG_YAML" ]; then
-        echo "[SKIP] [$MODEL_SHORT][$DS][$VARIANT] Merge YAML not found at $ORIG_YAML — notebook Cell 16 재실행 필요, 건너뜁니다." >&2
-        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-        continue
-      fi
-
-      # 3. BEST_CHECKPOINT → ADAPTER_REL 결정
+      # 2. BEST_CHECKPOINT → ADAPTER_REL 결정
       CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
       ADAPTER_REL="./${LORA_REL}/${CKPT_NAME}"
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
 
-      # 4. 임시 YAML 렌더 (model_name_or_path + adapter_name_or_path override)
+      # 3. merge YAML 자동 생성 (노트북 Cell 140 과 동일한 형식)
       TMP_YAML=$(mktemp -t "stage2_merge_${MODEL_SHORT}_${DS}_${VARIANT}_XXXXXX.yaml")
       trap 'rm -f "$TMP_YAML"' EXIT
-      python3 - "$ORIG_YAML" "${BASE_PATH[$VARIANT]}" "$ADAPTER_REL" "$TMP_YAML" <<'PY'
-import sys, yaml
-src, model_path, adapter_path, dst = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-with open(src, 'r', encoding='utf-8') as f:
-    y = yaml.safe_load(f)
-y['model_name_or_path'] = model_path
-y['adapter_name_or_path'] = adapter_path
-with open(dst, 'w', encoding='utf-8') as f:
-    yaml.safe_dump(y, f, allow_unicode=True, sort_keys=False)
-PY
+      cat > "$TMP_YAML" <<EOF
+### model
+model_name_or_path: ${BASE_PATH[$VARIANT]}
+adapter_name_or_path: ${ADAPTER_REL}
+trust_remote_code: true
+finetuning_type: lora
+template: ${MODEL_TEMPLATE[$MODEL_SHORT]}
 
-      # 5. HF push + 로컬 저장 (llamafactory-cli export)
+### export
+export_dir: ./outputs/${MODEL_SHORT}/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VARIANT]}
+export_size: 5
+export_device: cpu
+export_legacy_format: false
+export_hub_model_id: SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-${LOCAL_VARIANT_DIR[$VARIANT]//_/-}
+EOF
+
+      # 4. HF push + 로컬 저장 (llamafactory-cli export)
       #    YAML export_dir 이 outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/ 를 직접 가리킴
       run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
         bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
