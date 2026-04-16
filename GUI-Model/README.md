@@ -1,6 +1,11 @@
 # GUI-Model
 
-모바일 GUI World Modeling 이 Action Prediction 성능에 미치는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 현재 코드 기준으로는 notebook 이 전체 실행의 기준이고, `scripts/` 가 반복 실행용 자동화 레이어이며, 실제 학습/평가 엔진은 저장소 내부 `LlamaFactory/` 가 담당한다.
+모바일 GUI World Modeling 이 Action Prediction 성능에 미치는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 현재 코드 기준으로는 notebook 이 전체 실행의 기준이고, `scripts/` 가 반복 실행용 자동화 레이어이며, 실제 학습/평가 엔진은 **모델별 백엔드(LlamaFactory 또는 Unsloth)** 가 담당한다.
+
+- 대부분의 모델(Qwen, LLaVA 계열) → 저장소 내부 [`LlamaFactory/`](./LlamaFactory) 사용
+- Gemma-4 계열(E2B/E4B) → 저장소 내부 [`unsloth/`](./unsloth) (https://github.com/unslothai/unsloth) 사용
+
+Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분기되므로, 사용자 인터페이스(`--model MODEL --dataset DS`)는 기존과 동일하다.
 
 ## 개요
 
@@ -15,20 +20,20 @@
 
 ## 지원 모델
 
-| # | model_id | short_name | template |
-|---|----------|------------|----------|
-| 1 | Qwen/Qwen2-VL-2B-Instruct | qwen2-vl-2b | qwen2_vl |
-| 2 | Qwen/Qwen2-VL-7B-Instruct | qwen2-vl-7b | qwen2_vl |
-| 3 | Qwen/Qwen2.5-VL-3B-Instruct | qwen2.5-vl-3b | qwen2_vl |
-| 4 | Qwen/Qwen2.5-VL-7B-Instruct | qwen2.5-vl-7b | qwen2_vl |
-| 5 | Qwen/Qwen3-VL-2B-Instruct | qwen3-vl-2b | qwen3_vl_nothink |
-| 6 | Qwen/Qwen3-VL-4B-Instruct | qwen3-vl-4b | qwen3_vl_nothink |
-| 7 | Qwen/Qwen3-VL-8B-Instruct | qwen3-vl-8b | qwen3_vl_nothink |
-| 8 | google/gemma-4-E2B-it | gemma-4-e2b | gemma4 |
-| 9 | google/gemma-4-E4B-it | gemma-4-e4b | gemma4 |
-| 10 | llava-hf/llava-v1.6-mistral-7b-hf | llava-v1.6-mistral-7b | llava_next |
-| 11 | llava-hf/llava-v1.6-vicuna-7b-hf | llava-v1.6-vicuna-7b | llava_next |
-| 12 | llava-hf/llama3-llava-next-8b-hf | llama3-llava-next-8b | llava_next |
+| # | model_id | short_name | template | backend |
+|---|----------|------------|----------|---------|
+| 1 | Qwen/Qwen2-VL-2B-Instruct | qwen2-vl-2b | qwen2_vl | llamafactory |
+| 2 | Qwen/Qwen2-VL-7B-Instruct | qwen2-vl-7b | qwen2_vl | llamafactory |
+| 3 | Qwen/Qwen2.5-VL-3B-Instruct | qwen2.5-vl-3b | qwen2_vl | llamafactory |
+| 4 | Qwen/Qwen2.5-VL-7B-Instruct | qwen2.5-vl-7b | qwen2_vl | llamafactory |
+| 5 | Qwen/Qwen3-VL-2B-Instruct | qwen3-vl-2b | qwen3_vl_nothink | llamafactory |
+| 6 | Qwen/Qwen3-VL-4B-Instruct | qwen3-vl-4b | qwen3_vl_nothink | llamafactory |
+| 7 | Qwen/Qwen3-VL-8B-Instruct | qwen3-vl-8b | qwen3_vl_nothink | llamafactory |
+| 8 | google/gemma-4-E2B-it | gemma-4-e2b | gemma4 | **unsloth** |
+| 9 | google/gemma-4-E4B-it | gemma-4-e4b | gemma4 | **unsloth** |
+| 10 | llava-hf/llava-v1.6-mistral-7b-hf | llava-v1.6-mistral-7b | llava_next | llamafactory |
+| 11 | llava-hf/llava-v1.6-vicuna-7b-hf | llava-v1.6-vicuna-7b | llava_next | llamafactory |
+| 12 | llava-hf/llama3-llava-next-8b-hf | llama3-llava-next-8b | llava_next | llamafactory |
 
 ## 디렉토리 구조
 
@@ -36,8 +41,13 @@
 GUI-Model/
 ├── gui-model.ipynb
 ├── scripts/
+│   ├── _unsloth_train.py    # Unsloth 학습 entrypoint (Gemma-4 계열)
+│   └── _unsloth_merge.py    # Unsloth merge entrypoint
+├── configs/
+│   └── unsloth/             # Unsloth YAML (Gemma-4 계열, backend=unsloth)
 ├── data/
-├── LlamaFactory/
+├── LlamaFactory/            # LlamaFactory clone (backend=llamafactory)
+├── unsloth/                 # Unsloth clone (backend=unsloth)
 ├── gui_model/
 ├── setup.py
 ├── README.md
@@ -49,12 +59,20 @@ GUI-Model/
 
 ```bash
 pip install -e .
+
+# LlamaFactory backend (Qwen/LLaVA 계열)
 if [ ! -d LlamaFactory ]; then
   git clone https://github.com/hiyouga/LlamaFactory.git
 fi
 pip install -e "./LlamaFactory[torch,metrics]"
 pip install -r LlamaFactory/requirements/metrics.txt -r LlamaFactory/requirements/deepspeed.txt
 pip install vllm
+
+# Unsloth backend (Gemma-4 계열)
+if [ ! -d unsloth ]; then
+  git clone https://github.com/unslothai/unsloth.git
+fi
+pip install -e "./unsloth"
 ```
 
 추가 전제:
@@ -152,10 +170,12 @@ LlamaFactory/outputs/{model_short_name}/{MB|AC}/
 
 ## 모델 추가 방법
 
-새 모델 추가 시 두 곳을 동기화해야 한다:
+새 모델 추가 시 아래를 동기화해야 한다:
 
-1. `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` 딕셔너리에 모델 항목 추가
+1. `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` 딕셔너리에 모델 항목 추가 (`backend` 필드 포함)
 2. `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 에 동일 항목 추가
+3. backend 가 기본값(`llamafactory`)이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에 등록
+4. `backend=unsloth` 일 경우 `configs/unsloth/GUI-Model-{MB,AC}/stage{1,2}_*/...` 에 YAML 추가
 
 ## 코드 읽기 시작점
 

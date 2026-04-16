@@ -5,6 +5,10 @@
 #   Phase B. 전체 checkpoint sweep (vllm_infer.py → _hungarian_eval.py score)
 #   Phase C. Winner 선택 (_hungarian_eval.py select) → BEST_CHECKPOINT 파일 기록
 #
+# Backend 독립: Unsloth 로 학습한 체크포인트도 표준 HF safetensors 이므로
+#               vllm_infer.py 가 프레임워크 무관하게 로드 가능하다.
+#               (단, vLLM/transformers 가 해당 아키텍처를 지원해야 한다.)
+#
 # 산출물:
 #   saves/{MODEL}/{DS}/stage1_eval/hungarian_matching/base/(generated_predictions|hungarian_metrics).json
 #   saves/{MODEL}/{DS}/stage1_eval/hungarian_matching/checkpoint-N/(generated_predictions|hungarian_metrics).json

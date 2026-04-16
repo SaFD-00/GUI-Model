@@ -5,14 +5,11 @@
 #   merge_base          - Base model          + lora_base/<winner>
 #   merge_world_model   - stage1_merged       + lora_world_model/<winner>
 #
-# 선택 근거:
-#   saves/{MODEL}/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT
-#   (stage2_eval.sh 또는 notebook Section 7 evaluation cell 이 기록)
+# Backend 분기 (_common.sh::MODEL_BACKEND):
+#   - llamafactory: 임시 merge YAML 생성 → llamafactory-cli export
+#   - unsloth:      scripts/_unsloth_merge.py --mode lora (merged_16bit safetensors)
 #
 # BEST_CHECKPOINT 없으면 해당 variant 를 [SKIP] 경고 후 건너뜀.
-# HF push 는 merge YAML 의 export_hub_model_id 필드 기준.
-# YAML export_dir 이 outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/ 를 직접 가리킴.
-#
 # 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{MODEL}/{DS}/stage1_merged/ 를 생성해둔 상태.
 
 # shellcheck source=./_common.sh
@@ -26,6 +23,7 @@ SKIPPED_COUNT=0
 
 for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
+  BACKEND="$(get_backend "$MODEL_SHORT")"
 
   for DS in "${DATASETS[@]}"; do
     STAGE1_MERGED_REL="outputs/${MODEL_SHORT}/${DS}/stage1_merged"
@@ -37,8 +35,11 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       continue
     fi
 
-    # variant → (base model path, lora output dir, local output subdir)
     declare -A BASE_PATH=(
+      [merge_base]="$BASE_MODEL"
+      [merge_world_model]="$STAGE1_MERGED"
+    )
+    declare -A BASE_PATH_LF_REL=(
       [merge_base]="$BASE_MODEL"
       [merge_world_model]="./${STAGE1_MERGED_REL}"
     )
@@ -55,24 +56,28 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       LORA_REL="${LORA_DIR_REL[$VARIANT]}"
       BEST_FILE="$LF_ROOT/$LORA_REL/BEST_CHECKPOINT"
 
-      # 1. BEST_CHECKPOINT 존재 확인 (없으면 variant skip)
       if [ ! -f "$BEST_FILE" ]; then
         echo "[SKIP] [$MODEL_SHORT][$DS][$VARIANT] BEST_CHECKPOINT not found at $BEST_FILE — stage2 평가 미완료, 건너뜁니다." >&2
         SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
         continue
       fi
 
-      # 2. BEST_CHECKPOINT → ADAPTER_REL 결정
       CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
+      ADAPTER_ABS="$LF_ROOT/$LORA_REL/$CKPT_NAME"
       ADAPTER_REL="./${LORA_REL}/${CKPT_NAME}"
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
 
-      # 3. merge YAML 자동 생성 (노트북 Cell 140 과 동일한 형식)
-      TMP_YAML=$(mktemp -t "stage2_merge_${MODEL_SHORT}_${DS}_${VARIANT}_XXXXXX.yaml")
-      trap 'rm -f "$TMP_YAML"' EXIT
-      cat > "$TMP_YAML" <<EOF
+      HUB_SUFFIX="${LOCAL_VARIANT_DIR[$VARIANT]//_/-}"
+      HUB_ID="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-${HUB_SUFFIX}"
+      LOCAL_DIR="$LF_ROOT/outputs/${MODEL_SHORT}/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VARIANT]}"
+
+      case "$BACKEND" in
+        llamafactory)
+          TMP_YAML=$(mktemp -t "stage2_merge_${MODEL_SHORT}_${DS}_${VARIANT}_XXXXXX.yaml")
+          trap 'rm -f "$TMP_YAML"' EXIT
+          cat > "$TMP_YAML" <<EOF
 ### model
-model_name_or_path: ${BASE_PATH[$VARIANT]}
+model_name_or_path: ${BASE_PATH_LF_REL[$VARIANT]}
 adapter_name_or_path: ${ADAPTER_REL}
 trust_remote_code: true
 finetuning_type: lora
@@ -83,26 +88,38 @@ export_dir: ./outputs/${MODEL_SHORT}/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VA
 export_size: 5
 export_device: cpu
 export_legacy_format: false
-export_hub_model_id: SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-${LOCAL_VARIANT_DIR[$VARIANT]//_/-}
+export_hub_model_id: ${HUB_ID}
 EOF
 
-      # 4. HF push + 로컬 저장 (llamafactory-cli export)
-      #    YAML export_dir 이 outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/ 를 직접 가리킴
-      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
-        bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
+          run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
+            bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
 
-      # 검증: export_dir 결과물 존재 확인
-      LOCAL_DIR="$LF_ROOT/outputs/${MODEL_SHORT}/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VARIANT]}"
+          rm -f "$TMP_YAML"
+          trap - EXIT
+          ;;
+
+        unsloth)
+          run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
+            python "$BASE_DIR/scripts/_unsloth_merge.py" \
+              --mode lora \
+              --base-model "${BASE_PATH[$VARIANT]}" \
+              --checkpoint "$ADAPTER_ABS" \
+              --export-dir "$LOCAL_DIR" \
+              --hub-id "$HUB_ID"
+          ;;
+
+        *)
+          echo "[!] Unknown backend '$BACKEND' for model $MODEL_SHORT" >&2
+          exit 2
+          ;;
+      esac
+
       if [ ! -d "$LOCAL_DIR" ]; then
         echo "[!] [$MODEL_SHORT][$DS][$VARIANT] Expected output dir missing: $LOCAL_DIR" >&2
-        echo "    Check merge YAML export_dir field." >&2
         exit 1
       fi
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Stage 2 merged model: $LOCAL_DIR" >&2
       MERGED_COUNT=$((MERGED_COUNT + 1))
-
-      rm -f "$TMP_YAML"
-      trap - EXIT
     done
   done
 done

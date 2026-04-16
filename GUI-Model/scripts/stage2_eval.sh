@@ -10,6 +10,10 @@
 #   Phase B. 체크포인트 sweep (vllm_infer + _action_eval.py score)
 #   Phase C. winner 선택 (_action_eval.py select) → BEST_CHECKPOINT 파일 기록
 #
+# Backend 독립: Unsloth 로 학습한 LoRA adapter 도 PEFT 표준 (adapter_config.json +
+#               adapter_model.safetensors) 이므로 vllm_infer.py 가 무관하게 로드한다.
+#               max_lora_rank 는 DS_LORA_RANK 를 따른다.
+#
 # 전제: stage1_merge.sh 가 outputs/{MODEL}/{DS}/stage1_merged/ 를 생성 (lora_world_model variant 의존)
 #       stage2_train.sh 가 checkpoint-* 를 생성
 

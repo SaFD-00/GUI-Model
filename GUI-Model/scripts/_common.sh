@@ -85,6 +85,18 @@ ALL_MODELS=(
   llava-v1.6-mistral-7b llava-v1.6-vicuna-7b llama3-llava-next-8b
 )
 
+# --- 학습 백엔드 매핑 (notebook _MODEL_CONFIG["backend"] 와 일치) --------------
+# 미지정 모델은 기본값 "llamafactory" 로 분기된다.
+# Gemma-4 계열은 Unsloth (https://github.com/unslothai/unsloth) 사용.
+declare -A MODEL_BACKEND=(
+  [gemma-4-e2b]="unsloth"
+  [gemma-4-e4b]="unsloth"
+)
+get_backend() {
+  local m="$1"
+  echo "${MODEL_BACKEND[$m]:-llamafactory}"
+}
+
 # --- CLI 인자 파싱: --model MODEL --dataset DS --------------------------------
 # 사용법:
 #   bash script.sh --model qwen3-vl-8b --dataset MB

@@ -6,16 +6,21 @@ INSTALL_REQUIRES = [
     "torch>=2.4.0",
     "torchvision>=0.19.0",
     "torchaudio>=2.4.0",
-    "transformers>=4.55.0,<=5.5.4,!=4.52.0,!=4.57.0",
+    # transformers >=5.5.0 required for Gemma-4 (Unsloth backend)
+    "transformers>=5.5.0,<=5.5.4,!=4.52.0,!=4.57.0",
     "peft>=0.18.0,<=0.18.1",
     "accelerate>=1.3.0,<=1.11.0",
     "safetensors",
     "datasets>=2.16.0,<=4.0.0",
-    "trl>=0.18.0,<=0.24.0",
+    "trl>=0.18.2,<=0.24.0",
     # LLaMA-Factory (editable install from ./LlamaFactory)
     # pip install -e "./LlamaFactory[torch,metrics]" is handled via deps below
     "deepspeed>=0.10.0,<=0.18.4",
     "vllm>=0.4.3,<=0.11.0",
+    # Unsloth backend (editable install from ./unsloth) — Gemma-4 전용
+    # pip install -e "./unsloth" 로 붙인다. huggingface_hub 는 merge 시 HF push 용.
+    "bitsandbytes>=0.45.5",
+    "huggingface_hub>=0.34.0",
     # Tokenizers
     "sentencepiece",
     "tiktoken",

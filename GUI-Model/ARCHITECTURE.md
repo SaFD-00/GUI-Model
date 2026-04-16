@@ -1,6 +1,23 @@
 # GUI-Model Architecture
 
-`GUI-Model` 은 모바일 GUI World Modeling 이 Action Prediction 성능에 주는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 12개 Vision-Language 모델(Qwen, Gemma, LLaVA 계열)을 지원하며, notebook 이 오케스트레이션을 담당하고, `scripts/` 가 반복 실행용 자동화를 담당하며, 실제 학습과 export 는 저장소 내부 `LlamaFactory/` 가 수행한다.
+`GUI-Model` 은 모바일 GUI World Modeling 이 Action Prediction 성능에 주는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 12개 Vision-Language 모델(Qwen, Gemma, LLaVA 계열)을 지원하며, notebook 이 오케스트레이션을 담당하고, `scripts/` 가 반복 실행용 자동화를 담당한다. 학습과 export 는 **모델별 백엔드(LlamaFactory 또는 Unsloth)** 가 수행하며, `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑을 기준으로 내부 자동 분기된다.
+
+## 0. Backend Selection
+
+```
+scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
+  │
+  ├── llamafactory (기본) → llamafactory-cli train/export
+  │     ├── YAML: LlamaFactory/examples/train_custom/GUI-Model-{DS}/stage{1,2}_*
+  │     └── 대상: Qwen2-VL, Qwen2.5-VL, Qwen3-VL, LLaVA 계열
+  │
+  └── unsloth             → scripts/_unsloth_train.py / _unsloth_merge.py
+        ├── YAML: configs/unsloth/GUI-Model-{DS}/stage{1,2}_*
+        └── 대상: google/gemma-4-E2B-it, google/gemma-4-E4B-it
+```
+
+평가 파이프라인 (`scripts/stage{1,2}_eval.sh`) 은 backend 독립이다.
+`vllm_infer.py` 가 Unsloth 가 저장한 표준 HF 체크포인트/PEFT adapter 를 동일하게 로드한다.
 
 ## 1. 실행 구조
 
@@ -8,17 +25,20 @@
 
 - [`gui-model.ipynb`](./gui-model.ipynb)
   - 환경 설치
-  - 모델 config (`_MODEL_CONFIG`) + 데이터셋 config (`_DATASET_CONFIG`) 정의
-  - YAML 생성
-  - `dataset_info.json` 등록
+  - 모델 config (`_MODEL_CONFIG`, `backend` 필드 포함) + 데이터셋 config (`_DATASET_CONFIG`) 정의
+  - LlamaFactory YAML 자동 생성
+  - `dataset_info.json` 등록 (LlamaFactory 전용; Unsloth 는 JSONL 직접 로드)
   - Stage 1/2 학습, 평가, merge 순차 실행 (모델+데이터셋별 개별 셀)
 - [`scripts/`](./scripts)
-  - notebook 으로 한 번 생성한 YAML 과 dataset 등록 결과를 재사용하는 반복 실행 경로
-  - `--model MODEL --dataset DS` 플래그 방식 CLI
-- [`LlamaFactory/`](./LlamaFactory)
-  - `llamafactory-cli train`
-  - `llamafactory-cli export`
-  - `scripts/vllm_infer.py`
+  - `stage{1,2}_{train,eval,merge}.sh`: `--model MODEL --dataset DS` 플래그 방식 CLI, backend 분기 내장
+  - `_unsloth_train.py`, `_unsloth_merge.py`: Unsloth 전용 Python entrypoint
+  - notebook 으로 한 번 생성한 LlamaFactory YAML 과 dataset 등록 결과를 재사용하는 반복 실행 경로
+- [`LlamaFactory/`](./LlamaFactory) (backend=llamafactory)
+  - `llamafactory-cli train` / `llamafactory-cli export`
+  - `scripts/vllm_infer.py` (모든 backend 공통 추론 도구)
+- [`unsloth/`](./unsloth) (backend=unsloth)
+  - `from unsloth import FastModel, FastVisionModel`
+  - `scripts/_unsloth_train.py` 가 내부적으로 호출
 
 ### 실제 코드 기준 섹션 순서
 
@@ -37,22 +57,22 @@
 
 ### 모델 레지스트리
 
-`gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` 와 `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE` 이 동기화되어야 한다.
+`gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG`, `scripts/_common.sh` 의 `MODEL_ID`/`MODEL_TEMPLATE`/`MODEL_BACKEND` 가 모두 동기화되어야 한다.
 
-| short_name | model_id | template |
-|------------|----------|----------|
-| qwen2-vl-2b | Qwen/Qwen2-VL-2B-Instruct | qwen2_vl |
-| qwen2-vl-7b | Qwen/Qwen2-VL-7B-Instruct | qwen2_vl |
-| qwen2.5-vl-3b | Qwen/Qwen2.5-VL-3B-Instruct | qwen2_vl |
-| qwen2.5-vl-7b | Qwen/Qwen2.5-VL-7B-Instruct | qwen2_vl |
-| qwen3-vl-2b | Qwen/Qwen3-VL-2B-Instruct | qwen3_vl_nothink |
-| qwen3-vl-4b | Qwen/Qwen3-VL-4B-Instruct | qwen3_vl_nothink |
-| qwen3-vl-8b | Qwen/Qwen3-VL-8B-Instruct | qwen3_vl_nothink |
-| gemma-4-e2b | google/gemma-4-E2B-it | gemma4 |
-| gemma-4-e4b | google/gemma-4-E4B-it | gemma4 |
-| llava-v1.6-mistral-7b | llava-hf/llava-v1.6-mistral-7b-hf | llava_next |
-| llava-v1.6-vicuna-7b | llava-hf/llava-v1.6-vicuna-7b-hf | llava_next |
-| llama3-llava-next-8b | llava-hf/llama3-llava-next-8b-hf | llava_next |
+| short_name | model_id | template | backend |
+|------------|----------|----------|---------|
+| qwen2-vl-2b | Qwen/Qwen2-VL-2B-Instruct | qwen2_vl | llamafactory |
+| qwen2-vl-7b | Qwen/Qwen2-VL-7B-Instruct | qwen2_vl | llamafactory |
+| qwen2.5-vl-3b | Qwen/Qwen2.5-VL-3B-Instruct | qwen2_vl | llamafactory |
+| qwen2.5-vl-7b | Qwen/Qwen2.5-VL-7B-Instruct | qwen2_vl | llamafactory |
+| qwen3-vl-2b | Qwen/Qwen3-VL-2B-Instruct | qwen3_vl_nothink | llamafactory |
+| qwen3-vl-4b | Qwen/Qwen3-VL-4B-Instruct | qwen3_vl_nothink | llamafactory |
+| qwen3-vl-8b | Qwen/Qwen3-VL-8B-Instruct | qwen3_vl_nothink | llamafactory |
+| gemma-4-e2b | google/gemma-4-E2B-it | gemma4 | **unsloth** |
+| gemma-4-e4b | google/gemma-4-E4B-it | gemma4 | **unsloth** |
+| llava-v1.6-mistral-7b | llava-hf/llava-v1.6-mistral-7b-hf | llava_next | llamafactory |
+| llava-v1.6-vicuna-7b | llava-hf/llava-v1.6-vicuna-7b-hf | llava_next | llamafactory |
+| llama3-llava-next-8b | llava-hf/llama3-llava-next-8b-hf | llava_next | llamafactory |
 
 ### 하이퍼파라미터
 
@@ -109,28 +129,33 @@ data/
 ### Stage 1 automation
 
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh)
-  - `train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`
-  - `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4`
+  - `backend=llamafactory`: `examples/train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4`
+  - `backend=unsloth`: `configs/unsloth/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `accelerate launch --multi_gpu --num_processes 4 scripts/_unsloth_train.py`
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
-  - baseline zero-shot + checkpoint sweep
+  - baseline zero-shot + checkpoint sweep (backend 독립)
   - `scripts/vllm_infer.py` 로 생성 (`--dataset_dir '$LF_ROOT/data'` 절대 경로 필수)
   - `_hungarian_eval.py` 로 score/select
 - [`scripts/stage1_merge.sh`](./scripts/stage1_merge.sh)
-  - `BEST_CHECKPOINT` 를 읽어 임시 merge YAML 렌더
-  - `llamafactory-cli export` → `outputs/{MODEL}/{DS}/stage1_merged/` 에 직접 저장 + HF Hub push
+  - `BEST_CHECKPOINT` 를 읽고 backend 분기
+  - `backend=llamafactory`: 임시 merge YAML 렌더 → `llamafactory-cli export`
+  - `backend=unsloth`: `scripts/_unsloth_merge.py --mode full` (full FT 체크포인트 copy+push)
+  - 산출물: `outputs/{MODEL}/{DS}/stage1_merged/` + HF Hub push
 
 ### Stage 2 automation
 
 - [`scripts/stage2_train.sh`](./scripts/stage2_train.sh)
   - `{MODEL}/base.yaml`, `{MODEL}/world_model.yaml` 반복 실행
-  - notebook 원본과 맞추기 위해 torchrun prefix 를 붙이지 않는다
+  - `backend=llamafactory`: llamafactory-cli (torchrun prefix 없음, 노트북 원본과 일치)
+  - `backend=unsloth`: `accelerate launch --multi_gpu --num_processes 4 scripts/_unsloth_train.py`
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
-  - baseline zero-shot + `lora_base` / `lora_world_model` checkpoint sweep
+  - baseline zero-shot + `lora_base` / `lora_world_model` checkpoint sweep (backend 독립)
   - `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수
   - `lora_world_model` 평가는 로컬 `outputs/{MODEL}/{DS}/stage1_merged/` 를 base model 로 사용한다
 - [`scripts/stage2_merge.sh`](./scripts/stage2_merge.sh)
   - 각 LoRA variant 의 `BEST_CHECKPOINT` 를 읽어 merge
-  - `llamafactory-cli export` → `outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/` 에 직접 저장 + HF Hub push
+  - `backend=llamafactory`: `llamafactory-cli export` → `merged_16bit`
+  - `backend=unsloth`: `scripts/_unsloth_merge.py --mode lora` → `save_pretrained_merged(method="merged_16bit")`
+  - 산출물: `outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/` + HF Hub push
 
 ### Shell script CLI
 
@@ -216,4 +241,6 @@ LlamaFactory/outputs/{model_short_name}/{DS}/
 - Stage 2 eval 과 merge 는 Stage 1 로컬 merge 결과물에 의존한다.
 - merge 스크립트는 `.env` 또는 환경변수의 `HF_TOKEN`, `rsync`, `pyyaml` 을 전제로 한다.
 - shell automation 은 bash 4+ 환경을 요구한다.
-- 모델 추가 시 notebook `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다.
+- 모델 추가 시 notebook `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다. backend 가 기본값(`llamafactory`)이 아니면 `MODEL_BACKEND` 도 동기화한다.
+- `backend=unsloth` 모델은 `configs/unsloth/GUI-Model-{DS}/stage{1,2}_*/...` YAML 이 필요하다 (Gemma-4 전용으로 이미 커밋됨).
+- Unsloth 체크포인트는 HF 표준 safetensors, LoRA adapter 는 PEFT 표준이므로 `vllm_infer.py` 가 backend 독립적으로 로드한다.
