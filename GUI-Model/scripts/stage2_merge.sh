@@ -9,7 +9,7 @@
 #   saves/{MODEL}/{DS}/stage2_lora/{lora_base,lora_world_model}/BEST_CHECKPOINT
 #   (stage2_eval.sh 또는 notebook Section 7 evaluation cell 이 기록)
 #
-# BEST_CHECKPOINT 없으면 hard-fail — stage2_eval.sh 먼저 실행 필요.
+# BEST_CHECKPOINT 없으면 해당 variant 를 [SKIP] 경고 후 건너뜀.
 # HF push 는 merge YAML 의 export_hub_model_id 필드 기준.
 # YAML export_dir 이 outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/ 를 직접 가리킴.
 #
@@ -20,6 +20,8 @@ source "$(dirname "$0")/_common.sh"
 parse_args "$@"
 
 SCRIPT_TAG="stage2_merge"
+MERGED_COUNT=0
+SKIPPED_COUNT=0
 
 for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
@@ -29,8 +31,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     STAGE1_MERGED="$LF_ROOT/$STAGE1_MERGED_REL"
 
     if [ ! -d "$STAGE1_MERGED" ]; then
-      echo "[!] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED — run stage1_merge.sh first." >&2
-      exit 1
+      echo "[SKIP] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED — stage1_merge.sh 미완료, 건너뜁니다." >&2
+      SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+      continue
     fi
 
     # variant → (base model path, lora output dir, local output subdir)
@@ -48,24 +51,31 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     )
 
     for VARIANT in merge_base merge_world_model; do
-      ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/stage2/${MODEL_SHORT}/${VARIANT}.yaml"
-      require_yaml "examples/merge_custom/GUI-Model-${DS}/stage2/${MODEL_SHORT}/${VARIANT}.yaml" \
-        "run notebook Cell 140 (after stage2_eval.sh generates BEST_CHECKPOINT) to generate this YAML"
-
       LORA_REL="${LORA_DIR_REL[$VARIANT]}"
       BEST_FILE="$LF_ROOT/$LORA_REL/BEST_CHECKPOINT"
 
-      # 1. BEST_CHECKPOINT → ADAPTER_REL 결정
+      # 1. BEST_CHECKPOINT 존재 확인 (없으면 variant skip)
       if [ ! -f "$BEST_FILE" ]; then
-        echo "[!] [$MODEL_SHORT][$DS][$VARIANT] BEST_CHECKPOINT not found at $BEST_FILE" >&2
-        echo "    Run 'bash scripts/stage2_eval.sh --model $MODEL_SHORT --dataset $DS' first to select the Overall Score winner." >&2
-        exit 1
+        echo "[SKIP] [$MODEL_SHORT][$DS][$VARIANT] BEST_CHECKPOINT not found at $BEST_FILE — stage2 평가 미완료, 건너뜁니다." >&2
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+        continue
       fi
+
+      ORIG_YAML="$LF_ROOT/examples/merge_custom/GUI-Model-${DS}/stage2/${MODEL_SHORT}/${VARIANT}.yaml"
+
+      # 2. Merge YAML 존재 확인 (없으면 variant skip)
+      if [ ! -f "$ORIG_YAML" ]; then
+        echo "[SKIP] [$MODEL_SHORT][$DS][$VARIANT] Merge YAML not found at $ORIG_YAML — notebook Cell 16 재실행 필요, 건너뜁니다." >&2
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+        continue
+      fi
+
+      # 3. BEST_CHECKPOINT → ADAPTER_REL 결정
       CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
       ADAPTER_REL="./${LORA_REL}/${CKPT_NAME}"
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
 
-      # 2. 임시 YAML 렌더 (model_name_or_path + adapter_name_or_path override)
+      # 4. 임시 YAML 렌더 (model_name_or_path + adapter_name_or_path override)
       TMP_YAML=$(mktemp -t "stage2_merge_${MODEL_SHORT}_${DS}_${VARIANT}_XXXXXX.yaml")
       trap 'rm -f "$TMP_YAML"' EXIT
       python3 - "$ORIG_YAML" "${BASE_PATH[$VARIANT]}" "$ADAPTER_REL" "$TMP_YAML" <<'PY'
@@ -79,7 +89,7 @@ with open(dst, 'w', encoding='utf-8') as f:
     yaml.safe_dump(y, f, allow_unicode=True, sort_keys=False)
 PY
 
-      # 3. HF push + 로컬 저장 (llamafactory-cli export)
+      # 5. HF push + 로컬 저장 (llamafactory-cli export)
       #    YAML export_dir 이 outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/ 를 직접 가리킴
       run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
         bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"
@@ -92,9 +102,16 @@ PY
         exit 1
       fi
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Stage 2 merged model: $LOCAL_DIR" >&2
+      MERGED_COUNT=$((MERGED_COUNT + 1))
 
       rm -f "$TMP_YAML"
       trap - EXIT
     done
   done
 done
+
+echo "--- Stage 2 Merge: $MERGED_COUNT merged, $SKIPPED_COUNT skipped ---" >&2
+if [ "$MERGED_COUNT" -eq 0 ] && [ "$SKIPPED_COUNT" -gt 0 ]; then
+  echo "[!] No variants were merged. Run stage2 evaluation first." >&2
+  exit 1
+fi
