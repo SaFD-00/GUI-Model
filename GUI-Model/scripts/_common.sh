@@ -19,6 +19,19 @@ LF_ROOT="$BASE_DIR/LlamaFactory"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# --- data symlinks --------------------------------------
+# vllm_infer.py 의 media_dir 는 dataset_dir(=LF_ROOT/data/) 를 기본으로 사용.
+# JSONL 이미지 경로가 "AndroidControl/images/..." 형태이므로
+# LF_ROOT/data/ 아래에 심볼릭 링크가 필요함.
+for _ds_dir in "$BASE_DIR"/data/*/; do
+  _ds_name=$(basename "$_ds_dir")
+  _link="$LF_ROOT/data/$_ds_name"
+  if [ ! -e "$_link" ]; then
+    ln -sfn "$_ds_dir" "$_link"
+  fi
+done
+unset _ds_dir _ds_name _link
+
 # --- .env (HF_TOKEN 등) -------------------------------------------------------
 if [ -f "$BASE_DIR/.env" ]; then
   set -a
