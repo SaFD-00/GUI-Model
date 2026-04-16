@@ -15,7 +15,7 @@ SCRIPT_TAG="stage2_train"
 for MODEL_SHORT in "${MODELS[@]}"; do
   for DS in "${DATASETS[@]}"; do
     for VARIANT in base world_model; do
-      YAML="train_custom/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}/${VARIANT}.yaml"
+      YAML="examples/train_custom/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}/${VARIANT}.yaml"
       require_yaml "$YAML" "run notebook Cell 12 to generate this YAML"
 
       run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
