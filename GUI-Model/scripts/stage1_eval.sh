@@ -21,7 +21,6 @@ VLLM_COMMON_ARGS=(
   --cutoff_len 8192
   --image_max_pixels 4233600
   --enable_thinking False
-  --media_dir ../data
 )
 
 # DS 코드 → data/ 아래 디렉토리명

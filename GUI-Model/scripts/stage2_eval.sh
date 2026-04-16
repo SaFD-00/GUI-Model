@@ -23,16 +23,18 @@ VLLM_COMMON_ARGS=(
   --cutoff_len 8192
   --image_max_pixels 4233600
   --enable_thinking False
-  --media_dir ../data
 )
 
 declare -A DS_DATADIR=( [MB]="MobiBench" [AC]="AndroidControl" )
+# notebook Cell 3 _DATASET_CONFIG.stage2.lora_rank 와 일치해야 함 (vLLM max_lora_rank 기본값 16 초과시 ValueError)
+declare -A DS_LORA_RANK=( [MB]=16 [AC]=32 )
 
 for DS in "${DATASETS[@]}"; do
   PREFIX="${DS_PREFIX[$DS]}"
   DS_TEST="${PREFIX}_stage2_test"
   TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage2_test.jsonl"
   S2_EVAL_OUT_REL="saves/${DS}/stage2_eval"
+  LORA_RANK="${DS_LORA_RANK[$DS]}"
 
   BASE_MODEL="Qwen/Qwen3-VL-8B-Instruct"
   STAGE1_MERGED="./outputs/${DS}/stage1_merged"
@@ -103,7 +105,7 @@ for DS in "${DATASETS[@]}"; do
             --adapter_name_or_path '$ADAPTER_REL' \
             --dataset '$DS_TEST' \
             ${VLLM_COMMON_ARGS[*]} \
-        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+            --vllm_config '{\"gpu_memory_utilization\": 0.80, \"max_lora_rank\": $LORA_RANK}' \
             --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \
             --matrix_save_name '$OUT_CKPT_REL/predict_results.json' && \
           python '$BASE_DIR/scripts/_action_eval.py' score \
