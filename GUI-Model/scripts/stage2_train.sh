@@ -3,14 +3,16 @@
 #   [stage2]         base.yaml        - Base model + LoRA
 #   [stage1+stage2]  world_model.yaml - Stage 1 merged model + LoRA
 #
+# NPROC_PER_NODE 은 .env 에서 관리 (기본값 2).
 # Backend 매핑은 _common.sh::MODEL_BACKEND 에 정의된다.
 # - backend=llamafactory: llamafactory-cli (단일 GPU 자동 감지, 원본 노트북과 동일)
-# - backend=unsloth:      accelerate launch --multi_gpu --num_processes 4
+# - backend=unsloth:      accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE}
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
 parse_args "$@"
 export DISABLE_VERSION_CHECK=1
+: "${NPROC_PER_NODE:=2}"
 
 SCRIPT_TAG="stage2_train"
 
@@ -29,7 +31,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           ;;
 
         unsloth)
-          YAML="$BASE_DIR/configs/unsloth/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}/${VARIANT}.yaml"
+          YAML="$BASE_DIR/unsloth/configs/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}/${VARIANT}.yaml"
           if [ ! -f "$YAML" ]; then
             echo "[!] Missing Unsloth YAML: $YAML" >&2
             echo "    Hint: run notebook Cell 12 to generate this YAML" >&2
@@ -37,7 +39,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           fi
 
           run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
-            bash -c "cd '$BASE_DIR' && accelerate launch --multi_gpu --num_processes 4 \
+            bash -c "cd '$BASE_DIR' && accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} \
               scripts/_unsloth_train.py --config '$YAML' --base-dir '$BASE_DIR'"
           ;;
 

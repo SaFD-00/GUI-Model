@@ -12,7 +12,7 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
   │     └── 대상: Qwen2-VL, Qwen2.5-VL, Qwen3-VL, LLaVA 계열
   │
   └── unsloth             → scripts/_unsloth_train.py / _unsloth_merge.py
-        ├── YAML: configs/unsloth/GUI-Model-{DS}/stage{1,2}_*
+        ├── YAML: unsloth/configs/GUI-Model-{DS}/stage{1,2}_*
         └── 대상: google/gemma-4-E2B-it, google/gemma-4-E4B-it
 ```
 
@@ -129,8 +129,9 @@ data/
 ### Stage 1 automation
 
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh)
-  - `backend=llamafactory`: `examples/train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=4`
-  - `backend=unsloth`: `configs/unsloth/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `accelerate launch --multi_gpu --num_processes 4 scripts/_unsloth_train.py`
+  - `backend=llamafactory`: `examples/train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}`
+  - `backend=unsloth`: `unsloth/configs/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py`
+  - `NPROC_PER_NODE` 는 `.env` 에서 관리 (기본값 2)
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
   - baseline zero-shot + checkpoint sweep (backend 독립)
   - `scripts/vllm_infer.py` 로 생성 (`--dataset_dir '$LF_ROOT/data'` 절대 경로 필수)
@@ -146,7 +147,7 @@ data/
 - [`scripts/stage2_train.sh`](./scripts/stage2_train.sh)
   - `{MODEL}/base.yaml`, `{MODEL}/world_model.yaml` 반복 실행
   - `backend=llamafactory`: llamafactory-cli (torchrun prefix 없음, 노트북 원본과 일치)
-  - `backend=unsloth`: `accelerate launch --multi_gpu --num_processes 4 scripts/_unsloth_train.py`
+  - `backend=unsloth`: `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py` (`NPROC_PER_NODE` 는 `.env` 관리, 기본값 2)
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
   - baseline zero-shot + `lora_base` / `lora_world_model` checkpoint sweep (backend 독립)
   - `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수
@@ -242,5 +243,5 @@ LlamaFactory/outputs/{model_short_name}/{DS}/
 - merge 스크립트는 `.env` 또는 환경변수의 `HF_TOKEN`, `rsync`, `pyyaml` 을 전제로 한다.
 - shell automation 은 bash 4+ 환경을 요구한다.
 - 모델 추가 시 notebook `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다. backend 가 기본값(`llamafactory`)이 아니면 `MODEL_BACKEND` 도 동기화한다.
-- `backend=unsloth` 모델은 `configs/unsloth/GUI-Model-{DS}/stage{1,2}_*/...` YAML 이 필요하다 (Gemma-4 전용으로 이미 커밋됨).
+- `backend=unsloth` 모델은 `unsloth/configs/GUI-Model-{DS}/stage{1,2}_*/...` YAML 이 필요하다 (Gemma-4 전용으로 이미 커밋됨).
 - Unsloth 체크포인트는 HF 표준 safetensors, LoRA adapter 는 PEFT 표준이므로 `vllm_infer.py` 가 backend 독립적으로 로드한다.

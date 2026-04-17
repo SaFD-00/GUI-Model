@@ -16,6 +16,7 @@ Monkey-Collector/app_candidates.csv
 **/wandb/
 **/lightning_logs/
 **/runs/
+**/unsloth_compiled_cache/
 
 # Python
 __pycache__/

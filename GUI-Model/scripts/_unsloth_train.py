@@ -60,42 +60,46 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 ROLE_MAP = {"system": "system", "human": "user", "gpt": "assistant"}
 
 
-def convert_row(
+def resolve_image_path(
+    img_rel: str,
+    image_base_dir: Path,
+    jsonl_parent: Path,
+) -> str:
+    candidates = [
+        image_base_dir / img_rel,
+        jsonl_parent / img_rel,
+        jsonl_parent.parent / img_rel,
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand.resolve())
+    raise FileNotFoundError(
+        f"Image not found: {img_rel} (searched: {[str(c) for c in candidates]})"
+    )
+
+
+def build_light_row(
     row: dict[str, Any],
     image_base_dir: Path,
     jsonl_parent: Path,
 ) -> dict[str, Any]:
-    """Convert LlamaFactory sharegpt row → Unsloth vision-chat format.
+    """Build an Arrow-safe row: image paths only, no PIL objects.
 
-    Input ::
-        {"messages": [{"from": "system"|"human"|"gpt", "value": "..."}],
-         "images":   ["MobiBench/images/...png"]}
-
-    Output ::
+    Output (stored in Dataset) ::
         {"messages": [
-             {"role": "system", "content": [{"type": "text", "text": "..."}]},
-             {"role": "user",   "content": [{"type": "image", "image": <PIL>},
-                                             {"type": "text",  "text": "..."}]},
-             {"role": "assistant", "content": [{"type": "text", "text": "..."}]},
+             {"role": "user", "content": [
+                 {"type": "image", "path": "/abs/path.png"},
+                 {"type": "text",  "text": "..."},
+             ]},
+             ...
          ]}
+
+    PIL opening happens lazily in ``_materialize_images`` via ``set_transform``.
     """
-    from PIL import Image
-
-    def resolve_image(img_rel: str) -> Image.Image:
-        candidates = [
-            image_base_dir / img_rel,
-            jsonl_parent / img_rel,
-            jsonl_parent.parent / img_rel,
-        ]
-        for cand in candidates:
-            if cand.is_file():
-                return Image.open(cand).convert("RGB")
-        raise FileNotFoundError(
-            f"Image not found: {img_rel} (searched: {[str(c) for c in candidates]})"
-        )
-
-    images_raw = row.get("images") or []
-    images = [resolve_image(p) for p in images_raw]
+    image_paths = [
+        resolve_image_path(p, image_base_dir, jsonl_parent)
+        for p in (row.get("images") or [])
+    ]
     image_cursor = 0
 
     out_messages: list[dict[str, Any]] = []
@@ -104,11 +108,11 @@ def convert_row(
         raw_text = msg["value"]
 
         content: list[dict[str, Any]] = []
-        if "<image>" in raw_text and images:
+        if "<image>" in raw_text and image_paths:
             parts = raw_text.split("<image>")
             for idx, chunk in enumerate(parts):
-                if idx > 0 and image_cursor < len(images):
-                    content.append({"type": "image", "image": images[image_cursor]})
+                if idx > 0 and image_cursor < len(image_paths):
+                    content.append({"type": "image", "path": image_paths[image_cursor]})
                     image_cursor += 1
                 if chunk.strip():
                     content.append({"type": "text", "text": chunk})
@@ -116,16 +120,34 @@ def convert_row(
             content.append({"type": "text", "text": raw_text})
         out_messages.append({"role": role, "content": content})
 
-    # 메시지 어디에도 <image> 태그가 없지만 images 가 남아 있으면 첫 user 메시지 앞에 붙임
-    while image_cursor < len(images):
+    while image_cursor < len(image_paths):
         for msg in out_messages:
             if msg["role"] == "user":
                 msg["content"].insert(
-                    0, {"type": "image", "image": images[image_cursor]}
+                    0, {"type": "image", "path": image_paths[image_cursor]}
                 )
                 break
         image_cursor += 1
 
+    return {"messages": out_messages}
+
+
+def _materialize_images(batch: dict[str, list]) -> dict[str, list]:
+    from PIL import Image
+
+    out_messages: list[list[dict[str, Any]]] = []
+    for msgs in batch["messages"]:
+        new_msgs: list[dict[str, Any]] = []
+        for msg in msgs:
+            new_content: list[dict[str, Any]] = []
+            for c in msg["content"]:
+                if c.get("type") == "image" and "path" in c:
+                    with Image.open(c["path"]) as im:
+                        new_content.append({"type": "image", "image": im.convert("RGB")})
+                else:
+                    new_content.append(c)
+            new_msgs.append({"role": msg["role"], "content": new_content})
+        out_messages.append(new_msgs)
     return {"messages": out_messages}
 
 
@@ -186,8 +208,11 @@ def main() -> None:
         cfg.get("image_base_dir", dataset_path.parent), base_dir
     )
     raw_rows = load_jsonl(dataset_path)
-    converted = [convert_row(r, image_base_dir, dataset_path.parent) for r in raw_rows]
-    dataset = Dataset.from_list(converted)
+    light_rows = [
+        build_light_row(r, image_base_dir, dataset_path.parent) for r in raw_rows
+    ]
+    dataset = Dataset.from_list(light_rows)
+    dataset.set_transform(_materialize_images)
 
     # --- training args ---
     output_dir = resolve(cfg["output_dir"], base_dir)
@@ -218,7 +243,7 @@ def main() -> None:
         save_total_limit=int(cfg.get("save_total_limit", 5)),
         logging_steps=int(cfg.get("logging_steps", 1)),
         max_steps=args.max_steps if args.max_steps > 0 else -1,
-        max_seq_length=max_seq_length,
+        max_length=max_seq_length,
         dataset_text_field="",
         dataset_kwargs={"skip_prepare_dataset": True},
         remove_unused_columns=False,
