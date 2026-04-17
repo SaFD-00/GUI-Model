@@ -3,8 +3,8 @@
 #
 # 3-Way:
 #   base              - Zero-shot baseline (1회)
-#   lora_base         - base + outputs/{DS}/adapters/{MODEL}/stage2_lora_base/checkpoint-*          (sweep)
-#   lora_world_model  - stage1_merged + outputs/{DS}/adapters/{MODEL}/stage2_lora_world_model/checkpoint-* (sweep)
+#   lora_base         - base + outputs/{DS}/adapters/{MODEL}_stage2_lora_base/checkpoint-*          (sweep)
+#   lora_world_model  - stage1_merged + outputs/{DS}/adapters/{MODEL}_stage2_lora_world_model/checkpoint-* (sweep)
 #
 # 각 lora 변형별로:
 #   Phase B. 체크포인트 sweep (vllm_infer + _action_eval.py score)
@@ -14,7 +14,7 @@
 #               adapter_model.safetensors) 이므로 vllm_infer.py 가 무관하게 로드한다.
 #               max_lora_rank 는 DS_LORA_RANK 를 따른다.
 #
-# 전제: stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}/stage1_full_world_model/ 를 생성 (lora_world_model variant 의존)
+# 전제: stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}_stage1_full/ 를 생성 (lora_world_model variant 의존)
 #       stage2_train.sh 가 checkpoint-* 를 생성
 
 # shellcheck source=./_common.sh
@@ -49,8 +49,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     S2_EVAL_OUT_REL="../outputs/${DS}/eval/${MODEL_SHORT}/stage2_eval"
     LORA_RANK="${DS_LORA_RANK[$DS]}"
 
-    STAGE1_MERGED="../outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
-    STAGE1_MERGED_ABS="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
+    STAGE1_MERGED="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
+    STAGE1_MERGED_ABS="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
 
     if [ ! -f "$TEST_JSONL" ]; then
       echo "[!] [$MODEL_SHORT][$DS] Missing test file: $TEST_JSONL" >&2
@@ -92,7 +92,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     for VARIANT in lora_base lora_world_model; do
       MODEL="${VARIANT_BASE[$VARIANT]}"
       # VARIANT="lora_base" → adapter 폴더 "stage2_lora_base"; "lora_world_model" → "stage2_lora_world_model"
-      LORA_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}/stage2_lora_${VARIANT#lora_}"
+      LORA_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage2_lora_${VARIANT#lora_}"
       LORA_DIR="$LF_ROOT/$LORA_DIR_REL"
       EVAL_DIR_REL="${S2_EVAL_OUT_REL}/${VARIANT}"
       EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"

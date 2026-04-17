@@ -16,6 +16,7 @@ fi
 # scripts/ 의 부모 디렉토리가 BASE_DIR (notebook Cell 3 의 BASE_DIR 대응)
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LF_ROOT="$BASE_DIR/LlamaFactory"
+UNSLOTH_ROOT="$BASE_DIR/unsloth"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
 

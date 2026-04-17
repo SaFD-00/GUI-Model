@@ -140,7 +140,7 @@ data/
   - `BEST_CHECKPOINT` 를 읽고 backend 분기
   - `backend=llamafactory`: 임시 merge YAML 렌더 → `llamafactory-cli export`
   - `backend=unsloth`: `scripts/_unsloth_merge.py --mode full` (full FT 체크포인트 copy+push)
-  - 산출물: `outputs/{DS}/merged/{MODEL}/stage1_full_world_model/` + HF Hub push
+  - 산출물: `outputs/{DS}/merged/{MODEL}_stage1_full/` + HF Hub push
 
 ### Stage 2 automation
 
@@ -151,12 +151,12 @@ data/
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
   - baseline zero-shot + `lora_base` / `lora_world_model` checkpoint sweep (backend 독립)
   - `LlamaFactory/scripts/vllm_infer.py` 호출 시 `cd "$LF_ROOT"` 내부에서 실행하고 `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수
-  - `lora_world_model` 평가는 로컬 `outputs/{DS}/merged/{MODEL}/stage1_full_world_model/` 를 base model 로 사용한다
+  - `lora_world_model` 평가는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 base model 로 사용한다
 - [`scripts/stage2_merge.sh`](./scripts/stage2_merge.sh)
   - 각 LoRA variant 의 `BEST_CHECKPOINT` 를 읽어 merge
   - `backend=llamafactory`: `llamafactory-cli export` → `merged_16bit`
   - `backend=unsloth`: `scripts/_unsloth_merge.py --mode lora` → `save_pretrained_merged(method="merged_16bit")`
-  - 산출물: `outputs/{DS}/merged/{MODEL}/stage2_lora_{base,world_model}/` + HF Hub push
+  - 산출물: `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}/` + HF Hub push
 
 ### Shell script CLI
 
@@ -177,12 +177,12 @@ raw JSONL + screenshots
   -> [per model] Stage 1 eval
   -> BEST_CHECKPOINT
   -> [per model] Stage 1 merge
-  -> outputs/{DS}/merged/{MODEL}/stage1_full_world_model
+  -> outputs/{DS}/merged/{MODEL}_stage1_full
   -> [per model] Stage 2 train
   -> [per model] Stage 2 eval
   -> BEST_CHECKPOINT
   -> [per model] Stage 2 merge
-  -> outputs/{DS}/merged/{MODEL}/stage2_lora_{base,world_model}
+  -> outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}
 ```
 
 ### 산출물 위치
@@ -191,18 +191,18 @@ raw JSONL + screenshots
 
 ```
 GUI-Model/outputs/{DS}/
-├── adapters/{model_short_name}/
-│   ├── stage1_full_world_model/
+├── adapters/
+│   ├── {model_short_name}_stage1_full/
 │   │   ├── checkpoint-*/
 │   │   ├── BEST_CHECKPOINT
 │   │   └── BEST_CHECKPOINT.json
-│   ├── stage2_lora_base/
+│   ├── {model_short_name}_stage2_lora_base/
 │   │   ├── checkpoint-*/
 │   │   └── BEST_CHECKPOINT
-│   └── stage2_lora_world_model/
+│   └── {model_short_name}_stage2_lora_world_model/
 │       ├── checkpoint-*/
 │       └── BEST_CHECKPOINT
-├── eval/{model_short_name}/
+├── eval/{model_short_name}/              # sub-hierarchy 가 있어 중첩 유지
 │   ├── stage1_eval/
 │   │   ├── base/
 │   │   └── full_world_model/
@@ -211,9 +211,10 @@ GUI-Model/outputs/{DS}/
 │       ├── base/
 │       ├── lora_base/{base,checkpoint-*}/
 │       └── lora_world_model/{base,checkpoint-*}/
-└── merged/{model_short_name}/
-    ├── stage1_full_world_model/
-    └── stage2_lora_{base,world_model}/
+└── merged/
+    ├── {model_short_name}_stage1_full/
+    ├── {model_short_name}_stage2_lora_base/
+    └── {model_short_name}_stage2_lora_world_model/
 ```
 
 ### HuggingFace 업로드 ID 패턴
@@ -233,8 +234,8 @@ GUI-Model/outputs/{DS}/
 - baseline: 각 모델의 zero-shot
 - winner metric: `avg_hungarian_f1`
 - winner 기록 위치:
-  - `outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT`
-  - `outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT.json`
+  - `outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT`
+  - `outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT.json`
 
 ### Stage 2
 
@@ -244,8 +245,8 @@ GUI-Model/outputs/{DS}/
   - `lora_world_model`
 - winner metric: `overall_score`
 - winner 기록 위치:
-  - `outputs/{DS}/adapters/{MODEL}/stage2_lora_base/BEST_CHECKPOINT`
-  - `outputs/{DS}/adapters/{MODEL}/stage2_lora_world_model/BEST_CHECKPOINT`
+  - `outputs/{DS}/adapters/{MODEL}_stage2_lora_base/BEST_CHECKPOINT`
+  - `outputs/{DS}/adapters/{MODEL}_stage2_lora_world_model/BEST_CHECKPOINT`
 
 ## 7. 중요한 운영 제약
 
@@ -255,7 +256,7 @@ GUI-Model/outputs/{DS}/
 - merge 스크립트는 `.env` 또는 환경변수의 `HF_TOKEN` (HF Hub push 용) 과 Python `pyyaml` 을 전제로 한다.
 - shell automation 은 bash 4+ 환경을 요구한다.
 - 모델 추가 시 notebook `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다. backend 가 기본값(`llamafactory`)이 아니면 `MODEL_BACKEND` 도 동기화한다.
-- `backend=unsloth` 모델은 `unsloth/configs/GUI-Model-{DS}/stage{1,2}_*/...` YAML 이 필요하다 (Gemma-4 전용으로 이미 커밋됨).
+- `backend=unsloth` 모델 (Gemma-4 계열) 은 `unsloth/configs/GUI-Model-{DS}/stage{1,2}_*/...` YAML 을 사용하며, notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다. LF `train_custom/`/`merge_custom/` YAML 생성 셀은 `backend == "unsloth"` 모델을 스킵하므로 Gemma 용 LF YAML 은 생성되지 않는다. Unsloth YAML 은 `cwd=UNSLOTH_ROOT` 기준 `../data/`, `../outputs/` 상대경로를 쓴다.
 - Unsloth 체크포인트는 HF 표준 safetensors, LoRA adapter 는 PEFT 표준이므로 `vllm_infer.py` 가 backend 독립적으로 로드한다.
 - `scripts/_unsloth_train.py` 는 모듈 최상단에서 `import unsloth` 를 선행시키고 `UNSLOTH_RETURN_LOGITS=1` 을 설정한다. trl ≥ 0.24 의 `SFTTrainer.compute_loss` 가 `entropy_from_logits(outputs.logits)` 를 직접 호출하기 때문이며, Unsloth 기본값(EMPTY_LOGITS) 과 충돌하면 `TypeError: 'function' object is not subscriptable` 로 첫 step 에서 실패한다.
 - trl 0.24 / transformers 5.x API 매핑: `SFTConfig(max_length=...)`, `SFTTrainer(processing_class=...)` 를 사용한다. 구버전 키(`max_seq_length`, `tokenizer=`, `overwrite_output_dir`) 는 `TypeError` 를 낸다.

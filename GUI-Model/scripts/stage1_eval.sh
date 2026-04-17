@@ -12,8 +12,8 @@
 # 산출물 (BASE_DIR 기준):
 #   outputs/{DS}/eval/{MODEL}/stage1_eval/base/(generated_predictions|hungarian_metrics).json
 #   outputs/{DS}/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-N/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT       (plain text)
-#   outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT.json  (상세 순위)
+#   outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT       (plain text)
+#   outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT.json  (상세 순위)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -44,7 +44,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     DS_TEST="${PREFIX}_stage1_test"
     TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage1_test.jsonl"
     # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/..."). 최종 절대경로는 BASE_DIR/outputs/... 로 귀결.
-    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}/stage1_full_world_model"
+    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage1_full"
     EVAL_DIR_REL="../outputs/${DS}/eval/${MODEL_SHORT}/stage1_eval"
     TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
     EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
@@ -75,7 +75,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           --output '$OUT_BASE/hungarian_metrics.json'"
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase B. Checkpoint sweep — outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/checkpoint-*/
+    # Phase B. Checkpoint sweep — outputs/{DS}/adapters/{MODEL}_stage1_full/checkpoint-*/
     # ─────────────────────────────────────────────────────────────────────
     shopt -s nullglob
     CKPTS=("$TRAIN_DIR"/checkpoint-*/)

@@ -16,7 +16,7 @@
 
 ## 어디를 수정해야 하는가
 
-- **모델 추가**: `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` (backend 필드 포함) + `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 를 동시에 수정한다. backend 가 기본값(`llamafactory`) 이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에도 등록한다. `backend=unsloth` 인 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/` 아래에 YAML 을 추가한다. notebook 실행 셀(Stage 1/2 train, merge)에도 새 모델 블록을 추가해야 한다.
+- **모델 추가**: `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` (backend 필드 포함) + `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 를 동시에 수정한다. backend 가 기본값(`llamafactory`) 이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에도 등록한다. `backend=unsloth` 인 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/` YAML 은 notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성되므로 수동 작성 불필요. LF YAML 생성 셀들은 `backend == "unsloth"` 인 모델을 스킵하므로 gemma 계열은 LF `train_custom/`, `merge_custom/` 아래 YAML 이 생성되지 않는다. notebook 실행 셀(Stage 1/2 train, merge)에도 새 모델 블록을 추가해야 한다.
 - **Backend 변경**: 기존 모델을 다른 backend 로 옮길 때는 `_common.sh::MODEL_BACKEND` 한 줄만 수정하면 된다. 단, 해당 backend 용 YAML 이 준비되어 있어야 한다.
 - **notebook 실행 순서나 YAML 생성 흐름**: [`gui-model.ipynb`](./gui-model.ipynb) 와 [`scripts/stage1_*.sh`](./scripts/stage1_train.sh), [`scripts/stage2_*.sh`](./scripts/stage2_train.sh) 를 함께 맞춰라.
 - **데이터 분할 규칙**: [`scripts/split_data.py`](./scripts/split_data.py) 가 기준이다.
@@ -28,11 +28,11 @@
 
 - `LlamaFactory/`, `unsloth/` 내부 파일은 마지막 수단으로만 수정하라. 가능하면 notebook, local shell script, custom YAML (`LlamaFactory/examples/train_custom/...` 또는 `unsloth/configs/...`), 평가 helper 로 해결한다.
 - trl / transformers / peft 의 API 변경(예: trl 0.24 의 `max_length`·`processing_class`, transformers 5.x 의 `overwrite_output_dir` 제거)에 대응할 때는 `scripts/_unsloth_train.py` 내부에서만 호환 계층을 유지하고, `unsloth/` 하위는 건드리지 않는다.
-- 문서나 스크립트에서 `outputs/{DS}/{category}/{MODEL}/...` 의 `{MODEL}` 은 모델 short_name (예: `qwen3-vl-8b`), `{DS}` 는 `MB` 또는 `AC`, `{category}` 는 `adapters | eval | merged` 이다. 모든 산출물의 루트는 `GUI-Model/outputs/` 이다.
+- 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `MB` 또는 `AC`, `{category}` 는 `adapters | eval | merged`. `adapters/` · `merged/` 는 flat 네이밍 `{MODEL}_{detail}/` (예: `gemma-4-e2b_stage1_full`, `qwen3-vl-8b_stage2_lora_world_model`). `eval/` 은 `{MODEL}/stage{1,2}_eval/...` 중첩 구조 유지. 모든 산출물의 루트는 `GUI-Model/outputs/` 이다.
 - `data/` 아래 실제 디렉토리명은 `MobiBench`, `AndroidControl` 이다.
 - eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.
-- Stage 1 merge 는 `outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT` 가 없으면 실패한다.
-- Stage 2 eval 과 merge 는 로컬 `outputs/{DS}/merged/{MODEL}/stage1_full_world_model/` 를 전제로 한다.
+- Stage 1 merge 는 `outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT` 가 없으면 실패한다.
+- Stage 2 eval 과 merge 는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 전제로 한다.
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh) 는 `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}` 를 붙여 실행하지만, [`scripts/stage2_train.sh`](./scripts/stage2_train.sh) 는 의도적으로 torchrun prefix 를 붙이지 않는다. `NPROC_PER_NODE` 는 `.env` 에서 관리하며 기본값은 2 이다.
 - [`scripts/split_data.py`](./scripts/split_data.py) 는 `AndroidControl` Stage 2 에 대해 기본적으로 `30000`개 stratified subsample 을 만든 뒤 train/test split 한다.
 - bash 자동화는 bash 4+ 전제를 가진다.

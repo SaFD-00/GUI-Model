@@ -10,7 +10,7 @@
 #   - unsloth:      scripts/_unsloth_merge.py --mode lora (merged_16bit safetensors)
 #
 # BEST_CHECKPOINT 없으면 해당 variant 를 [SKIP] 경고 후 건너뜀.
-# 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}/stage1_full_world_model/ 를 생성해둔 상태.
+# 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}_stage1_full/ 를 생성해둔 상태.
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -27,8 +27,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
   for DS in "${DATASETS[@]}"; do
     # LF cwd 기준 상대경로 (../outputs/...) + BASE_DIR 기준 절대경로 동시 유지.
-    STAGE1_MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
-    STAGE1_MERGED="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
+    STAGE1_MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
+    STAGE1_MERGED="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
 
     if [ ! -d "$STAGE1_MERGED" ]; then
       echo "[SKIP] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED — stage1_merge.sh 미완료, 건너뜁니다." >&2
@@ -45,8 +45,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       [merge_world_model]="${STAGE1_MERGED_REL}"
     )
     declare -A LORA_DIR_REL=(
-      [merge_base]="../outputs/${DS}/adapters/${MODEL_SHORT}/stage2_lora_base"
-      [merge_world_model]="../outputs/${DS}/adapters/${MODEL_SHORT}/stage2_lora_world_model"
+      [merge_base]="../outputs/${DS}/adapters/${MODEL_SHORT}_stage2_lora_base"
+      [merge_world_model]="../outputs/${DS}/adapters/${MODEL_SHORT}_stage2_lora_world_model"
     )
     declare -A MERGED_DIR=(
       [merge_base]="stage2_lora_base"
@@ -75,8 +75,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
 
       HUB_ID="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-${HUB_SUFFIX_MAP[$VARIANT]}"
-      MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}/${MERGED_DIR[$VARIANT]}"
-      LOCAL_DIR="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/${MERGED_DIR[$VARIANT]}"
+      MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_${MERGED_DIR[$VARIANT]}"
+      LOCAL_DIR="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}_${MERGED_DIR[$VARIANT]}"
 
       case "$BACKEND" in
         llamafactory)

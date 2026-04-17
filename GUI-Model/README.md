@@ -155,26 +155,27 @@ bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB
 주요 동작:
 
 - `stage1_eval.sh` 는 baseline + checkpoint sweep 뒤 `avg_hungarian_f1` 기준 winner 를 `BEST_CHECKPOINT` 로 기록한다.
-- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}/stage1_full_world_model/` 를 만든다.
+- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 만든다.
 - `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model` checkpoint sweep 뒤 `overall_score` 기준 winner 를 기록한다.
-- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}/stage2_lora_{base,world_model}/` 를 만든다.
+- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}/` 를 만든다.
 
 ## 산출물
 
-모든 결과물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심** (`{DS}/{category}/{MODEL}/...`) 으로 모인다.
+모든 결과물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심** 으로 모인다. `adapters/`·`merged/` 는 flat 네이밍 `{MODEL}_{detail}/`, `eval/` 만 중첩 구조를 유지한다.
 
 ```
 GUI-Model/outputs/{MB|AC}/
-├── adapters/{model_short_name}/
-│   ├── stage1_full_world_model/             # checkpoint-*, BEST_CHECKPOINT
-│   ├── stage2_lora_base/                    # LoRA checkpoint-*, BEST_CHECKPOINT
-│   └── stage2_lora_world_model/             # LoRA checkpoint-*, BEST_CHECKPOINT
-├── eval/{model_short_name}/
+├── adapters/
+│   ├── {model_short_name}_stage1_full/             # checkpoint-*, BEST_CHECKPOINT
+│   ├── {model_short_name}_stage2_lora_base/        # LoRA checkpoint-*, BEST_CHECKPOINT
+│   └── {model_short_name}_stage2_lora_world_model/ # LoRA checkpoint-*, BEST_CHECKPOINT
+├── eval/{model_short_name}/                         # 중첩 유지
 │   ├── stage1_eval/{base,full_world_model/checkpoint-*}/   # generated_predictions, hungarian_metrics
 │   └── stage2_eval/{base,lora_base,lora_world_model}/{base,checkpoint-*}/
-└── merged/{model_short_name}/
-    ├── stage1_full_world_model/           # Stage 1 full-FT 병합 결과
-    └── stage2_lora_{base,world_model}/    # Stage 2 LoRA 병합 결과
+└── merged/
+    ├── {model_short_name}_stage1_full/             # Stage 1 full-FT 병합 결과
+    ├── {model_short_name}_stage2_lora_base/        # Stage 2 LoRA (base) 병합 결과
+    └── {model_short_name}_stage2_lora_world_model/ # Stage 2 LoRA (world model) 병합 결과
 ```
 
 ## 모델 추가 방법
@@ -184,7 +185,7 @@ GUI-Model/outputs/{MB|AC}/
 1. `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` 딕셔너리에 모델 항목 추가 (`backend` 필드 포함)
 2. `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 에 동일 항목 추가
 3. backend 가 기본값(`llamafactory`)이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에 등록
-4. `backend=unsloth` 일 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/...` 에 YAML 추가
+4. `backend=unsloth` 일 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/...` YAML 은 notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다 (Gemma-4 e2b/e4b 적용). 동일 모델이 LF `train_custom/`/`merge_custom/` 아래에는 생성되지 않는다 (LF 생성 셀들이 `backend == "unsloth"` 을 스킵함).
 
 ## 코드 읽기 시작점
 

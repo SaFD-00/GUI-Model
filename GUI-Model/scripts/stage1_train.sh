@@ -38,8 +38,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         fi
 
         run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}" \
-          bash -c "cd '$BASE_DIR' && accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} \
-            scripts/_unsloth_train.py --config '$YAML' --base-dir '$BASE_DIR'"
+          bash -c "cd '$UNSLOTH_ROOT' && accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} \
+            ../scripts/_unsloth_train.py --config '$YAML' --base-dir '$UNSLOTH_ROOT'"
         ;;
 
       *)
