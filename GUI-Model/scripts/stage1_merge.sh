@@ -19,7 +19,8 @@ SKIPPED_COUNT=0
 for MODEL_SHORT in "${MODELS[@]}"; do
   for DS in "${DATASETS[@]}"; do
     BACKEND="$(get_backend "$MODEL_SHORT")"
-    TRAIN_DIR_REL="saves/${MODEL_SHORT}/${DS}/stage1_full/full_world_model"
+    # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/...").
+    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}/stage1_full_world_model"
     TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
     BEST_FILE="$TRAIN_DIR/BEST_CHECKPOINT"
 
@@ -34,7 +35,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     echo "[+] [$MODEL_SHORT][$DS] Using Hungarian F1 winner: ${CKPT_NAME}" >&2
 
     HUB_ID="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage1-world-model"
-    LOCAL_DIR="$LF_ROOT/outputs/${MODEL_SHORT}/${DS}/stage1_merged"
+    MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
+    LOCAL_DIR="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
 
     case "$BACKEND" in
       llamafactory)
@@ -47,7 +49,7 @@ trust_remote_code: true
 template: ${MODEL_TEMPLATE[$MODEL_SHORT]}
 
 ### export
-export_dir: ./outputs/${MODEL_SHORT}/${DS}/stage1_merged
+export_dir: ${MERGED_REL}
 export_size: 5
 export_device: cpu
 export_legacy_format: false

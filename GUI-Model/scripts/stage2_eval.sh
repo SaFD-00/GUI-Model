@@ -3,8 +3,8 @@
 #
 # 3-Way:
 #   base              - Zero-shot baseline (1회)
-#   lora_base         - base + saves/{MODEL}/{DS}/stage2_lora/lora_base/checkpoint-*          (sweep)
-#   lora_world_model  - stage1_merged + saves/{MODEL}/{DS}/stage2_lora/lora_world_model/checkpoint-* (sweep)
+#   lora_base         - base + outputs/{DS}/adapters/{MODEL}/stage2_lora_base/checkpoint-*          (sweep)
+#   lora_world_model  - stage1_merged + outputs/{DS}/adapters/{MODEL}/stage2_lora_world_model/checkpoint-* (sweep)
 #
 # 각 lora 변형별로:
 #   Phase B. 체크포인트 sweep (vllm_infer + _action_eval.py score)
@@ -14,7 +14,7 @@
 #               adapter_model.safetensors) 이므로 vllm_infer.py 가 무관하게 로드한다.
 #               max_lora_rank 는 DS_LORA_RANK 를 따른다.
 #
-# 전제: stage1_merge.sh 가 outputs/{MODEL}/{DS}/stage1_merged/ 를 생성 (lora_world_model variant 의존)
+# 전제: stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}/stage1_full_world_model/ 를 생성 (lora_world_model variant 의존)
 #       stage2_train.sh 가 checkpoint-* 를 생성
 
 # shellcheck source=./_common.sh
@@ -45,17 +45,19 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     PREFIX="${DS_PREFIX[$DS]}"
     DS_TEST="${PREFIX}_stage2_test"
     TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage2_test.jsonl"
-    S2_EVAL_OUT_REL="saves/${MODEL_SHORT}/${DS}/stage2_eval"
+    # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/...").
+    S2_EVAL_OUT_REL="../outputs/${DS}/eval/${MODEL_SHORT}/stage2_eval"
     LORA_RANK="${DS_LORA_RANK[$DS]}"
 
-    STAGE1_MERGED="./outputs/${MODEL_SHORT}/${DS}/stage1_merged"
+    STAGE1_MERGED="../outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
+    STAGE1_MERGED_ABS="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
 
     if [ ! -f "$TEST_JSONL" ]; then
       echo "[!] [$MODEL_SHORT][$DS] Missing test file: $TEST_JSONL" >&2
       exit 1
     fi
-    if [ ! -d "$LF_ROOT/${STAGE1_MERGED#./}" ]; then
-      echo "[!] [$MODEL_SHORT][$DS] Missing $LF_ROOT/${STAGE1_MERGED#./} — run stage1_merge.sh first." >&2
+    if [ ! -d "$STAGE1_MERGED_ABS" ]; then
+      echo "[!] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED_ABS — run stage1_merge.sh first." >&2
       exit 1
     fi
 
@@ -89,7 +91,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
     for VARIANT in lora_base lora_world_model; do
       MODEL="${VARIANT_BASE[$VARIANT]}"
-      LORA_DIR_REL="saves/${MODEL_SHORT}/${DS}/stage2_lora/${VARIANT}"
+      # VARIANT="lora_base" → adapter 폴더 "stage2_lora_base"; "lora_world_model" → "stage2_lora_world_model"
+      LORA_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}/stage2_lora_${VARIANT#lora_}"
       LORA_DIR="$LF_ROOT/$LORA_DIR_REL"
       EVAL_DIR_REL="${S2_EVAL_OUT_REL}/${VARIANT}"
       EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
@@ -108,7 +111,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         CKPT_NAME=$(basename "$CKPT_DIR")
         OUT_CKPT_REL="${EVAL_DIR_REL}/${CKPT_NAME}"
         OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
-        ADAPTER_REL="./${LORA_DIR_REL}/${CKPT_NAME}"
+        ADAPTER_REL="${LORA_DIR_REL}/${CKPT_NAME}"
 
         run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_${CKPT_NAME}" \
           bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_CKPT_REL' && \

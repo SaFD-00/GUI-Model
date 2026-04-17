@@ -9,11 +9,11 @@
 #               vllm_infer.py 가 프레임워크 무관하게 로드 가능하다.
 #               (단, vLLM/transformers 가 해당 아키텍처를 지원해야 한다.)
 #
-# 산출물:
-#   saves/{MODEL}/{DS}/stage1_eval/hungarian_matching/base/(generated_predictions|hungarian_metrics).json
-#   saves/{MODEL}/{DS}/stage1_eval/hungarian_matching/checkpoint-N/(generated_predictions|hungarian_metrics).json
-#   saves/{MODEL}/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT       (plain text)
-#   saves/{MODEL}/{DS}/stage1_full/full_world_model/BEST_CHECKPOINT.json  (상세 순위)
+# 산출물 (BASE_DIR 기준):
+#   outputs/{DS}/eval/{MODEL}/stage1_eval/base/(generated_predictions|hungarian_metrics).json
+#   outputs/{DS}/eval/{MODEL}/stage1_eval/checkpoint-N/(generated_predictions|hungarian_metrics).json
+#   outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT       (plain text)
+#   outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT.json  (상세 순위)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -43,8 +43,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     PREFIX="${DS_PREFIX[$DS]}"
     DS_TEST="${PREFIX}_stage1_test"
     TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage1_test.jsonl"
-    TRAIN_DIR_REL="saves/${MODEL_SHORT}/${DS}/stage1_full/full_world_model"
-    EVAL_DIR_REL="saves/${MODEL_SHORT}/${DS}/stage1_eval/hungarian_matching"
+    # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/..."). 최종 절대경로는 BASE_DIR/outputs/... 로 귀결.
+    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}/stage1_full_world_model"
+    EVAL_DIR_REL="../outputs/${DS}/eval/${MODEL_SHORT}/stage1_eval"
     TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
     EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
 
@@ -74,7 +75,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           --output '$OUT_BASE/hungarian_metrics.json'"
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase B. Checkpoint sweep — saves/{MODEL}/{DS}/stage1_full/full_world_model/checkpoint-*/
+    # Phase B. Checkpoint sweep — outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/checkpoint-*/
     # ─────────────────────────────────────────────────────────────────────
     shopt -s nullglob
     CKPTS=("$TRAIN_DIR"/checkpoint-*/)

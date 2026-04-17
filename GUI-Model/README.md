@@ -41,15 +41,22 @@ Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분
 GUI-Model/
 ├── gui-model.ipynb
 ├── scripts/
-│   ├── _unsloth_train.py    # Unsloth 학습 entrypoint (Gemma-4 계열)
-│   └── _unsloth_merge.py    # Unsloth merge entrypoint
-├── configs/
-│   └── unsloth/             # Unsloth YAML (Gemma-4 계열, backend=unsloth)
+│   ├── _common.sh                # 공통 path/모델 레지스트리/backend 매핑
+│   ├── stage{1,2}_{train,eval,merge}.sh
+│   ├── _unsloth_train.py         # Unsloth 학습 entrypoint (Gemma-4)
+│   ├── _unsloth_merge.py         # Unsloth merge entrypoint
+│   ├── _hungarian_eval.py        # Stage 1 metric
+│   ├── _action_eval.py           # Stage 2 metric
+│   └── split_data.py
 ├── data/
-├── LlamaFactory/            # LlamaFactory clone (backend=llamafactory)
-├── unsloth/                 # Unsloth clone (backend=unsloth)
-├── gui_model/
+├── LlamaFactory/                 # backend=llamafactory (clone)
+│   ├── examples/train_custom/    # LlamaFactory YAML (노트북이 생성)
+│   └── scripts/vllm_infer.py     # 모든 backend 공통 추론 도구
+├── unsloth/                      # backend=unsloth (clone)
+│   └── configs/GUI-Model-{MB,AC}/stage{1,2}_*/...   # Unsloth YAML
+├── gui_model/                    # 배포용 스텁
 ├── setup.py
+├── .env.example                  # HF_TOKEN, NPROC_PER_NODE
 ├── README.md
 ├── ARCHITECTURE.md
 └── AGENTS.md
@@ -79,7 +86,7 @@ pip install -e "./unsloth"
 
 - Python 3.10+
 - bash 4+ (`scripts/_common.sh` 기준)
-- merge/export 단계에서는 `HF_TOKEN`, `rsync`, `pyyaml`
+- merge/export 단계에서는 `HF_TOKEN` (HF Hub push 용), `pyyaml`
 
 ## 데이터 준비
 
@@ -148,24 +155,26 @@ bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB
 주요 동작:
 
 - `stage1_eval.sh` 는 baseline + checkpoint sweep 뒤 `avg_hungarian_f1` 기준 winner 를 `BEST_CHECKPOINT` 로 기록한다.
-- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{MODEL}/{DS}/stage1_merged/` 를 만든다.
+- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}/stage1_full_world_model/` 를 만든다.
 - `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model` checkpoint sweep 뒤 `overall_score` 기준 winner 를 기록한다.
-- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{MODEL}/{DS}/stage2_merged/{base,world_model}/` 를 만든다.
+- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}/stage2_lora_{base,world_model}/` 를 만든다.
 
 ## 산출물
 
-주요 결과물은 모두 `LlamaFactory/` 아래에 모델별로 분리되어 쌓인다.
+모든 결과물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심** (`{DS}/{category}/{MODEL}/...`) 으로 모인다.
 
 ```
-LlamaFactory/saves/{model_short_name}/{MB|AC}/
-├── stage1_full/full_world_model/           # checkpoints, BEST_CHECKPOINT
-├── stage1_eval/hungarian_matching/         # eval 결과
-├── stage2_lora/{lora_base,lora_world_model}/  # LoRA checkpoints, BEST_CHECKPOINT
-└── stage2_eval/                            # eval 결과
-
-LlamaFactory/outputs/{model_short_name}/{MB|AC}/
-├── stage1_merged/
-└── stage2_merged/{base,world_model}/
+GUI-Model/outputs/{MB|AC}/
+├── adapters/{model_short_name}/
+│   ├── stage1_full_world_model/             # checkpoint-*, BEST_CHECKPOINT
+│   ├── stage2_lora_base/                    # LoRA checkpoint-*, BEST_CHECKPOINT
+│   └── stage2_lora_world_model/             # LoRA checkpoint-*, BEST_CHECKPOINT
+├── eval/{model_short_name}/
+│   ├── stage1_eval/{base,checkpoint-*}/     # generated_predictions, hungarian_metrics
+│   └── stage2_eval/{base,lora_base,lora_world_model}/{base,checkpoint-*}/
+└── merged/{model_short_name}/
+    ├── stage1_full_world_model/           # Stage 1 full-FT 병합 결과
+    └── stage2_lora_{base,world_model}/    # Stage 2 LoRA 병합 결과
 ```
 
 ## 모델 추가 방법

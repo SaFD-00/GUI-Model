@@ -10,7 +10,7 @@
 #   - unsloth:      scripts/_unsloth_merge.py --mode lora (merged_16bit safetensors)
 #
 # BEST_CHECKPOINT 없으면 해당 variant 를 [SKIP] 경고 후 건너뜀.
-# 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{MODEL}/{DS}/stage1_merged/ 를 생성해둔 상태.
+# 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}/stage1_full_world_model/ 를 생성해둔 상태.
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -26,8 +26,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
   BACKEND="$(get_backend "$MODEL_SHORT")"
 
   for DS in "${DATASETS[@]}"; do
-    STAGE1_MERGED_REL="outputs/${MODEL_SHORT}/${DS}/stage1_merged"
-    STAGE1_MERGED="$LF_ROOT/$STAGE1_MERGED_REL"
+    # LF cwd 기준 상대경로 (../outputs/...) + BASE_DIR 기준 절대경로 동시 유지.
+    STAGE1_MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
+    STAGE1_MERGED="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/stage1_full_world_model"
 
     if [ ! -d "$STAGE1_MERGED" ]; then
       echo "[SKIP] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED — stage1_merge.sh 미완료, 건너뜁니다." >&2
@@ -41,15 +42,19 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     )
     declare -A BASE_PATH_LF_REL=(
       [merge_base]="$BASE_MODEL"
-      [merge_world_model]="./${STAGE1_MERGED_REL}"
+      [merge_world_model]="${STAGE1_MERGED_REL}"
     )
     declare -A LORA_DIR_REL=(
-      [merge_base]="saves/${MODEL_SHORT}/${DS}/stage2_lora/lora_base"
-      [merge_world_model]="saves/${MODEL_SHORT}/${DS}/stage2_lora/lora_world_model"
+      [merge_base]="../outputs/${DS}/adapters/${MODEL_SHORT}/stage2_lora_base"
+      [merge_world_model]="../outputs/${DS}/adapters/${MODEL_SHORT}/stage2_lora_world_model"
     )
-    declare -A LOCAL_VARIANT_DIR=(
+    declare -A MERGED_DIR=(
+      [merge_base]="stage2_lora_base"
+      [merge_world_model]="stage2_lora_world_model"
+    )
+    declare -A HUB_SUFFIX_MAP=(
       [merge_base]="base"
-      [merge_world_model]="world_model"
+      [merge_world_model]="world-model"
     )
 
     for VARIANT in merge_base merge_world_model; do
@@ -63,13 +68,15 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       fi
 
       CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
-      ADAPTER_ABS="$LF_ROOT/$LORA_REL/$CKPT_NAME"
-      ADAPTER_REL="./${LORA_REL}/${CKPT_NAME}"
+      # LORA_REL 이 "../outputs/..." 형태이므로 절대경로는 BASE_DIR 기준으로 재구성.
+      LORA_SUB="${LORA_REL#../}"              # "outputs/{DS}/adapters/{M}/stage2_lora_*"
+      ADAPTER_ABS="$BASE_DIR/$LORA_SUB/$CKPT_NAME"
+      ADAPTER_REL="${LORA_REL}/${CKPT_NAME}"
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
 
-      HUB_SUFFIX="${LOCAL_VARIANT_DIR[$VARIANT]//_/-}"
-      HUB_ID="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-${HUB_SUFFIX}"
-      LOCAL_DIR="$LF_ROOT/outputs/${MODEL_SHORT}/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VARIANT]}"
+      HUB_ID="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-${HUB_SUFFIX_MAP[$VARIANT]}"
+      MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}/${MERGED_DIR[$VARIANT]}"
+      LOCAL_DIR="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}/${MERGED_DIR[$VARIANT]}"
 
       case "$BACKEND" in
         llamafactory)
@@ -84,7 +91,7 @@ finetuning_type: lora
 template: ${MODEL_TEMPLATE[$MODEL_SHORT]}
 
 ### export
-export_dir: ./outputs/${MODEL_SHORT}/${DS}/stage2_merged/${LOCAL_VARIANT_DIR[$VARIANT]}
+export_dir: ${MERGED_REL}
 export_size: 5
 export_device: cpu
 export_legacy_format: false

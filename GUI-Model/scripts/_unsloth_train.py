@@ -21,6 +21,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("UNSLOTH_RETURN_LOGITS", "1")
+
+import unsloth  # noqa: F401 — must precede trl/transformers/peft imports
+
 import yaml
 
 
@@ -250,12 +254,11 @@ def main() -> None:
         ddp_find_unused_parameters=bool(cfg.get("ddp_find_unused_parameters", False)),
         seed=int(cfg.get("seed", 3407)),
         report_to="none",
-        overwrite_output_dir=bool(cfg.get("overwrite_output_dir", True)),
     )
 
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=dataset,
         args=sft_args,
         data_collator=UnslothVisionDataCollator(model, tokenizer),

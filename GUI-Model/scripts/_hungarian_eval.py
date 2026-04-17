@@ -14,12 +14,12 @@ Examples
 --------
   python scripts/_hungarian_eval.py score \\
       --test  data/AndroidControl/gui-model_stage1_test.jsonl \\
-      --pred  saves/AC/stage1_eval/hungarian_matching/checkpoint-1055/generated_predictions.jsonl \\
-      --output saves/AC/stage1_eval/hungarian_matching/checkpoint-1055/hungarian_metrics.json
+      --pred  outputs/AC/eval/{MODEL}/stage1_eval/checkpoint-1055/generated_predictions.jsonl \\
+      --output outputs/AC/eval/{MODEL}/stage1_eval/checkpoint-1055/hungarian_metrics.json
 
   python scripts/_hungarian_eval.py select \\
-      --eval-dir  saves/AC/stage1_eval/hungarian_matching \\
-      --train-dir saves/AC/stage1_full/full_world_model \\
+      --eval-dir  outputs/AC/eval/{MODEL}/stage1_eval \\
+      --train-dir outputs/AC/adapters/{MODEL}/stage1_full_world_model \\
       --metric    avg_hungarian_f1
 """
 from __future__ import annotations
