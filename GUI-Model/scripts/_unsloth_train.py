@@ -198,6 +198,16 @@ def main() -> None:
     chat_template = cfg.get("template")
     if chat_template:
         tokenizer = get_chat_template(tokenizer, chat_template)
+        # Unsloth-bundled `gemma4` / `gemma-4` templates crash on list-shaped
+        # system content (list + str in Jinja). Patch to accept both shapes.
+        tpl_obj = getattr(tokenizer, "chat_template", None)
+        buggy = "messages[0]['content'] + '\n\n'"
+        fixed = (
+            "(messages[0]['content'] if messages[0]['content'] is string "
+            "else messages[0]['content'][0]['text']) + '\n\n'"
+        )
+        if isinstance(tpl_obj, str) and buggy in tpl_obj:
+            tokenizer.chat_template = tpl_obj.replace(buggy, fixed)
 
     if cfg.get("finetuning_type") == "lora" and not full_finetuning:
         lora_target = cfg.get("lora_target", "all")

@@ -1,3 +1,21 @@
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "gui-model"
+version = "0.1.0"
+description = "Training and evaluation pipeline for GUI world modeling and action prediction."
+requires-python = ">=3.10,<3.13"
+# 최상위에서 transformers 버전을 고정한다 (최신 5.5.4).
+# - LlamaFactory/unsloth 서브프로젝트의 transitive 상한(<=5.2.0 / <=5.5.0)을
+#   의도적으로 덮어쓰므로 pip resolver 가 dependency conflict 를 보고할 수 있다.
+#   그 경우 README "환경 설치" 섹션의 회피 절차로 처리한다:
+#     pip install --upgrade transformers==5.5.4
+#     # 또는
+#     pip install -e ./unsloth[huggingface,triton] --no-deps
+#     pip install -e ./LlamaFactory --no-deps
+# - 서브프로젝트(`unsloth/`, `LlamaFactory/`) 의 pyproject.toml 은 수정하지 않는다.
+dependencies = [
+  "transformers==5.5.4",
+]

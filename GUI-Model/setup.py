@@ -23,6 +23,12 @@ UNSLOTH_DIR = os.path.join(HERE, "unsloth")
 # deps 를 user-site (예: /root/.local/workspace/python-packages) 로 흘려
 # env/bin 에 CLI entry point (accelerate 등) 가 만들어지지 않는 사고를 막는다.
 INSTALL_REQUIRES = [
+    # transformers 버전 고정 (최신 5.5.4).
+    # LlamaFactory/unsloth 서브프로젝트가 더 낮은 상한(<=5.2.0 / <=5.5.0)을 요구할 수 있으므로
+    # pip 가 conflict 를 보고하면 아래 둘 중 하나로 회피한다:
+    #   1) pip install --upgrade transformers==5.5.4
+    #   2) pip install -e ./unsloth[huggingface,triton] --no-deps
+    "transformers==5.5.4",
     # Local subprojects
     f"llamafactory @ file://{LLAMAFACTORY_DIR}",
     f"unsloth[huggingface,triton] @ file://{UNSLOTH_DIR}",

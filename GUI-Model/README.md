@@ -64,7 +64,7 @@ GUI-Model/
 
 ## 환경 설치
 
-단일 진입점. `setup.py` 의 `install_requires` 가 `./LlamaFactory` 와 `./unsloth[huggingface,triton]` 을 PEP 508 `file://` direct reference 로 연쇄 설치하고, `accelerate`/`vllm`/`deepspeed`/metrics 패키지를 함께 해결한다.
+단일 진입점. `setup.py` 의 `install_requires` 가 `./LlamaFactory` 와 `./unsloth[huggingface,triton]` 을 PEP 508 `file://` direct reference 로 연쇄 설치하고, `accelerate`/`vllm`/`deepspeed`/metrics 패키지를 함께 해결한다. **`transformers==5.5.4` 는 최상위(`pyproject.toml` `[project].dependencies` 와 `setup.py` `INSTALL_REQUIRES`)에서 고정**한다.
 
 ```bash
 conda activate gui-model
@@ -78,6 +78,14 @@ PIP_USER=0 pip install --no-user -e .
 
 - Python 3.10 이상, 3.13 미만
 - bash 4+ (`scripts/_common.sh` 기준)
+- **`transformers==5.5.4`** (최상위 pin). 서브프로젝트(`unsloth/` `<=5.5.0`, `LlamaFactory/` `<=5.2.0`) 의 transitive 상한과 충돌해 pip resolver 가 실패하면 다음 절차로 회피한다:
+
+  ```bash
+  pip install --upgrade transformers==5.5.4
+  # 또는 서브프로젝트만 deps 무시 재설치
+  pip install -e ./unsloth[huggingface,triton] --no-deps
+  pip install -e ./LlamaFactory --no-deps
+  ```
 - merge/export 단계에서는 `HF_TOKEN` (HF Hub push 용), `pyyaml`
 - `./LlamaFactory`, `./unsloth` 는 vendored non-editable 로 설치된다. 서브프로젝트 소스를 수정하며 쓰고 싶으면 아래로 덮어쓴다:
 
@@ -85,6 +93,16 @@ PIP_USER=0 pip install --no-user -e .
   pip install -e ./LlamaFactory --no-deps
   pip install -e './unsloth[huggingface,triton]' --no-deps
   ```
+
+### Unsloth 학습 시 deepspeed 제거
+
+Unsloth (Gemma-4 e2b/e4b) 백엔드는 deepspeed 와 호환되지 않는다 (FastModel 의 메모리 최적화 / gradient checkpointing 이 deepspeed ZeRO 와 충돌하고, env 에 deepspeed 가 남아 있으면 `accelerate launch` 가 deepspeed plugin 을 자동 활성화해 첫 step 에서 실패할 수 있다). 노트북 [`gui-model.ipynb`](./gui-model.ipynb) 의 Cell 5 (`%%bash` + `pip uninstall -y deepspeed`) 가 학습 직전 deepspeed 를 env 에서 제거한다. LlamaFactory 백엔드 모델 학습으로 돌아갈 때는 다음 중 하나로 deepspeed 를 복원한다:
+
+```bash
+pip install -e .   # setup.py 의 deepspeed>=0.10.0,<=0.18.4 재설치
+# 또는
+pip install 'deepspeed>=0.10.0,<=0.18.4'
+```
 
 ### PATH / user-site 정책
 
