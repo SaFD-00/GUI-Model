@@ -14,8 +14,8 @@ Examples
 --------
   python scripts/_hungarian_eval.py score \\
       --test  data/AndroidControl/gui-model_stage1_test.jsonl \\
-      --pred  outputs/AC/eval/{MODEL}/stage1_eval/checkpoint-1055/generated_predictions.jsonl \\
-      --output outputs/AC/eval/{MODEL}/stage1_eval/checkpoint-1055/hungarian_metrics.json
+      --pred  outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-1055/generated_predictions.jsonl \\
+      --output outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-1055/hungarian_metrics.json
 
   python scripts/_hungarian_eval.py select \\
       --eval-dir  outputs/AC/eval/{MODEL}/stage1_eval \\
@@ -291,7 +291,7 @@ def _cmd_select(args):
 
     # checkpoint-*/hungarian_metrics.json 수집
     candidates = []
-    for mpath in sorted(eval_dir.glob("checkpoint-*/hungarian_metrics.json"),
+    for mpath in sorted(eval_dir.glob("full_world_model/checkpoint-*/hungarian_metrics.json"),
                         key=lambda p: _ckpt_step(p.parent.name)):
         try:
             with open(mpath, 'r', encoding='utf-8') as f:
@@ -313,7 +313,7 @@ def _cmd_select(args):
         })
 
     if not candidates:
-        print(f"[select] ERROR: no checkpoint metrics found under {eval_dir}/checkpoint-*/",
+        print(f"[select] ERROR: no checkpoint metrics found under {eval_dir}/full_world_model/checkpoint-*/",
               file=sys.stderr)
         return 2
 

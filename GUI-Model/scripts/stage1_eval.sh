@@ -11,7 +11,7 @@
 #
 # 산출물 (BASE_DIR 기준):
 #   outputs/{DS}/eval/{MODEL}/stage1_eval/base/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/eval/{MODEL}/stage1_eval/checkpoint-N/(generated_predictions|hungarian_metrics).json
+#   outputs/{DS}/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-N/(generated_predictions|hungarian_metrics).json
 #   outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT       (plain text)
 #   outputs/{DS}/adapters/{MODEL}/stage1_full_world_model/BEST_CHECKPOINT.json  (상세 순위)
 
@@ -88,7 +88,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
     for CKPT_DIR in "${CKPTS[@]}"; do
       CKPT_NAME=$(basename "$CKPT_DIR")     # checkpoint-1055
-      OUT_CKPT_REL="${EVAL_DIR_REL}/${CKPT_NAME}"
+      OUT_CKPT_REL="${EVAL_DIR_REL}/full_world_model/${CKPT_NAME}"
       OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
       MODEL_REL="${TRAIN_DIR_REL}/${CKPT_NAME}"
 

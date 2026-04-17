@@ -205,7 +205,8 @@ GUI-Model/outputs/{DS}/
 ├── eval/{model_short_name}/
 │   ├── stage1_eval/
 │   │   ├── base/
-│   │   └── checkpoint-*/
+│   │   └── full_world_model/
+│   │       └── checkpoint-*/
 │   └── stage2_eval/
 │       ├── base/
 │       ├── lora_base/{base,checkpoint-*}/

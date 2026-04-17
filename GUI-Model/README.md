@@ -170,7 +170,7 @@ GUI-Model/outputs/{MB|AC}/
 │   ├── stage2_lora_base/                    # LoRA checkpoint-*, BEST_CHECKPOINT
 │   └── stage2_lora_world_model/             # LoRA checkpoint-*, BEST_CHECKPOINT
 ├── eval/{model_short_name}/
-│   ├── stage1_eval/{base,checkpoint-*}/     # generated_predictions, hungarian_metrics
+│   ├── stage1_eval/{base,full_world_model/checkpoint-*}/   # generated_predictions, hungarian_metrics
 │   └── stage2_eval/{base,lora_base,lora_world_model}/{base,checkpoint-*}/
 └── merged/{model_short_name}/
     ├── stage1_full_world_model/           # Stage 1 full-FT 병합 결과
