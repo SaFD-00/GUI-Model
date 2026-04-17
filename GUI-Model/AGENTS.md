@@ -28,6 +28,7 @@
 
 - `LlamaFactory/`, `unsloth/` 내부 파일은 마지막 수단으로만 수정하라. 가능하면 notebook, local shell script, custom YAML (`LlamaFactory/examples/train_custom/...` 또는 `unsloth/configs/...`), 평가 helper 로 해결한다.
 - trl / transformers / peft 의 API 변경(예: trl 0.24 의 `max_length`·`processing_class`, transformers 5.x 의 `overwrite_output_dir` 제거)에 대응할 때는 `scripts/_unsloth_train.py` 내부에서만 호환 계층을 유지하고, `unsloth/` 하위는 건드리지 않는다.
+- Gemma-4 e2b/e4b stage1 Full FT 의 Unsloth 권장 사양 키 (`load_in_16bit`, `optim`, `gradient_checkpointing`, `freeze_vision_tower`, `template`) 는 4 개 YAML (`unsloth/configs/GUI-Model-{MB,AC}/stage1_full/gemma-4-{e2b,e4b}.yaml`) 과 notebook `_MODEL_CONFIG` + Unsloth Stage1 YAML 생성 셀을 함께 동기화한다. `_unsloth_train.py` 가 `FastModel.from_pretrained(load_in_16bit=..., use_gradient_checkpointing=...)`, `get_chat_template(tokenizer, template)`, Full FT 분기에서 `freeze_vision_tower` 명시적 freeze, `SFTConfig.optim=...` 로 모두 소비하므로 키를 빼면 권장 동작이 깨진다. `gradient_checkpointing` 은 모델 로드 단계에서만 적용되며 `SFTConfig` 에 다시 넘기지 않는다.
 - 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `MB` 또는 `AC`, `{category}` 는 `adapters | eval | merged`. `adapters/` · `merged/` 는 flat 네이밍 `{MODEL}_{detail}/` (예: `gemma-4-e2b_stage1_full`, `qwen3-vl-8b_stage2_lora_world_model`). `eval/` 은 `{MODEL}/stage{1,2}_eval/...` 중첩 구조 유지. 모든 산출물의 루트는 `GUI-Model/outputs/` 이다.
 - `data/` 아래 실제 디렉토리명은 `MobiBench`, `AndroidControl` 이다.
 - eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.

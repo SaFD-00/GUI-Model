@@ -260,3 +260,9 @@ GUI-Model/outputs/{DS}/
 - Unsloth 체크포인트는 HF 표준 safetensors, LoRA adapter 는 PEFT 표준이므로 `vllm_infer.py` 가 backend 독립적으로 로드한다.
 - `scripts/_unsloth_train.py` 는 모듈 최상단에서 `import unsloth` 를 선행시키고 `UNSLOTH_RETURN_LOGITS=1` 을 설정한다. trl ≥ 0.24 의 `SFTTrainer.compute_loss` 가 `entropy_from_logits(outputs.logits)` 를 직접 호출하기 때문이며, Unsloth 기본값(EMPTY_LOGITS) 과 충돌하면 `TypeError: 'function' object is not subscriptable` 로 첫 step 에서 실패한다.
 - trl 0.24 / transformers 5.x API 매핑: `SFTConfig(max_length=...)`, `SFTTrainer(processing_class=...)` 를 사용한다. 구버전 키(`max_seq_length`, `tokenizer=`, `overwrite_output_dir`) 는 `TypeError` 를 낸다.
+- `scripts/_unsloth_train.py` 의 Unsloth Full FT 권장 사양 매핑 (Gemma-4 e2b/e4b stage1):
+  - 모델 로드 시 `FastModel.from_pretrained(load_in_16bit=True, use_gradient_checkpointing="unsloth", full_finetuning=True)` 로 호출 → YAML `load_in_16bit`, `gradient_checkpointing` 키가 그대로 전달된다.
+  - `gradient_checkpointing` 은 모델 로드 단계에서만 적용하며 `SFTConfig` 에는 전달하지 않는다 (이중 적용 방지).
+  - 모델 로드 직후 `get_chat_template(tokenizer, cfg["template"])` 호출 → YAML `template: gemma4` 가 실제 chat token 정합성에 반영된다.
+  - Full FT 분기에서 `freeze_vision_tower: true` 면 `vision_tower|vision_model|visual|image_encoder` 키워드를 포함한 named parameter 의 `requires_grad=False` 처리 후 frozen 텐서 수/파라미터 수를 stderr 로 출력한다.
+  - `SFTConfig.optim` 은 YAML `optim` (기본 `adamw_8bit`) 을 사용하며, bitsandbytes 8-bit optimizer 로 메모리를 절감한다.

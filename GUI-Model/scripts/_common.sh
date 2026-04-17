@@ -6,6 +6,20 @@
 
 set -euo pipefail
 
+# 이 환경은 일부 deps (typing_extensions, regex, fsspec, peft, trl, deepspeed 등)
+# 가 PYTHONUSERBASE 아래에만 설치되어 있으므로 user-site 는 비활성화하지 않는다.
+# 다만 /root/.local/workspace/python-packages/bin 의 낡은 accelerate CLI 는
+# shebang 이 base env python 을 가리킬 때가 있어 `No module named 'torch'` 를
+# 유발한다. conda env 가 활성화되어 있다면 해당 env 의 bin 을 PATH 맨 앞에 고정해
+# env 소속 CLI (/root/anaconda3/envs/gui-model/bin/accelerate 등) 가 먼저
+# 잡히도록 강제한다.
+if [[ -n "${CONDA_PREFIX:-}" ]]; then
+  export PATH="$CONDA_PREFIX/bin:$PATH"
+else
+  echo "[!] conda env 가 활성화되어 있지 않습니다. 'conda activate gui-model' 후 다시 실행하세요." >&2
+  exit 1
+fi
+
 if (( BASH_VERSINFO[0] < 4 )); then
   echo "[!] bash 4+ required (current: $BASH_VERSION)." >&2
   echo "    macOS 기본 /bin/bash 3.2 는 지원하지 않습니다. 'brew install bash' 후 재실행하세요." >&2

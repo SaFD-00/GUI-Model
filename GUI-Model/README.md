@@ -64,29 +64,53 @@ GUI-Model/
 
 ## 환경 설치
 
+단일 진입점. `setup.py` 의 `install_requires` 가 `./LlamaFactory` 와 `./unsloth[huggingface,triton]` 을 PEP 508 `file://` direct reference 로 연쇄 설치하고, `accelerate`/`vllm`/`deepspeed`/metrics 패키지를 함께 해결한다.
+
 ```bash
-pip install -e .
-
-# LlamaFactory backend (Qwen/LLaVA 계열)
-if [ ! -d LlamaFactory ]; then
-  git clone https://github.com/hiyouga/LlamaFactory.git
-fi
-pip install -e "./LlamaFactory[torch,metrics]"
-pip install -r LlamaFactory/requirements/metrics.txt -r LlamaFactory/requirements/deepspeed.txt
-pip install vllm
-
-# Unsloth backend (Gemma-4 계열)
-if [ ! -d unsloth ]; then
-  git clone https://github.com/unslothai/unsloth.git
-fi
-pip install -e "./unsloth"
+conda activate gui-model
+cd /path/to/GUI-Model
+PIP_USER=0 pip install --no-user -e .
 ```
 
-추가 전제:
+`PIP_USER=0` / `--no-user` 는 root 유저 + `PYTHONUSERBASE` 조합에서 pip 가 deps 를 user-site(예: `/root/.local/workspace/python-packages`) 로 흘려 conda env `bin/` 에 `accelerate` 같은 CLI entry point 가 만들어지지 않는 사고를 막는다.
 
-- Python 3.10+
+### 전제
+
+- Python 3.10 이상, 3.13 미만
 - bash 4+ (`scripts/_common.sh` 기준)
 - merge/export 단계에서는 `HF_TOKEN` (HF Hub push 용), `pyyaml`
+- `./LlamaFactory`, `./unsloth` 는 vendored non-editable 로 설치된다. 서브프로젝트 소스를 수정하며 쓰고 싶으면 아래로 덮어쓴다:
+
+  ```bash
+  pip install -e ./LlamaFactory --no-deps
+  pip install -e './unsloth[huggingface,triton]' --no-deps
+  ```
+
+### PATH / user-site 정책
+
+`scripts/_common.sh` 는 conda env 가 활성화돼 있을 때 `$CONDA_PREFIX/bin` 을 PATH 최상단에 고정한다. user-site (`PYTHONUSERBASE/.../bin`) 에 낡은 `accelerate` CLI 가 남아 있어도 env 소속 CLI 가 먼저 잡히도록 보장하기 위함이며, user-site 자체는 유지한다 (일부 deps 가 거기 설치된 상태인 환경을 고려).
+
+conda env 미활성 상태에서 `scripts/*.sh` 를 실행하면 스크립트가 바로 중단된다. 반드시 `conda activate gui-model` 먼저.
+
+### 깨진 env 복구
+
+user-site 에 손상된 패키지가 섞여 `pip install -e .` 가 "already satisfied" 로 넘어가거나 CLI shebang 이 base env python 을 가리키는 상태라면:
+
+```bash
+# 문제 패키지만 env 에 강제 재설치 (예: accelerate)
+PIP_USER=0 pip install --no-user --force-reinstall --no-deps "accelerate>=1.3.0,<=1.11.0"
+
+# 또는 전체 재해석
+PIP_USER=0 pip install --no-user --force-reinstall --no-deps -e .
+```
+
+검증:
+
+```bash
+which accelerate                 # → $CONDA_PREFIX/bin/accelerate
+head -1 "$(which accelerate)"    # → #!$CONDA_PREFIX/bin/python...
+python -c "import accelerate, torch; print(accelerate.__file__, torch.__version__)"
+```
 
 ## 데이터 준비
 

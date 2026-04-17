@@ -164,7 +164,7 @@ def main() -> None:
     import torch
     from datasets import Dataset
     from trl import SFTConfig, SFTTrainer
-    from unsloth import FastModel, FastVisionModel
+    from unsloth import FastModel, FastVisionModel, get_chat_template
     from unsloth.trainer import UnslothVisionDataCollator
 
     model_name: str = cfg["model_name_or_path"]
@@ -173,16 +173,31 @@ def main() -> None:
     full_finetuning = bool(cfg.get("full_finetuning", False)) or (
         cfg.get("finetuning_type") == "full"
     )
+    load_in_16bit = bool(cfg.get("load_in_16bit", full_finetuning and not load_in_4bit))
     dtype = torch.bfloat16 if cfg.get("bf16", True) else torch.float16
+
+    gc_cfg = cfg.get("gradient_checkpointing", "unsloth")
+    if isinstance(gc_cfg, str):
+        gc_for_model: bool | str = (
+            gc_cfg if gc_cfg.lower() not in {"false", "none", ""} else False
+        )
+    else:
+        gc_for_model = bool(gc_cfg)
 
     # --- model / tokenizer ---
     model, tokenizer = FastModel.from_pretrained(
         model_name=model_name,
         max_seq_length=max_seq_length,
         load_in_4bit=load_in_4bit,
+        load_in_16bit=load_in_16bit,
         full_finetuning=full_finetuning,
         dtype=dtype,
+        use_gradient_checkpointing=gc_for_model,
     )
+
+    chat_template = cfg.get("template")
+    if chat_template:
+        tokenizer = get_chat_template(tokenizer, chat_template)
 
     if cfg.get("finetuning_type") == "lora" and not full_finetuning:
         lora_target = cfg.get("lora_target", "all")
@@ -203,6 +218,21 @@ def main() -> None:
 
     FastVisionModel.for_training(model)
 
+    if full_finetuning and bool(cfg.get("freeze_vision_tower", False)):
+        vision_keywords = ("vision_tower", "vision_model", "visual", "image_encoder")
+        frozen, frozen_params = 0, 0
+        for name, param in model.named_parameters():
+            if any(k in name for k in vision_keywords):
+                if param.requires_grad:
+                    param.requires_grad = False
+                    frozen += 1
+                    frozen_params += param.numel()
+        print(
+            f"[+] freeze_vision_tower=True: froze {frozen} tensors "
+            f"({frozen_params:,} params)",
+            file=sys.stderr,
+        )
+
     # --- dataset ---
     dataset_path = resolve(cfg["dataset_path"], base_dir)
     if not dataset_path.is_file():
@@ -222,14 +252,6 @@ def main() -> None:
     output_dir = resolve(cfg["output_dir"], base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    gc_raw = cfg.get("gradient_checkpointing", "unsloth")
-    if isinstance(gc_raw, bool):
-        gc_flag = gc_raw
-    elif isinstance(gc_raw, str):
-        gc_flag = gc_raw.lower() not in {"false", "none", ""}
-    else:
-        gc_flag = True
-
     sft_args = SFTConfig(
         output_dir=str(output_dir),
         per_device_train_batch_size=int(cfg.get("per_device_train_batch_size", 1)),
@@ -240,9 +262,9 @@ def main() -> None:
         warmup_ratio=float(cfg.get("warmup_ratio", 0.0)),
         weight_decay=float(cfg.get("weight_decay", 0.0)),
         max_grad_norm=float(cfg.get("max_grad_norm", 1.0)),
+        optim=str(cfg.get("optim", "adamw_8bit")),
         bf16=bool(cfg.get("bf16", True)),
         fp16=bool(cfg.get("fp16", False)),
-        gradient_checkpointing=gc_flag,
         save_strategy=str(cfg.get("save_strategy", "epoch")),
         save_total_limit=int(cfg.get("save_total_limit", 5)),
         logging_steps=int(cfg.get("logging_steps", 1)),
