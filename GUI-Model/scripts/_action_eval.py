@@ -2,8 +2,10 @@
 """
 Standalone Stage 2 Action Prediction evaluator + winner selector.
 
-Ported from gui-model.ipynb Cell 41+42. 구조는 scripts/_hungarian_eval.py 와 동일하게
-`score` / `select` 두 서브커맨드를 제공하여 shell 파이프라인과 notebook 이 동일 결과를 낸다.
+본 스크립트의 정본은 ``gui-model.ipynb`` Cell 139 이며 두 곳의 채점 함수는
+글자 단위로 동일하게 유지된다. 메트릭은 AndroidControl 데이터셋의 실제 스키마
+(``bounds`` 필드 영구 부재, element-index 기반 grounding) 에 맞춘
+**Step Accuracy (SA)** 단일 1차 지표를 사용한다.
 
 Subcommands
 -----------
@@ -19,8 +21,29 @@ Examples
 
   python scripts/_action_eval.py select \\
       --eval-dir  outputs/AC/eval/{MODEL}/stage2_eval/lora_world_model \\
-      --train-dir outputs/AC/adapters/{MODEL}/stage2_lora_world_model \\
-      --metric    overall_score
+      --train-dir outputs/AC/adapters/{MODEL}_stage2_lora_world_model \\
+      --metric    step_accuracy
+
+Step Accuracy 정의 (요약)
+-------------------------
+SA = (1/N) · Σ correct_i,  correct_i = 1 iff (parse_ok ∧ type==gt ∧ field_match(type))
+
+  type            field_match
+  ─────────────── ──────────────────────────────────────────────
+  navigate_back   (필드 없음) → 항상 통과
+  finish          (status 단일값) → 항상 통과
+  click           str(pred.index) == str(gt.index)
+  long_click      str(pred.index) == str(gt.index)
+  scroll          norm(direction) 일치
+  open_app        norm(params.app) 일치
+  input           norm(params.text) 일치 (gt.index=null 무시)
+
+  norm(s) = str(s or '').strip().lower()
+
+Reference baselines (보고용)
+  - type random baseline: 1/7 ≈ 14.3%
+  - scroll majority baseline (down): 79.0%
+  - finish.status constant baseline: 100% (해석 무의미)
 """
 from __future__ import annotations
 
@@ -32,29 +55,7 @@ from collections import defaultdict
 from pathlib import Path
 
 
-# ── Action Parsing & IoU (Cell 41 복제) ──────────────────────────────────
-def parse_bounds(bounds_str):
-    try:
-        nums = re.findall(r'[\d.]+', str(bounds_str))
-        return [float(n) for n in nums[:4]] if len(nums) >= 4 else None
-    except Exception:
-        return None
-
-
-def calc_iou(box1, box2):
-    if box1 is None or box2 is None:
-        return 0.0
-    x1 = max(box1[0], box2[0])
-    y1 = max(box1[1], box2[1])
-    x2 = min(box1[2], box2[2])
-    y2 = min(box1[3], box2[3])
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    area1 = max(0, box1[2] - box1[0]) * max(0, box1[3] - box1[1])
-    area2 = max(0, box2[2] - box2[0]) * max(0, box2[3] - box2[1])
-    union = area1 + area2 - inter
-    return inter / union if union > 0 else 0.0
-
-
+# ── Action Parsing ───────────────────────────────────────────────────────
 def parse_action(text):
     text = (text or "").strip()
     try:
@@ -76,28 +77,80 @@ def parse_action(text):
     return None
 
 
+# ── Field 추출 헬퍼 (top-level + nested params 모두 지원) ────────────────
+def _pval(action, key):
+    if action is None:
+        return None
+    if key in action:
+        return action[key]
+    return (action.get('params') or {}).get(key)
+
+
+def _norm(s):
+    return str(s if s is not None else '').strip().lower()
+
+
+# ── Step Accuracy 채점 ───────────────────────────────────────────────────
+# field_match(type) 가 정의된 type 만 step_correct 로 인정. 그 외 type 은 False.
+_FIELD_MATCH_TYPES = {
+    'navigate_back', 'finish', 'click', 'long_click',
+    'scroll', 'open_app', 'input',
+}
+
+
 def evaluate_single(gt_action, pred_action):
-    result = {'type_correct': False, 'iou': 0.0, 'params_correct': False,
-              'has_bounds': False, 'has_params': False}
+    result = {
+        'parsed': pred_action is not None,
+        'type_correct': False,
+        'step_correct': False,
+        'has_index_check': False,    # click / long_click
+        'has_dir_check': False,      # scroll
+        'has_app_check': False,      # open_app
+        'has_text_check': False,     # input
+    }
     if pred_action is None:
         return result
-    gt_type = gt_action.get('type', '')
-    pred_type = pred_action.get('type', '')
-    result['type_correct'] = (gt_type.lower() == pred_type.lower())
 
-    gt_bounds = parse_bounds(gt_action.get('bounds'))
-    pred_bounds = parse_bounds(pred_action.get('bounds'))
-    if gt_bounds is not None:
-        result['has_bounds'] = True
-        result['iou'] = calc_iou(gt_bounds, pred_bounds)
+    gt_type = str(gt_action.get('type', '')).lower()
+    pred_type = str(pred_action.get('type', '')).lower()
+    result['type_correct'] = (gt_type == pred_type)
+    if not result['type_correct']:
+        return result
 
-    param_keys = {'openapp': 'app', 'input': 'text', 'swipe': 'direction'}
-    if gt_type.lower() in param_keys:
-        result['has_params'] = True
-        key = param_keys[gt_type.lower()]
-        gt_val = str(gt_action.get(key, '')).strip().lower()
-        pred_val = str(pred_action.get(key, '')).strip().lower()
-        result['params_correct'] = (gt_val == pred_val)
+    # field_match
+    if gt_type in ('navigate_back', 'finish'):
+        result['step_correct'] = True
+        return result
+
+    if gt_type in ('click', 'long_click'):
+        result['has_index_check'] = True
+        result['step_correct'] = (
+            str(gt_action.get('index')) == str(pred_action.get('index'))
+        )
+        return result
+
+    if gt_type == 'scroll':
+        result['has_dir_check'] = True
+        result['step_correct'] = (
+            _norm(_pval(gt_action, 'direction')) == _norm(_pval(pred_action, 'direction'))
+        )
+        return result
+
+    if gt_type == 'open_app':
+        result['has_app_check'] = True
+        result['step_correct'] = (
+            _norm(_pval(gt_action, 'app')) == _norm(_pval(pred_action, 'app'))
+        )
+        return result
+
+    if gt_type == 'input':
+        result['has_text_check'] = True
+        result['step_correct'] = (
+            _norm(_pval(gt_action, 'text')) == _norm(_pval(pred_action, 'text'))
+        )
+        return result
+
+    # unknown type — type 만 일치해도 step 은 False (정책)
     return result
 
 
@@ -107,10 +160,20 @@ def evaluate_predictions(test_path, pred_path):
     with open(pred_path, 'r') as f:
         pred_entries = [json.loads(line) for line in f if line.strip()]
 
+    if len(gt_entries) != len(pred_entries):
+        print(f"[warn] length mismatch: gt={len(gt_entries)} pred={len(pred_entries)} "
+              f"→ truncating to {min(len(gt_entries), len(pred_entries))}", file=sys.stderr)
+
     results = []
-    per_type = defaultdict(lambda: {'count': 0, 'type_correct': 0,
-                                    'iou_sum': 0.0, 'iou_count': 0,
-                                    'params_correct': 0, 'params_count': 0})
+    per_type = defaultdict(lambda: {
+        'count': 0, 'type_correct': 0, 'step_correct': 0,
+    })
+    cond = {
+        'index': {'n': 0, 'k': 0},   # click + long_click
+        'dir':   {'n': 0, 'k': 0},   # scroll
+        'app':   {'n': 0, 'k': 0},   # open_app
+        'text':  {'n': 0, 'k': 0},   # input
+    }
 
     for gt_entry, pred_entry in zip(gt_entries, pred_entries):
         gt_action = json.loads(gt_entry['messages'][-1]['value'])
@@ -118,52 +181,61 @@ def evaluate_predictions(test_path, pred_path):
         pred_action = parse_action(pred_text)
 
         r = evaluate_single(gt_action, pred_action)
-        r['gt_type'] = gt_action.get('type', 'unknown').lower()
-        r['parsed'] = (pred_action is not None)
+        gt_type = str(gt_action.get('type', 'unknown')).lower()
+        r['gt_type'] = gt_type
         results.append(r)
 
-        t = r['gt_type']
-        per_type[t]['count'] += 1
-        per_type[t]['type_correct'] += int(r['type_correct'])
-        if r['has_bounds']:
-            per_type[t]['iou_sum'] += r['iou']
-            per_type[t]['iou_count'] += 1
-        if r['has_params']:
-            per_type[t]['params_correct'] += int(r['params_correct'])
-            per_type[t]['params_count'] += 1
+        per_type[gt_type]['count'] += 1
+        per_type[gt_type]['type_correct'] += int(r['type_correct'])
+        per_type[gt_type]['step_correct'] += int(r['step_correct'])
+
+        if r['has_index_check']:
+            cond['index']['n'] += 1
+            cond['index']['k'] += int(r['step_correct'])
+        if r['has_dir_check']:
+            cond['dir']['n'] += 1
+            cond['dir']['k'] += int(r['step_correct'])
+        if r['has_app_check']:
+            cond['app']['n'] += 1
+            cond['app']['k'] += int(r['step_correct'])
+        if r['has_text_check']:
+            cond['text']['n'] += 1
+            cond['text']['k'] += int(r['step_correct'])
 
     total = len(results)
-    type_correct = sum(r['type_correct'] for r in results)
-    bounds_entries = [r for r in results if r['has_bounds']]
-    params_entries = [r for r in results if r['has_params']]
+    parsed = sum(1 for r in results if r['parsed'])
+    type_correct = sum(int(r['type_correct']) for r in results)
+    step_correct = sum(int(r['step_correct']) for r in results)
 
+    parse_rate = parsed / total if total else 0
     type_acc = type_correct / total if total else 0
-    avg_iou = sum(r['iou'] for r in results) / total if total else 0
-    cond_iou = sum(r['iou'] for r in bounds_entries) / len(bounds_entries) if bounds_entries else 0
-    params_acc_all = sum(r['params_correct'] for r in results) / total if total else 0
-    cond_params = sum(r['params_correct'] for r in params_entries) / len(params_entries) if params_entries else 0
-    overall = type_acc * (0.5 * avg_iou + 0.5 * params_acc_all)
-    parse_rate = sum(1 for r in results if r['parsed']) / total if total else 0
+    step_acc = step_correct / total if total else 0
 
     per_type_summary = {}
     for t, d in per_type.items():
         per_type_summary[t] = {
-            'count': d['count'],
+            'count':    d['count'],
             'type_acc': round(d['type_correct'] / d['count'] if d['count'] else 0, 4),
-            'avg_iou': round(d['iou_sum'] / d['iou_count'] if d['iou_count'] else 0, 4),
-            'params_acc': round(d['params_correct'] / d['params_count'] if d['params_count'] else 0, 4),
+            'step_acc': round(d['step_correct'] / d['count'] if d['count'] else 0, 4),
         }
 
+    macro_step = (sum(v['step_acc'] for v in per_type_summary.values()) /
+                  len(per_type_summary)) if per_type_summary else 0
+
+    def _ratio(c):
+        return c['k'] / c['n'] if c['n'] else 0
+
     return {
-        'total': total,
-        'parse_rate':      round(parse_rate, 4),
-        'type_accuracy':   round(type_acc, 4),
-        'avg_bounds_iou':  round(avg_iou, 4),
-        'cond_bounds_iou': round(cond_iou, 4),
-        'params_accuracy': round(params_acc_all, 4),
-        'cond_params_acc': round(cond_params, 4),
-        'overall_score':   round(overall, 4),
-        'per_type':        per_type_summary,
+        'total':                total,
+        'parse_rate':           round(parse_rate, 4),
+        'type_accuracy':        round(type_acc, 4),
+        'step_accuracy':        round(step_acc, 4),
+        'macro_step_accuracy':  round(macro_step, 4),
+        'cond_index_acc':       round(_ratio(cond['index']), 4),
+        'cond_dir_acc':         round(_ratio(cond['dir']),   4),
+        'cond_app_acc':         round(_ratio(cond['app']),   4),
+        'cond_text_acc':        round(_ratio(cond['text']),  4),
+        'per_type':             per_type_summary,
     }
 
 
@@ -175,8 +247,10 @@ def _cmd_score(args):
         json.dump(metrics, f, ensure_ascii=False, indent=2)
     print(f"[score] pred={args.pred}")
     print(f"[score] total={metrics['total']}  parse={metrics['parse_rate']:.2%}  "
-          f"type={metrics['type_accuracy']:.4f}  iou={metrics['avg_bounds_iou']:.4f}  "
-          f"params={metrics['params_accuracy']:.4f}  overall={metrics['overall_score']:.4f}")
+          f"type={metrics['type_accuracy']:.4f}  step={metrics['step_accuracy']:.4f}  "
+          f"macro={metrics['macro_step_accuracy']:.4f}  "
+          f"index={metrics['cond_index_acc']:.4f}  dir={metrics['cond_dir_acc']:.4f}  "
+          f"app={metrics['cond_app_acc']:.4f}  text={metrics['cond_text_acc']:.4f}")
     print(f"[score] saved: {args.output}")
     return 0
 
@@ -186,6 +260,12 @@ def _ckpt_step(name: str) -> int:
         return int(name.split("-", 1)[1])
     except (IndexError, ValueError):
         return -1
+
+
+_SELECT_KEYS = (
+    "step_accuracy", "macro_step_accuracy", "type_accuracy", "parse_rate",
+    "cond_index_acc", "cond_dir_acc", "cond_app_acc", "cond_text_acc",
+)
 
 
 def _cmd_select(args):
@@ -202,18 +282,15 @@ def _cmd_select(args):
         except Exception as e:
             print(f"[select] WARN: skip {mpath} ({e})", file=sys.stderr)
             continue
-        candidates.append({
-            "checkpoint": mpath.parent.name,
-            "step": _ckpt_step(mpath.parent.name),
+        row = {
+            "checkpoint":   mpath.parent.name,
+            "step":         _ckpt_step(mpath.parent.name),
             "metrics_path": str(mpath),
-            metric: m.get(metric, 0.0),
-            "parse_rate": m.get("parse_rate", 0.0),
-            "type_accuracy": m.get("type_accuracy", 0.0),
-            "avg_bounds_iou": m.get("avg_bounds_iou", 0.0),
-            "params_accuracy": m.get("params_accuracy", 0.0),
-            "overall_score": m.get("overall_score", 0.0),
-            "total": m.get("total", 0),
-        })
+        }
+        for k in _SELECT_KEYS:
+            row[k] = m.get(k, 0.0)
+        row["total"] = m.get("total", 0)
+        candidates.append(row)
 
     if not candidates:
         print(f"[select] ERROR: no checkpoint metrics under {eval_dir}/checkpoint-*/",
@@ -226,23 +303,25 @@ def _cmd_select(args):
     # 요약 출력
     print(f"[select] metric = {metric}  (tie-breaker: larger step)")
     print(f"[select] eval_dir={eval_dir}")
-    header = f"{'checkpoint':<20} {'step':>7} {metric:>15} {'type_acc':>9} {'iou':>7} {'params':>7} {'overall':>9} {'parse':>7}"
+    header = (f"{'checkpoint':<20} {'step':>7} {'step_acc':>9} {'macro':>7} "
+              f"{'type':>7} {'index':>7} {'dir':>7} {'app':>7} {'text':>7} {'parse':>7}")
     print(header)
     print("-" * len(header))
     for c in candidates:
         mark = "  <-- winner" if c is winner else ""
-        print(f"{c['checkpoint']:<20} {c['step']:>7} {c[metric]:>15.4f} "
-              f"{c['type_accuracy']:>9.4f} {c['avg_bounds_iou']:>7.4f} "
-              f"{c['params_accuracy']:>7.4f} {c['overall_score']:>9.4f} "
-              f"{c['parse_rate']:>7.2%}{mark}")
+        print(f"{c['checkpoint']:<20} {c['step']:>7} "
+              f"{c['step_accuracy']:>9.4f} {c['macro_step_accuracy']:>7.4f} "
+              f"{c['type_accuracy']:>7.4f} {c['cond_index_acc']:>7.4f} "
+              f"{c['cond_dir_acc']:>7.4f} {c['cond_app_acc']:>7.4f} "
+              f"{c['cond_text_acc']:>7.4f} {c['parse_rate']:>7.2%}{mark}")
 
     train_dir.mkdir(parents=True, exist_ok=True)
     (train_dir / "BEST_CHECKPOINT").write_text(winner["checkpoint"] + "\n", encoding='utf-8')
     summary = {
-        "selected": winner["checkpoint"],
-        "metric": metric,
+        "selected":     winner["checkpoint"],
+        "metric":       metric,
         "metric_value": winner[metric],
-        "candidates": candidates,
+        "candidates":   candidates,
     }
     (train_dir / "BEST_CHECKPOINT.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
@@ -267,9 +346,9 @@ def main():
                      help="Directory containing checkpoint-*/action_metrics.json (variant-specific)")
     p_l.add_argument("--train-dir", required=True,
                      help="Training output_dir where BEST_CHECKPOINT will be written")
-    p_l.add_argument("--metric", default="overall_score",
-                     help="Metric key to maximize (default: overall_score). "
-                          "Options: overall_score, type_accuracy, avg_bounds_iou, params_accuracy, parse_rate")
+    p_l.add_argument("--metric", default="step_accuracy",
+                     help=f"Metric key to maximize (default: step_accuracy). "
+                          f"Options: {', '.join(_SELECT_KEYS)}")
     p_l.set_defaults(func=_cmd_select)
 
     args = p.parse_args()

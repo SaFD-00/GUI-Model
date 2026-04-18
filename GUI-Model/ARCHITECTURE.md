@@ -254,10 +254,48 @@ GUI-Model/outputs/{DS}/
 - 비교 대상:
   - `lora_base`
   - `lora_world_model`
-- winner metric: `overall_score`
+- winner metric: `step_accuracy`
 - winner 기록 위치:
   - `outputs/{DS}/adapters/{MODEL}_stage2_lora_base/BEST_CHECKPOINT`
   - `outputs/{DS}/adapters/{MODEL}_stage2_lora_world_model/BEST_CHECKPOINT`
+
+#### Step Accuracy (SA) 정의
+
+AndroidControl 데이터셋은 GT 에 `bounds` 필드가 영구 부재하고 element-index 기반
+grounding 을 사용한다. IoU 기반 채점은 구조적으로 0 이 되므로, Stage 2 평가는 다음
+정의를 따른다.
+
+```
+SA = (1/N) · Σ correct_i
+
+correct_i = 1 iff (parse_ok ∧ type==gt.type ∧ field_match(type))
+         = 0 otherwise
+```
+
+| GT type | field_match 조건 |
+|---|---|
+| `navigate_back` | (검증 필드 없음) → 항상 통과 |
+| `finish` | (status 단일값 `"complete"`) → 항상 통과 |
+| `click`, `long_click` | `str(pred.index) == str(gt.index)` |
+| `scroll` | `norm(direction)` 일치 |
+| `open_app` | `norm(params.app)` 일치 (top-level 평탄화 fallback 허용) |
+| `input` | `norm(params.text)` 일치 (gt.index=null 무시) |
+
+`norm(s) = str(s or '').strip().lower()` — 모든 string field 통일.
+
+`action_metrics.json` 키:
+- 1차: `step_accuracy` (winner 선택 기본 metric)
+- 보조: `macro_step_accuracy` (7 type 평균), `parse_rate`, `type_accuracy`,
+  `cond_index_acc` / `cond_dir_acc` / `cond_app_acc` / `cond_text_acc`,
+  `per_type[t] = {count, type_acc, step_acc}`
+
+Reference baselines (해석용):
+- `type` random baseline: 1/7 ≈ 14.3%
+- `scroll` majority baseline (`down`): 79.0%
+- `finish.status` constant baseline: 100% (해석 무의미)
+
+정본은 `gui-model.ipynb` Cell 139 이며 `scripts/_action_eval.py` 와 글자 단위 동치를 유지한다.
+회귀 테스트는 `tests/test_action_eval.py` (30 케이스).
 
 ## 7. 중요한 운영 제약
 

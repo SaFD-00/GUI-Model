@@ -131,11 +131,12 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       done
 
       # Phase C: winner 선택 → BEST_CHECKPOINT 기록 (lora 출력 디렉토리에)
+      # winner metric: step_accuracy (Step Accuracy — AndroidControl 표준 정의).
       run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_select" \
         python "$BASE_DIR/scripts/_action_eval.py" select \
           --eval-dir  "$EVAL_DIR" \
           --train-dir "$LORA_DIR" \
-          --metric    overall_score
+          --metric    step_accuracy
     done
   done
 done

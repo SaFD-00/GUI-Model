@@ -76,14 +76,34 @@ def push_to_hub(local_dir: Path, repo_id: str, private: bool) -> None:
 
 
 def merge_full(args: argparse.Namespace) -> None:
-    """Full FT checkpoint is a complete HF model — copy to export_dir as-is."""
+    """Full FT checkpoint is a complete HF model — copy to export_dir as-is.
+
+    Vision-aware Stage 1 merge: ``AutoModelForImageTextToText`` 우선 시도해
+    vision tower / mm projector weight 가 누락되지 않도록 한다. multimodal 모델이
+    아닌 경우 ``AutoModelForCausalLM`` 으로 fallback.
+    """
     from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+    try:
+        from transformers import AutoModelForImageTextToText
+    except ImportError:  # transformers < 4.45 등 구버전
+        AutoModelForImageTextToText = None  # type: ignore
 
     src = args.checkpoint.resolve()
     dst = args.export_dir.resolve()
     dst.mkdir(parents=True, exist_ok=True)
 
-    model = AutoModelForCausalLM.from_pretrained(str(src), torch_dtype="auto")
+    model = None
+    if AutoModelForImageTextToText is not None:
+        try:
+            model = AutoModelForImageTextToText.from_pretrained(str(src), torch_dtype="auto")
+            print("[+] Loaded with AutoModelForImageTextToText (vision-aware)", file=sys.stderr)
+        except Exception as exc:
+            print(f"[!] AutoModelForImageTextToText failed ({exc}); "
+                  f"falling back to AutoModelForCausalLM", file=sys.stderr)
+            model = None
+    if model is None:
+        model = AutoModelForCausalLM.from_pretrained(str(src), torch_dtype="auto")
+        print("[+] Loaded with AutoModelForCausalLM (fallback)", file=sys.stderr)
     model.save_pretrained(str(dst), max_shard_size=args.max_shard_size, safe_serialization=True)
 
     try:

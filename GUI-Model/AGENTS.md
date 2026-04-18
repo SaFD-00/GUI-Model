@@ -20,7 +20,8 @@
 - **Backend 변경**: 기존 모델을 다른 backend 로 옮길 때는 `_common.sh::MODEL_BACKEND` 한 줄만 수정하면 된다. 단, 해당 backend 용 YAML 이 준비되어 있어야 한다.
 - **notebook 실행 순서나 YAML 생성 흐름**: [`gui-model.ipynb`](./gui-model.ipynb) 와 [`scripts/stage1_*.sh`](./scripts/stage1_train.sh), [`scripts/stage2_*.sh`](./scripts/stage2_train.sh) 를 함께 맞춰라.
 - **데이터 분할 규칙**: [`scripts/split_data.py`](./scripts/split_data.py) 가 기준이다.
-- **Stage 1 평가**: [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py), **Stage 2 평가**: [`scripts/_action_eval.py`](./scripts/_action_eval.py) 가 기준이다.
+- **Stage 1 평가**: [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py) 가 기준 (winner metric `avg_hungarian_f1`, 정본은 notebook Cell 55+56).
+- **Stage 2 평가**: [`scripts/_action_eval.py`](./scripts/_action_eval.py) 가 기준 (winner metric `step_accuracy` — Step Accuracy, 정본은 notebook Cell 139, 회귀 테스트 [`tests/test_action_eval.py`](./tests/test_action_eval.py)). 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6 참고.
 - **shell 실행 공통 규약**: `MB`/`AC` 매핑, 모델 레지스트리 → [`scripts/_common.sh`](./scripts/_common.sh)
 - **Python 의존성**: [`setup.py`](./setup.py) 가 실제 설치 기준.
 

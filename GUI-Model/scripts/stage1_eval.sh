@@ -99,7 +99,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
             --dataset '$DS_TEST' \
             --dataset_dir '$LF_ROOT/data' \
             ${VLLM_COMMON_ARGS[*]} \
-          --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+            --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
             --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \
             --matrix_save_name '$OUT_CKPT_REL/predict_results.json' && \
           python '$BASE_DIR/scripts/_hungarian_eval.py' score \

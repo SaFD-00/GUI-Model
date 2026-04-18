@@ -222,7 +222,7 @@ def main() -> None:
             finetune_language_layers=True,
             finetune_attention_modules=True,
             finetune_mlp_modules=True,
-            use_gradient_checkpointing=cfg.get("gradient_checkpointing", "unsloth"),
+            use_gradient_checkpointing=gc_for_model,
             random_state=int(cfg.get("seed", 3407)),
         )
 

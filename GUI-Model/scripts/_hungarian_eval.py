@@ -2,8 +2,8 @@
 """
 Standalone Hungarian/BLEU/ROUGE evaluator for Stage 1 World-Modeling predictions.
 
-Ported from gui-model.ipynb Cell 25+26. Used by scripts/stage1_eval.sh
-and can be re-run from notebook Cell 26 with identical results.
+Ported from gui-model.ipynb Cell 55+56. Used by scripts/stage1_eval.sh
+and can be re-run from notebook Cell 56 with identical results.
 
 Subcommands
 -----------
@@ -19,7 +19,7 @@ Examples
 
   python scripts/_hungarian_eval.py select \\
       --eval-dir  outputs/AC/eval/{MODEL}/stage1_eval \\
-      --train-dir outputs/AC/adapters/{MODEL}/stage1_full_world_model \\
+      --train-dir outputs/AC/adapters/{MODEL}_stage1_full \\
       --metric    avg_hungarian_f1
 """
 from __future__ import annotations

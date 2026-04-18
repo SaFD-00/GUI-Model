@@ -203,7 +203,7 @@ bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB
 
 - `stage1_eval.sh` 는 baseline + checkpoint sweep 뒤 `avg_hungarian_f1` 기준 winner 를 `BEST_CHECKPOINT` 로 기록한다.
 - `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 만든다.
-- `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model` checkpoint sweep 뒤 `overall_score` 기준 winner 를 기록한다.
+- `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model` checkpoint sweep 뒤 `step_accuracy` 기준 winner 를 기록한다 (Step Accuracy — AndroidControl 표준 정의, 메트릭 정의는 `ARCHITECTURE.md` §6 참고).
 - `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}/` 를 만든다.
 
 ## 산출물

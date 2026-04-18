@@ -1,0 +1,274 @@
+"""Regression tests for scripts/_action_eval.py Step Accuracy metric.
+
+Run:
+    cd GUI-Model
+    python -m unittest tests.test_action_eval -v
+    # or with pytest if available:
+    pytest tests/test_action_eval.py -v
+"""
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
+
+import importlib
+
+_action_eval = importlib.import_module("_action_eval")
+evaluate_single = _action_eval.evaluate_single
+evaluate_predictions = _action_eval.evaluate_predictions
+parse_action = _action_eval.parse_action
+
+
+def _gt_pred_jsonl(pairs):
+    """Build temp gt/pred jsonl files from list of (gt_action, pred_text) tuples."""
+    gt_f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+    pr_f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+    for gt, pred_text in pairs:
+        gt_f.write(json.dumps({"messages": [{"from": "gpt", "value": json.dumps(gt)}]}) + "\n")
+        pr_f.write(json.dumps({"predict": pred_text}) + "\n")
+    gt_f.close()
+    pr_f.close()
+    return Path(gt_f.name), Path(pr_f.name)
+
+
+class StepAccuracySingle(unittest.TestCase):
+    """Per-type field_match rules for evaluate_single."""
+
+    # ── click ────────────────────────────────────────────────────────────
+    def test_click_correct(self):
+        r = evaluate_single({"type": "click", "index": "12"},
+                            {"type": "click", "index": "12"})
+        self.assertTrue(r["step_correct"])
+
+    def test_click_wrong_index(self):
+        r = evaluate_single({"type": "click", "index": "12"},
+                            {"type": "click", "index": "9"})
+        self.assertFalse(r["step_correct"])
+
+    def test_click_int_vs_str(self):
+        # str(12) == str("12") — robustness
+        r = evaluate_single({"type": "click", "index": "12"},
+                            {"type": "click", "index": 12})
+        self.assertTrue(r["step_correct"])
+
+    # ── long_click ───────────────────────────────────────────────────────
+    def test_long_click_correct(self):
+        r = evaluate_single({"type": "long_click", "index": "5"},
+                            {"type": "long_click", "index": "5"})
+        self.assertTrue(r["step_correct"])
+
+    def test_long_click_wrong(self):
+        r = evaluate_single({"type": "long_click", "index": "5"},
+                            {"type": "long_click", "index": "6"})
+        self.assertFalse(r["step_correct"])
+
+    # ── scroll ───────────────────────────────────────────────────────────
+    def test_scroll_correct(self):
+        r = evaluate_single({"type": "scroll", "direction": "down"},
+                            {"type": "scroll", "direction": "down"})
+        self.assertTrue(r["step_correct"])
+
+    def test_scroll_wrong_direction(self):
+        r = evaluate_single({"type": "scroll", "direction": "down"},
+                            {"type": "scroll", "direction": "up"})
+        self.assertFalse(r["step_correct"])
+
+    def test_scroll_normalization(self):
+        r = evaluate_single({"type": "scroll", "direction": "down"},
+                            {"type": "scroll", "direction": " DOWN "})
+        self.assertTrue(r["step_correct"])
+
+    # ── open_app (nested params) ─────────────────────────────────────────
+    def test_open_app_correct_nested(self):
+        r = evaluate_single({"type": "open_app", "params": {"app": "Gmail"}},
+                            {"type": "open_app", "params": {"app": "Gmail"}})
+        self.assertTrue(r["step_correct"])
+
+    def test_open_app_wrong_app(self):
+        r = evaluate_single({"type": "open_app", "params": {"app": "Gmail"}},
+                            {"type": "open_app", "params": {"app": "Calendar"}})
+        self.assertFalse(r["step_correct"])
+
+    def test_open_app_top_level_app_fallback(self):
+        # pred 가 nested 가 아닌 top-level 로 출력해도 인식 (관용적 처리)
+        r = evaluate_single({"type": "open_app", "params": {"app": "Gmail"}},
+                            {"type": "open_app", "app": "gmail"})
+        self.assertTrue(r["step_correct"])
+
+    # ── input (nested params, gt.index=null 무시) ────────────────────────
+    def test_input_correct_nested(self):
+        r = evaluate_single({"type": "input", "index": None, "params": {"text": "hello"}},
+                            {"type": "input", "index": None, "params": {"text": "hello"}})
+        self.assertTrue(r["step_correct"])
+
+    def test_input_text_mismatch(self):
+        r = evaluate_single({"type": "input", "index": None, "params": {"text": "hello"}},
+                            {"type": "input", "index": None, "params": {"text": "world"}})
+        self.assertFalse(r["step_correct"])
+
+    def test_input_text_normalization(self):
+        r = evaluate_single({"type": "input", "index": None, "params": {"text": "Hello"}},
+                            {"type": "input", "index": None, "params": {"text": " hello "}})
+        self.assertTrue(r["step_correct"])
+
+    # ── navigate_back (type-only) ────────────────────────────────────────
+    def test_navigate_back_correct(self):
+        r = evaluate_single({"type": "navigate_back"},
+                            {"type": "navigate_back"})
+        self.assertTrue(r["step_correct"])
+
+    def test_navigate_back_type_wrong(self):
+        r = evaluate_single({"type": "navigate_back"},
+                            {"type": "click", "index": "1"})
+        self.assertFalse(r["step_correct"])
+
+    # ── finish (type-only, status 단일값이라 검증 불요) ─────────────────
+    def test_finish_correct(self):
+        r = evaluate_single({"type": "finish", "status": "complete"},
+                            {"type": "finish", "status": "complete"})
+        self.assertTrue(r["step_correct"])
+
+    def test_finish_status_irrelevant(self):
+        # 데이터셋 status 는 단일값이라 type 일치만으로 정답
+        r = evaluate_single({"type": "finish", "status": "complete"},
+                            {"type": "finish"})
+        self.assertTrue(r["step_correct"])
+
+    # ── 공통: type 불일치 / pred=None / unknown ─────────────────────────
+    def test_type_mismatch_zero(self):
+        r = evaluate_single({"type": "click", "index": "1"},
+                            {"type": "scroll", "direction": "down"})
+        self.assertFalse(r["step_correct"])
+        self.assertFalse(r["type_correct"])
+
+    def test_pred_none(self):
+        r = evaluate_single({"type": "click", "index": "1"}, None)
+        self.assertFalse(r["step_correct"])
+
+    def test_unknown_gt_type(self):
+        # 코드 경로 robustness — 알 수 없는 type 은 type 일치만 본다
+        r = evaluate_single({"type": "spell_cast", "magic": "fireball"},
+                            {"type": "spell_cast", "magic": "fireball"})
+        # type 일치는 True 지만 field_match 가 정의 안 됐으니 False 가 자연스러움
+        # (구현 정책: unknown type 은 step_correct=False)
+        self.assertFalse(r["step_correct"])
+        self.assertTrue(r["type_correct"])
+
+
+class StepAccuracyAggregate(unittest.TestCase):
+    """evaluate_predictions 집계 로직."""
+
+    def test_micro_macro_aggregation(self):
+        pairs = [
+            # 5 click: 4 correct (80%)
+            ({"type": "click", "index": "1"}, '{"type":"click","index":"1"}'),
+            ({"type": "click", "index": "2"}, '{"type":"click","index":"2"}'),
+            ({"type": "click", "index": "3"}, '{"type":"click","index":"3"}'),
+            ({"type": "click", "index": "4"}, '{"type":"click","index":"4"}'),
+            ({"type": "click", "index": "5"}, '{"type":"click","index":"X"}'),  # wrong
+            # 2 scroll: 1 correct (50%)
+            ({"type": "scroll", "direction": "down"}, '{"type":"scroll","direction":"down"}'),
+            ({"type": "scroll", "direction": "up"},   '{"type":"scroll","direction":"down"}'),  # wrong
+            # 1 navigate_back: 1 correct
+            ({"type": "navigate_back"}, '{"type":"navigate_back"}'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+
+        self.assertEqual(m["total"], 8)
+        # micro SA = 6/8 = 0.75
+        self.assertAlmostEqual(m["step_accuracy"], 6 / 8, places=4)
+        # macro SA = mean(click=0.8, scroll=0.5, navigate_back=1.0) = 0.7666...
+        self.assertAlmostEqual(m["macro_step_accuracy"], (0.8 + 0.5 + 1.0) / 3, places=4)
+        # type_acc = 8/8 = 1.0 (모두 type 맞음)
+        self.assertAlmostEqual(m["type_accuracy"], 1.0, places=4)
+        # cond_index_acc: click 5건 중 정답 4
+        self.assertAlmostEqual(m["cond_index_acc"], 4 / 5, places=4)
+        # cond_dir_acc: scroll 2건 중 정답 1
+        self.assertAlmostEqual(m["cond_dir_acc"], 1 / 2, places=4)
+        # parse_rate = 1.0
+        self.assertAlmostEqual(m["parse_rate"], 1.0, places=4)
+        # per_type 키 존재
+        for t in ("click", "scroll", "navigate_back"):
+            self.assertIn(t, m["per_type"])
+            self.assertIn("step_acc", m["per_type"][t])
+            self.assertIn("count", m["per_type"][t])
+        # bounds-related 키 부재
+        self.assertNotIn("avg_bounds_iou", m)
+        self.assertNotIn("cond_bounds_iou", m)
+
+    def test_parse_failure_zero(self):
+        pairs = [
+            ({"type": "click", "index": "1"}, "this is not json"),
+            ({"type": "click", "index": "2"}, '{"type":"click","index":"2"}'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+        self.assertAlmostEqual(m["step_accuracy"], 0.5, places=4)
+        self.assertAlmostEqual(m["parse_rate"], 0.5, places=4)
+
+    def test_codefence_parsing(self):
+        pairs = [
+            ({"type": "click", "index": "1"},
+             '```json\n{"type":"click","index":"1"}\n```'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+        self.assertAlmostEqual(m["step_accuracy"], 1.0, places=4)
+        self.assertAlmostEqual(m["parse_rate"], 1.0, places=4)
+
+    def test_length_mismatch_warns(self):
+        # gt 3, pred 2 → 짧은 쪽에 맞춰 자르되 metrics 는 계산되어야 함
+        gt_f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        pr_f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        for i in range(3):
+            gt_f.write(json.dumps({"messages": [{"from": "gpt",
+                                                 "value": '{"type":"click","index":"' + str(i) + '"}'}]}) + "\n")
+        for i in range(2):
+            pr_f.write(json.dumps({"predict": '{"type":"click","index":"' + str(i) + '"}'}) + "\n")
+        gt_f.close(); pr_f.close()
+        try:
+            m = evaluate_predictions(gt_f.name, pr_f.name)
+        finally:
+            Path(gt_f.name).unlink(); Path(pr_f.name).unlink()
+        # 2 건만 채점되어야 함
+        self.assertEqual(m["total"], 2)
+
+
+class ParseAction(unittest.TestCase):
+    def test_plain_json(self):
+        self.assertEqual(parse_action('{"type":"click","index":"1"}'),
+                         {"type": "click", "index": "1"})
+
+    def test_codefence_json(self):
+        self.assertEqual(parse_action('```json\n{"type":"click","index":"2"}\n```'),
+                         {"type": "click", "index": "2"})
+
+    def test_codefence_no_lang(self):
+        self.assertEqual(parse_action('```\n{"type":"click","index":"3"}\n```'),
+                         {"type": "click", "index": "3"})
+
+    def test_garbage(self):
+        self.assertIsNone(parse_action("hello world"))
+
+    def test_empty(self):
+        self.assertIsNone(parse_action(""))
+
+
+if __name__ == "__main__":
+    unittest.main()
