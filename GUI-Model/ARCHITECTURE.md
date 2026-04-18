@@ -13,7 +13,7 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
   │
   └── unsloth             → scripts/_unsloth_train.py / _unsloth_merge.py
         ├── YAML: unsloth/configs/GUI-Model-{DS}/stage{1,2}_*
-        └── 대상: google/gemma-4-E2B-it, google/gemma-4-E4B-it
+        └── 대상: unsloth/gemma-4-E2B-it, unsloth/gemma-4-E4B-it
 ```
 
 평가 파이프라인 (`scripts/stage{1,2}_eval.sh`) 은 backend 독립이다.
@@ -68,8 +68,8 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
 | qwen3-vl-2b | Qwen/Qwen3-VL-2B-Instruct | qwen3_vl_nothink | llamafactory |
 | qwen3-vl-4b | Qwen/Qwen3-VL-4B-Instruct | qwen3_vl_nothink | llamafactory |
 | qwen3-vl-8b | Qwen/Qwen3-VL-8B-Instruct | qwen3_vl_nothink | llamafactory |
-| gemma-4-e2b | google/gemma-4-E2B-it | gemma4 | **unsloth** |
-| gemma-4-e4b | google/gemma-4-E4B-it | gemma4 | **unsloth** |
+| gemma-4-e2b | unsloth/gemma-4-E2B-it | gemma4 | **unsloth** |
+| gemma-4-e4b | unsloth/gemma-4-E4B-it | gemma4 | **unsloth** |
 | llava-v1.6-mistral-7b | llava-hf/llava-v1.6-mistral-7b-hf | llava_next | llamafactory |
 | llava-v1.6-vicuna-7b | llava-hf/llava-v1.6-vicuna-7b-hf | llava_next | llamafactory |
 | llama3-llava-next-8b | llava-hf/llama3-llava-next-8b-hf | llava_next | llamafactory |

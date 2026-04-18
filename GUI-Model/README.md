@@ -29,8 +29,8 @@ Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분
 | 5 | Qwen/Qwen3-VL-2B-Instruct | qwen3-vl-2b | qwen3_vl_nothink | llamafactory |
 | 6 | Qwen/Qwen3-VL-4B-Instruct | qwen3-vl-4b | qwen3_vl_nothink | llamafactory |
 | 7 | Qwen/Qwen3-VL-8B-Instruct | qwen3-vl-8b | qwen3_vl_nothink | llamafactory |
-| 8 | google/gemma-4-E2B-it | gemma-4-e2b | gemma4 | **unsloth** |
-| 9 | google/gemma-4-E4B-it | gemma-4-e4b | gemma4 | **unsloth** |
+| 8 | unsloth/gemma-4-E2B-it | gemma-4-e2b | gemma4 | **unsloth** |
+| 9 | unsloth/gemma-4-E4B-it | gemma-4-e4b | gemma4 | **unsloth** |
 | 10 | llava-hf/llava-v1.6-mistral-7b-hf | llava-v1.6-mistral-7b | llava_next | llamafactory |
 | 11 | llava-hf/llava-v1.6-vicuna-7b-hf | llava-v1.6-vicuna-7b | llava_next | llamafactory |
 | 12 | llava-hf/llama3-llava-next-8b-hf | llama3-llava-next-8b | llava_next | llamafactory |
