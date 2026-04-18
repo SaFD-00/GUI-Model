@@ -316,4 +316,4 @@ Reference baselines (해석용):
   - `gradient_checkpointing` 은 모델 로드 단계에서만 적용하며 `SFTConfig` 에는 전달하지 않는다 (이중 적용 방지).
   - 모델 로드 직후 `get_chat_template(tokenizer, cfg["template"])` 호출 → YAML `template: gemma4` 가 실제 chat token 정합성에 반영된다.
   - Full FT 분기에서 `freeze_vision_tower: true` 면 `vision_tower|vision_model|visual|image_encoder` 키워드를 포함한 named parameter 의 `requires_grad=False` 처리 후 frozen 텐서 수/파라미터 수를 stderr 로 출력한다.
-  - `SFTConfig.optim` 은 YAML `optim` (기본 `adamw_8bit`) 을 사용하며, bitsandbytes 8-bit optimizer 로 메모리를 절감한다.
+  - `SFTConfig.optim` 은 YAML `optim` (기본 `adamw_torch_fused`) 을 사용한다. Gemma-4 e2b/e4b 는 stage1·stage2 override 에서 `adamw_torch_fused` 를 명시하며, multi-GPU DDP 환경에서는 `ddp_find_unused_parameters: true` 를 함께 사용해 frozen vision tower 로 인한 unused-grad 경고를 피한다.
