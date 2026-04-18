@@ -78,6 +78,17 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
 
 모든 모델은 동일한 데이터셋별 하이퍼파라미터를 사용한다. 하이퍼파라미터는 `_DATASET_CONFIG` 에서 관리된다.
 
+`gradient_accumulation_steps` 는 `_DATASET_CONFIG` 상수가 아니라 notebook Cell 6 에서 런타임 계산된다. 불변식:
+
+```
+global_batch = per_device_train_batch_size * gradient_accumulation_steps * NPROC_PER_NODE
+            == GLOBAL_BATCH_SIZE  (기본 64)
+
+gradient_accumulation_steps = GLOBAL_BATCH_SIZE / (per_device * NPROC_PER_NODE)
+```
+
+`per_device_train_batch_size` 는 프레임워크별 메모리 기준 상수 (LlamaFactory=2, Unsloth=1). `NPROC_PER_NODE` 는 `.env` 에서 읽는 GPU 수 (기본 2). Cell 6 이 `_derive_grad_accum()` 으로 역계산해 CONFIGS 의 `stage1.gradient_accumulation_steps` / `stage2.gradient_accumulation_steps` 에 주입하며, 나누어떨어지지 않으면 `ValueError` 로 중단한다 (silent rounding 금지).
+
 ## 3. 데이터와 설정 계약
 
 ### 데이터 디렉토리
@@ -131,7 +142,7 @@ data/
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh)
   - `backend=llamafactory`: `examples/train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}`
   - `backend=unsloth`: `unsloth/configs/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py`
-  - `NPROC_PER_NODE` 는 `.env` 에서 관리 (기본값 2)
+  - `NPROC_PER_NODE` 는 `.env` 에서 관리 (기본값 2). notebook Cell 6 이 이 값을 읽어 각 YAML 의 `gradient_accumulation_steps` 를 역계산하므로, GPU 수 변경 시 `.env` 수정 후 YAML 생성 셀(9/11)을 재실행해야 한다.
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
   - baseline zero-shot + checkpoint sweep (backend 독립)
   - `LlamaFactory/scripts/vllm_infer.py` 로 생성 (`cd "$LF_ROOT"` 내부에서 호출, `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수)

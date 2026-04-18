@@ -64,7 +64,7 @@ GUI-Model/
 
 ## 환경 설치
 
-단일 진입점. `setup.py` 의 `install_requires` 가 `./LlamaFactory` 와 `./unsloth[huggingface,triton]` 을 PEP 508 `file://` direct reference 로 연쇄 설치하고, `accelerate`/`vllm`/`deepspeed`/metrics 패키지를 함께 해결한다. **`transformers==5.5.4` 는 최상위(`pyproject.toml` `[project].dependencies` 와 `setup.py` `INSTALL_REQUIRES`)에서 고정**한다.
+단일 진입점. `setup.py` 의 `install_requires` 가 `./LlamaFactory` 와 `./unsloth[huggingface,triton]` 을 PEP 508 `file://` direct reference 로 연쇄 설치하고, `accelerate`/`vllm`/`deepspeed`/metrics 패키지를 함께 해결한다. `.env` 로딩용 `python-dotenv` 도 `INSTALL_REQUIRES` 에 포함되어 `pip install -e .` 한 번으로 함께 설치된다. **`transformers==5.5.4` 는 최상위(`pyproject.toml` `[project].dependencies` 와 `setup.py` `INSTALL_REQUIRES`)에서 고정**한다.
 
 ```bash
 conda activate gui-model
@@ -164,6 +164,11 @@ python scripts/split_data.py --dataset AndroidControl
 ### 1. notebook 경로
 
 [`gui-model.ipynb`](./gui-model.ipynb) 의 섹션 순서대로 실행한다.
+
+> **Global batch size 자동 계산**: Section 0 (Cell 6) 이 `.env` 의 `NPROC_PER_NODE` 와
+> 프레임워크별 `per_device_train_batch_size` (LF=2, Unsloth=1) 로부터 `gradient_accumulation_steps`
+> 를 역계산해 `GLOBAL_BATCH_SIZE=64` 를 유지한다. GPU 수가 바뀌면 `.env` 의 `NPROC_PER_NODE`
+> 만 수정하고 노트북 Cell 6 과 YAML 생성 셀(9/11/15/17) 을 다시 실행하면 된다.
 
 1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성
 2. Section 1-2: `dataset_info.json` 등록
