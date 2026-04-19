@@ -8,7 +8,7 @@
 scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
   │
   ├── llamafactory (기본) → llamafactory-cli train/export
-  │     ├── YAML: LlamaFactory/examples/train_custom/GUI-Model-{DS}/stage{1,2}_*
+  │     ├── YAML: LlamaFactory/examples/custom/GUI-Model-{DS}/stage{1,2}_{full,eval,lora,merge}
   │     └── 대상: Qwen2-VL, Qwen2.5-VL, Qwen3-VL, LLaVA 계열
   │
   └── unsloth             → scripts/_unsloth_train.py / _unsloth_merge.py
@@ -140,8 +140,8 @@ data/
 ### Stage 1 automation
 
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh)
-  - `backend=llamafactory`: `examples/train_custom/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}`
-  - `backend=unsloth`: `unsloth/configs/GUI-Model-{DS}/stage1_full/{MODEL}.yaml`, `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py`
+  - `backend=llamafactory`: `examples/custom/GUI-Model-{DS}/stage1_full/{MODEL}_world-model.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}`
+  - `backend=unsloth`: `unsloth/configs/GUI-Model-{DS}/stage1_full/{MODEL}_world-model.yaml`, `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py`
   - `NPROC_PER_NODE` 는 `.env` 에서 관리 (기본값 2). notebook Cell 6 이 이 값을 읽어 각 YAML 의 `gradient_accumulation_steps` 를 역계산하므로, GPU 수 변경 시 `.env` 수정 후 YAML 생성 셀(9/11)을 재실행해야 한다.
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
   - baseline zero-shot + checkpoint sweep (backend 독립)
@@ -156,7 +156,7 @@ data/
 ### Stage 2 automation
 
 - [`scripts/stage2_train.sh`](./scripts/stage2_train.sh)
-  - `{MODEL}/base.yaml`, `{MODEL}/world_model.yaml` 반복 실행
+  - `examples/custom/GUI-Model-{DS}/stage2_lora/{MODEL}_{base,world-model}.yaml` 반복 실행 (unsloth 의 경우 `unsloth/configs/GUI-Model-{DS}/stage2_lora/{MODEL}_{base,world-model}.yaml`)
   - `backend=llamafactory`: llamafactory-cli (torchrun prefix 없음, 노트북 원본과 일치)
   - `backend=unsloth`: `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py` (`NPROC_PER_NODE` 는 `.env` 관리, 기본값 2)
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
@@ -305,7 +305,7 @@ Reference baselines (해석용):
 - merge 스크립트는 `.env` 또는 환경변수의 `HF_TOKEN` (HF Hub push 용) 과 Python `pyyaml` 을 전제로 한다.
 - shell automation 은 bash 4+ 환경을 요구한다.
 - 모델 추가 시 notebook `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다. backend 가 기본값(`llamafactory`)이 아니면 `MODEL_BACKEND` 도 동기화한다.
-- `backend=unsloth` 모델 (Gemma-4 계열) 은 `unsloth/configs/GUI-Model-{DS}/stage{1,2}_*/...` YAML 을 사용하며, notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다. LF `train_custom/`/`merge_custom/` YAML 생성 셀은 `backend == "unsloth"` 모델을 스킵하므로 Gemma 용 LF YAML 은 생성되지 않는다. Unsloth YAML 은 `cwd=UNSLOTH_ROOT` 기준 `../data/`, `../outputs/` 상대경로를 쓴다.
+- `backend=unsloth` 모델 (Gemma-4 계열) 은 `unsloth/configs/GUI-Model-{DS}/stage{1,2}_*/...` YAML 을 사용하며, notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다. LF `examples/custom/` YAML 생성 셀은 `backend == "unsloth"` 모델을 스킵하므로 Gemma 용 LF YAML 은 생성되지 않는다. Unsloth YAML 은 `cwd=UNSLOTH_ROOT` 기준 `../data/`, `../outputs/` 상대경로를 쓴다.
 - Unsloth 체크포인트는 HF 표준 safetensors, LoRA adapter 는 PEFT 표준이므로 `vllm_infer.py` 가 backend 독립적으로 로드한다.
 - `scripts/_unsloth_train.py` 는 모듈 최상단에서 `import unsloth` 를 선행시키고 `UNSLOTH_RETURN_LOGITS=1` 을 설정한다. trl ≥ 0.24 의 `SFTTrainer.compute_loss` 가 `entropy_from_logits(outputs.logits)` 를 직접 호출하기 때문이며, Unsloth 기본값(EMPTY_LOGITS) 과 충돌하면 `TypeError: 'function' object is not subscriptable` 로 첫 step 에서 실패한다.
 - **transformers 버전**: 최상위 `pyproject.toml [project].dependencies` 와 `setup.py INSTALL_REQUIRES` 에서 `transformers==5.5.4` 로 고정한다. 서브프로젝트(`unsloth/` `<=5.5.0`, `LlamaFactory/` `<=5.2.0`) transitive 상한과 충돌 시 README "환경 설치 > 전제" 의 회피 명령(`pip install --upgrade transformers==5.5.4` 또는 서브프로젝트 `--no-deps` 재설치) 을 사용한다. 서브프로젝트 `pyproject.toml` 은 수정하지 않는다.

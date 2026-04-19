@@ -50,7 +50,7 @@ GUI-Model/
 │   └── split_data.py
 ├── data/
 ├── LlamaFactory/                 # backend=llamafactory (clone)
-│   ├── examples/train_custom/    # LlamaFactory YAML (노트북이 생성)
+│   ├── examples/custom/          # LlamaFactory YAML (노트북이 생성)
 │   └── scripts/vllm_infer.py     # 모든 backend 공통 추론 도구
 ├── unsloth/                      # backend=unsloth (clone)
 │   └── configs/GUI-Model-{MB,AC}/stage{1,2}_*/...   # Unsloth YAML
@@ -232,7 +232,7 @@ GUI-Model/outputs/{MB|AC}/
 1. `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` 딕셔너리에 모델 항목 추가 (`backend` 필드 포함)
 2. `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 에 동일 항목 추가
 3. backend 가 기본값(`llamafactory`)이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에 등록
-4. `backend=unsloth` 일 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/...` YAML 은 notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다 (Gemma-4 e2b/e4b 적용). 동일 모델이 LF `train_custom/`/`merge_custom/` 아래에는 생성되지 않는다 (LF 생성 셀들이 `backend == "unsloth"` 을 스킵함).
+4. `backend=unsloth` 일 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/...` YAML 은 notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다 (Gemma-4 e2b/e4b 적용). 동일 모델이 LF `examples/custom/GUI-Model-{MB,AC}/stage{1,2}_*/` 아래에는 생성되지 않는다 (LF 생성 셀들이 `backend == "unsloth"` 을 스킵함).
 
 ## 코드 읽기 시작점
 

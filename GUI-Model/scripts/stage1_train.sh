@@ -21,7 +21,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
     case "$BACKEND" in
       llamafactory)
-        YAML="examples/train_custom/GUI-Model-${DS}/stage1_full/${MODEL_SHORT}.yaml"
+        YAML="examples/custom/GUI-Model-${DS}/stage1_full/${MODEL_SHORT}_world-model.yaml"
         require_yaml "$YAML" "run notebook Cell 8 to generate this YAML"
 
         run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}" \
@@ -30,7 +30,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         ;;
 
       unsloth)
-        YAML="$BASE_DIR/unsloth/configs/GUI-Model-${DS}/stage1_full/${MODEL_SHORT}.yaml"
+        YAML="$BASE_DIR/unsloth/configs/GUI-Model-${DS}/stage1_full/${MODEL_SHORT}_world-model.yaml"
         if [ ! -f "$YAML" ]; then
           echo "[!] Missing Unsloth YAML: $YAML" >&2
           echo "    Hint: run notebook Cell 8 to generate this YAML" >&2

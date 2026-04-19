@@ -21,9 +21,10 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     BACKEND="$(get_backend "$MODEL_SHORT")"
 
     for VARIANT in base world_model; do
+      VARIANT_SLUG="${VARIANT//_/-}"   # world_model → world-model, base 유지
       case "$BACKEND" in
         llamafactory)
-          YAML="examples/train_custom/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}/${VARIANT}.yaml"
+          YAML="examples/custom/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}_${VARIANT_SLUG}.yaml"
           require_yaml "$YAML" "run notebook Cell 12 to generate this YAML"
 
           run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
@@ -31,7 +32,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           ;;
 
         unsloth)
-          YAML="$BASE_DIR/unsloth/configs/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}/${VARIANT}.yaml"
+          YAML="$BASE_DIR/unsloth/configs/GUI-Model-${DS}/stage2_lora/${MODEL_SHORT}_${VARIANT_SLUG}.yaml"
           if [ ! -f "$YAML" ]; then
             echo "[!] Missing Unsloth YAML: $YAML" >&2
             echo "    Hint: run notebook Cell 12 to generate this YAML" >&2
