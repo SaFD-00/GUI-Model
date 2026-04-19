@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
-# Stage 1 Evaluation Pipeline — Hungarian F1 기반 Best Epoch 자동 선택
+# Stage 1 Evaluation Pipeline — HF Hub 업로드된 merged world model 평가
 #
-#   Phase A. Baseline Hungarian (zero-shot)
-#   Phase B. 전체 checkpoint sweep (vllm_infer.py → _hungarian_eval.py score)
-#   Phase C. Winner 선택 (_hungarian_eval.py select) → BEST_CHECKPOINT 파일 기록
+#   Phase A. Baseline Hungarian (zero-shot, $BASE_MODEL)
+#   Phase B. HF merged world model (SaFD-00/{short}-{slug}stage1-world-model) Hungarian
 #
-# Backend 독립: Unsloth 로 학습한 체크포인트도 표준 HF safetensors 이므로
-#               vllm_infer.py 가 프레임워크 무관하게 로드 가능하다.
-#               (단, vLLM/transformers 가 해당 아키텍처를 지원해야 한다.)
+# HF 업로드본은 stage1_merge.sh 에서 선정·merge 된 winner 체크포인트이므로
+# 로컬 checkpoint sweep / winner 선택 단계는 불필요하다.
 #
 # 산출물 (BASE_DIR 기준):
 #   outputs/{DS}/eval/{MODEL}/stage1_eval/base/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-N/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT       (plain text)
-#   outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT.json  (상세 순위)
+#   outputs/{DS}/eval/{MODEL}/stage1_eval/full_world_model/(generated_predictions|hungarian_metrics).json
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -43,11 +39,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     PREFIX="${DS_PREFIX[$DS]}"
     DS_TEST="${PREFIX}_stage1_test"
     TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage1_test.jsonl"
-    # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/..."). 최종 절대경로는 BASE_DIR/outputs/... 로 귀결.
-    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage1_full"
     EVAL_DIR_REL="../outputs/${DS}/eval/${MODEL_SHORT}/stage1_eval"
-    TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
-    EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
+
+    HF_S1_MODEL="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage1-world-model"
 
     if [ ! -f "$TEST_JSONL" ]; then
       echo "[!] [$MODEL_SHORT][$DS] Missing test file: $TEST_JSONL" >&2
@@ -75,46 +69,23 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           --output '$OUT_BASE/hungarian_metrics.json'"
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase B. Checkpoint sweep — outputs/{DS}/adapters/{MODEL}_stage1_full/checkpoint-*/
+    # Phase B. HF merged World Model — $HF_S1_MODEL
     # ─────────────────────────────────────────────────────────────────────
-    shopt -s nullglob
-    CKPTS=("$TRAIN_DIR"/checkpoint-*/)
-    shopt -u nullglob
-    if [ "${#CKPTS[@]}" -eq 0 ]; then
-      echo "[!] [$MODEL_SHORT][$DS] No checkpoints under $TRAIN_DIR (did stage1_train.sh complete?)" >&2
-      exit 1
-    fi
-    echo "[+] [$MODEL_SHORT][$DS] Sweeping ${#CKPTS[@]} checkpoints" >&2
-
-    for CKPT_DIR in "${CKPTS[@]}"; do
-      CKPT_NAME=$(basename "$CKPT_DIR")     # checkpoint-1055
-      OUT_CKPT_REL="${EVAL_DIR_REL}/full_world_model/${CKPT_NAME}"
-      OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
-      MODEL_REL="${TRAIN_DIR_REL}/${CKPT_NAME}"
-
-      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${CKPT_NAME}" \
-        bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_CKPT_REL' && \
-          python scripts/vllm_infer.py \
-            --model_name_or_path '$MODEL_REL' \
-            --dataset '$DS_TEST' \
-            --dataset_dir '$LF_ROOT/data' \
-            ${VLLM_COMMON_ARGS[*]} \
-            --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
-            --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \
-            --matrix_save_name '$OUT_CKPT_REL/predict_results.json' && \
-          python '$BASE_DIR/scripts/_hungarian_eval.py' score \
-            --test   '$TEST_JSONL' \
-            --pred   '$OUT_CKPT/generated_predictions.jsonl' \
-            --output '$OUT_CKPT/hungarian_metrics.json'"
-    done
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Phase C. Winner 선택 → BEST_CHECKPOINT 파일
-    # ─────────────────────────────────────────────────────────────────────
-    run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_select" \
-      python "$BASE_DIR/scripts/_hungarian_eval.py" select \
-        --eval-dir  "$EVAL_DIR" \
-        --train-dir "$TRAIN_DIR" \
-        --metric    avg_hungarian_f1
+    OUT_FWM_REL="${EVAL_DIR_REL}/full_world_model"
+    OUT_FWM="$LF_ROOT/$OUT_FWM_REL"
+    run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_full_world_model" \
+      bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_FWM_REL' && \
+        python scripts/vllm_infer.py \
+          --model_name_or_path '$HF_S1_MODEL' \
+          --dataset '$DS_TEST' \
+          --dataset_dir '$LF_ROOT/data' \
+          ${VLLM_COMMON_ARGS[*]} \
+          --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+          --save_name        '$OUT_FWM_REL/generated_predictions.jsonl' \
+          --matrix_save_name '$OUT_FWM_REL/predict_results.json' && \
+        python '$BASE_DIR/scripts/_hungarian_eval.py' score \
+          --test   '$TEST_JSONL' \
+          --pred   '$OUT_FWM/generated_predictions.jsonl' \
+          --output '$OUT_FWM/hungarian_metrics.json'"
   done
 done

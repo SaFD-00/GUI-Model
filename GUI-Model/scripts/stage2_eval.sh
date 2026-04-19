@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
-# Stage 2 Evaluation Pipeline — per-checkpoint sweep + winner 자동 선택
+# Stage 2 Evaluation Pipeline — HF Hub 업로드된 merged 모델 평가
 #
 # 3-Way:
-#   base              - Zero-shot baseline (1회)
-#   lora_base         - base + outputs/{DS}/adapters/{MODEL}_stage2_lora_base/checkpoint-*          (sweep)
-#   lora_world_model  - stage1_merged + outputs/{DS}/adapters/{MODEL}_stage2_lora_world_model/checkpoint-* (sweep)
+#   base              - Zero-shot baseline ($BASE_MODEL)
+#   lora_base         - HF: SaFD-00/{short}-{slug}stage2-base         (merged 완료본)
+#   lora_world_model  - HF: SaFD-00/{short}-{slug}stage2-world-model  (merged 완료본)
 #
-# 각 lora 변형별로:
-#   Phase B. 체크포인트 sweep (vllm_infer + _action_eval.py score)
-#   Phase C. winner 선택 (_action_eval.py select) → BEST_CHECKPOINT 파일 기록
+# HF 업로드본은 stage2_merge.sh 에서 winner checkpoint + base 를 merge 한 단일 모델이므로
+# 로컬 adapter 로딩 / checkpoint sweep / winner 선택 단계는 불필요하다.
 #
-# Backend 독립: Unsloth 로 학습한 LoRA adapter 도 PEFT 표준 (adapter_config.json +
-#               adapter_model.safetensors) 이므로 vllm_infer.py 가 무관하게 로드한다.
-#               max_lora_rank 는 DS_LORA_RANK 를 따른다.
-#
-# 전제: stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}_stage1_full/ 를 생성 (lora_world_model variant 의존)
-#       stage2_train.sh 가 checkpoint-* 를 생성
+# 산출물 (BASE_DIR 기준):
+#   outputs/{DS}/eval/{MODEL}/stage2_eval/{base|lora_base|lora_world_model}/
+#     (generated_predictions.jsonl | predict_results.json | action_metrics.json)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -25,8 +21,6 @@ export DISABLE_VERSION_CHECK=1
 SCRIPT_TAG="stage2_eval"
 
 declare -A DS_DATADIR=( [MB]="MobiBench" [AC]="AndroidControl" )
-# notebook Cell 3 _DATASET_CONFIG.stage2.lora_rank 와 일치해야 함 (vLLM max_lora_rank 기본값 16 초과시 ValueError)
-declare -A DS_LORA_RANK=( [MB]=16 [AC]=32 )
 
 for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
@@ -45,24 +39,18 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     PREFIX="${DS_PREFIX[$DS]}"
     DS_TEST="${PREFIX}_stage2_test"
     TEST_JSONL="$BASE_DIR/data/${DS_DATADIR[$DS]}/gui-model_stage2_test.jsonl"
-    # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/...").
     S2_EVAL_OUT_REL="../outputs/${DS}/eval/${MODEL_SHORT}/stage2_eval"
-    LORA_RANK="${DS_LORA_RANK[$DS]}"
 
-    STAGE1_MERGED="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
-    STAGE1_MERGED_ABS="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
+    HF_S2_BASE="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-base"
+    HF_S2_WORLD="SaFD-00/${MODEL_SHORT}-${HF_SLUG[$DS]}stage2-world-model"
 
     if [ ! -f "$TEST_JSONL" ]; then
       echo "[!] [$MODEL_SHORT][$DS] Missing test file: $TEST_JSONL" >&2
       exit 1
     fi
-    if [ ! -d "$STAGE1_MERGED_ABS" ]; then
-      echo "[!] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED_ABS — run stage1_merge.sh first." >&2
-      exit 1
-    fi
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase A. Baseline Zero-shot — vllm_infer (1회)
+    # Phase A. Baseline Zero-shot — vllm_infer
     # ─────────────────────────────────────────────────────────────────────
     OUT_BASE_REL="${S2_EVAL_OUT_REL}/base"
     OUT_BASE="$LF_ROOT/$OUT_BASE_REL"
@@ -82,61 +70,32 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           --output '$OUT_BASE/action_metrics.json'"
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase B + C. lora_base / lora_world_model 각각 checkpoint sweep + winner 선택
+    # Phase B. HF merged variants — lora_base / lora_world_model
     # ─────────────────────────────────────────────────────────────────────
-    declare -A VARIANT_BASE=(
-      [lora_base]="$BASE_MODEL"
-      [lora_world_model]="$STAGE1_MERGED"
+    declare -A VARIANT_HF=(
+      [lora_base]="$HF_S2_BASE"
+      [lora_world_model]="$HF_S2_WORLD"
     )
 
     for VARIANT in lora_base lora_world_model; do
-      MODEL="${VARIANT_BASE[$VARIANT]}"
-      # VARIANT="lora_base" → adapter 폴더 "stage2_lora_base"; "lora_world_model" → "stage2_lora_world_model"
-      LORA_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage2_lora_${VARIANT#lora_}"
-      LORA_DIR="$LF_ROOT/$LORA_DIR_REL"
-      EVAL_DIR_REL="${S2_EVAL_OUT_REL}/${VARIANT}"
-      EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
+      HF_MODEL="${VARIANT_HF[$VARIANT]}"
+      OUT_VAR_REL="${S2_EVAL_OUT_REL}/${VARIANT}"
+      OUT_VAR="$LF_ROOT/$OUT_VAR_REL"
 
-      shopt -s nullglob
-      CKPTS=("$LORA_DIR"/checkpoint-*/)
-      shopt -u nullglob
-      if [ "${#CKPTS[@]}" -eq 0 ]; then
-        echo "[!] [$MODEL_SHORT][$DS][$VARIANT] No checkpoints under $LORA_DIR — run stage2_train.sh first." >&2
-        exit 1
-      fi
-      echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Sweeping ${#CKPTS[@]} checkpoints" >&2
-
-      # Phase B: 체크포인트별 predict + score
-      for CKPT_DIR in "${CKPTS[@]}"; do
-        CKPT_NAME=$(basename "$CKPT_DIR")
-        OUT_CKPT_REL="${EVAL_DIR_REL}/${CKPT_NAME}"
-        OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
-        ADAPTER_REL="${LORA_DIR_REL}/${CKPT_NAME}"
-
-        run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_${CKPT_NAME}" \
-          bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_CKPT_REL' && \
-            python scripts/vllm_infer.py \
-              --model_name_or_path   '$MODEL' \
-              --adapter_name_or_path '$ADAPTER_REL' \
-              --dataset '$DS_TEST' \
-              --dataset_dir '$LF_ROOT/data' \
-              ${VLLM_COMMON_ARGS[*]} \
-              --vllm_config '{\"gpu_memory_utilization\": 0.80, \"max_lora_rank\": $LORA_RANK}' \
-              --save_name        '$OUT_CKPT_REL/generated_predictions.jsonl' \
-              --matrix_save_name '$OUT_CKPT_REL/predict_results.json' && \
-            python '$BASE_DIR/scripts/_action_eval.py' score \
-              --test   '$TEST_JSONL' \
-              --pred   '$OUT_CKPT/generated_predictions.jsonl' \
-              --output '$OUT_CKPT/action_metrics.json'"
-      done
-
-      # Phase C: winner 선택 → BEST_CHECKPOINT 기록 (lora 출력 디렉토리에)
-      # winner metric: step_accuracy (Step Accuracy — AndroidControl 표준 정의).
-      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_select" \
-        python "$BASE_DIR/scripts/_action_eval.py" select \
-          --eval-dir  "$EVAL_DIR" \
-          --train-dir "$LORA_DIR" \
-          --metric    step_accuracy
+      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
+        bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_VAR_REL' && \
+          python scripts/vllm_infer.py \
+            --model_name_or_path '$HF_MODEL' \
+            --dataset '$DS_TEST' \
+            --dataset_dir '$LF_ROOT/data' \
+            ${VLLM_COMMON_ARGS[*]} \
+            --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+            --save_name        '$OUT_VAR_REL/generated_predictions.jsonl' \
+            --matrix_save_name '$OUT_VAR_REL/predict_results.json' && \
+          python '$BASE_DIR/scripts/_action_eval.py' score \
+            --test   '$TEST_JSONL' \
+            --pred   '$OUT_VAR/generated_predictions.jsonl' \
+            --output '$OUT_VAR/action_metrics.json'"
     done
   done
 done
