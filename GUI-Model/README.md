@@ -216,10 +216,19 @@ bash scripts/stage2_merge.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
 
 주요 동작:
 
-- `stage1_eval.sh` 는 baseline + HF merged world-model 평가. `--stage1-mode` 에 따라 `stage1-{full|lora}-world-model` 레포를 참조하며 결과는 `outputs/{DS}/eval/{MODEL}/stage1_eval/{base,{full|lora}_world_model}/` 에 쓴다. checkpoint sweep → `avg_hungarian_f1` winner 를 adapter 디렉토리의 `BEST_CHECKPOINT` 로 기록한다.
-- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage1_{full|lora}/` 를 만들고 HF Hub 에 `...-stage1-{full|lora}-world-model` 로 push 한다. LF LoRA 모드는 임시 merge YAML 에 `adapter_name_or_path` + `finetuning_type: lora` 블록을 삽입해 base+adapter merge 를 수행.
-- `stage2_train.sh` 는 `{MODEL}_base.yaml` + `{MODEL}_world-model-{full|lora}.yaml` 두 variant 를 학습한다.
-- `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model_{full|lora}` checkpoint sweep 뒤 `step_accuracy` 기준 winner 를 기록 (Step Accuracy — AndroidControl 표준 정의, `ARCHITECTURE.md` §6 참고).
+표준 실행 순서는 **train → eval → merge** 다. eval 은 로컬 per-epoch checkpoint sweep + winner 선정이 목적이므로 HF Hub 의존이 없다 (merge 가 HF Hub 에 push 하기 위해서만 `HF_TOKEN` 이 필요).
+
+- `stage1_eval.sh` 는 (a) baseline zero-shot 과 (b) `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/checkpoint-*` 로컬 per-epoch sweep 을 모두 수행한다.
+  - `full`: `--model_name_or_path <checkpoint_dir>`
+  - `lora`: `--model_name_or_path $BASE_MODEL --adapter_name_or_path <checkpoint_dir>` + `max_lora_rank=8`
+  - 결과: `outputs/{DS}/eval/{MODEL}/stage1_eval/{base, {full|lora}_world_model/checkpoint-N}/`
+  - `avg_hungarian_f1` 기준 winner 를 `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT[.json]` 에 기록.
+- `stage1_merge.sh` 는 위 `BEST_CHECKPOINT` 를 읽어 `outputs/{DS}/merged/{MODEL}_stage1_{full|lora}/` 를 만들고 HF Hub 에 `...-stage1-{full|lora}-world-model` 로 push 한다 (Hub push 는 `HF_TOKEN` 필요). LF LoRA 모드는 임시 merge YAML 에 `adapter_name_or_path` + `finetuning_type: lora` 블록을 삽입해 base+adapter merge 를 수행.
+- `stage2_train.sh` 는 `{MODEL}_base.yaml` + `{MODEL}_world-model-{full|lora}.yaml` 두 variant 를 학습한다 (world-model variant 는 상류 Stage 1 merged 를 base 로 사용).
+- `stage2_eval.sh` 는 (a) baseline zero-shot 과 (b) `lora_base` / `lora_world_model_from_${MODE}` 각 variant 의 `outputs/{DS}/adapters/…/checkpoint-*` 로컬 per-epoch sweep 을 수행한다.
+  - `lora_base`: `$BASE_MODEL` + adapter checkpoint (mode 무관)
+  - `lora_world_model_from_${MODE}`: **로컬** `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/` 를 base 로, 해당 stage2 adapter checkpoint 를 얹어 로드 (merged 디렉토리 없으면 hard-fail)
+  - `step_accuracy` 기준 winner 를 각 adapter 디렉토리의 `BEST_CHECKPOINT[.json]` 에 기록 (Step Accuracy 정의: `ARCHITECTURE.md` §6).
 - `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model_from_{full|lora}}/` 를 만들고 HF Hub 에 `...-stage2-{base|{full|lora}-world-model}` 로 push 한다.
 
 ## 산출물

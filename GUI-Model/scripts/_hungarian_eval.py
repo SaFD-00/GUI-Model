@@ -18,7 +18,7 @@ Examples
       --output outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-1055/hungarian_metrics.json
 
   python scripts/_hungarian_eval.py select \\
-      --eval-dir  outputs/AC/eval/{MODEL}/stage1_eval \\
+      --eval-dir  outputs/AC/eval/{MODEL}/stage1_eval/full_world_model \\
       --train-dir outputs/AC/adapters/{MODEL}_stage1_full \\
       --metric    avg_hungarian_f1
 """
@@ -289,9 +289,9 @@ def _cmd_select(args):
     train_dir = Path(args.train_dir)
     metric    = args.metric
 
-    # checkpoint-*/hungarian_metrics.json 수집
+    # checkpoint-*/hungarian_metrics.json 수집 (eval_dir = .../{full|lora}_world_model)
     candidates = []
-    for mpath in sorted(eval_dir.glob("full_world_model/checkpoint-*/hungarian_metrics.json"),
+    for mpath in sorted(eval_dir.glob("checkpoint-*/hungarian_metrics.json"),
                         key=lambda p: _ckpt_step(p.parent.name)):
         try:
             with open(mpath, 'r', encoding='utf-8') as f:
@@ -313,12 +313,12 @@ def _cmd_select(args):
         })
 
     if not candidates:
-        print(f"[select] ERROR: no checkpoint metrics found under {eval_dir}/full_world_model/checkpoint-*/",
+        print(f"[select] ERROR: no checkpoint metrics found under {eval_dir}/checkpoint-*/",
               file=sys.stderr)
         return 2
 
-    # Optional: Baseline (비교용) 로드
-    baseline_path = eval_dir / "base" / "hungarian_metrics.json"
+    # Optional: Baseline (비교용) 로드 — eval_dir 의 형제 디렉토리 base/ 에 위치
+    baseline_path = eval_dir.parent / "base" / "hungarian_metrics.json"
     baseline = None
     if baseline_path.exists():
         try:
@@ -392,7 +392,7 @@ def main():
 
     p_sel = sub.add_parser("select", help="Select winner checkpoint by metric")
     p_sel.add_argument("--eval-dir", required=True,
-                       help="Directory containing checkpoint-*/hungarian_metrics.json (and optional base/)")
+                       help="Directory containing checkpoint-*/hungarian_metrics.json (sibling base/ is read if present)")
     p_sel.add_argument("--train-dir", required=True,
                        help="Training output_dir where BEST_CHECKPOINT will be written")
     p_sel.add_argument("--metric", default="avg_hungarian_f1",

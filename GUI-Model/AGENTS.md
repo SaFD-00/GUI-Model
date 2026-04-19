@@ -20,8 +20,8 @@
 - **Backend 변경**: 기존 모델을 다른 backend 로 옮길 때는 `_common.sh::MODEL_BACKEND` 한 줄만 수정하면 된다. 단, 해당 backend 용 YAML 이 준비되어 있어야 한다.
 - **notebook 실행 순서나 YAML 생성 흐름**: [`gui-model.ipynb`](./gui-model.ipynb) 와 [`scripts/stage1_*.sh`](./scripts/stage1_train.sh), [`scripts/stage2_*.sh`](./scripts/stage2_train.sh) 를 함께 맞춰라.
 - **데이터 분할 규칙**: [`scripts/split_data.py`](./scripts/split_data.py) 가 기준이다.
-- **Stage 1 평가**: [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py) 가 기준 (winner metric `avg_hungarian_f1`, 정본은 notebook Cell 55+56).
-- **Stage 2 평가**: [`scripts/_action_eval.py`](./scripts/_action_eval.py) 가 기준 (winner metric `step_accuracy` — Step Accuracy, 정본은 notebook Cell 139, 회귀 테스트 [`tests/test_action_eval.py`](./tests/test_action_eval.py)). 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6 참고.
+- **Stage 1 평가**: [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py) 가 기준. 흐름은 **train → eval → merge** — `stage1_eval.sh` 가 baseline + `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/checkpoint-*` per-epoch sweep 을 돌고 `avg_hungarian_f1` winner 를 adapter 경로의 `BEST_CHECKPOINT` 에 기록한다. HF Hub 에서 merged world-model 을 로드하지 않는다. 정본은 notebook Cell 55+56.
+- **Stage 2 평가**: [`scripts/_action_eval.py`](./scripts/_action_eval.py) 가 기준 (winner metric `step_accuracy`). `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model_from_${MODE}` 두 variant 의 per-epoch checkpoint sweep 을 돌고 각 adapter 경로의 `BEST_CHECKPOINT` 를 기록한다. `lora_world_model_from_${MODE}` 는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/` 를 base 로 사용 (없으면 hard-fail). 정본은 notebook Cell 139, 회귀 테스트 [`tests/test_action_eval.py`](./tests/test_action_eval.py). 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6 참고.
 - **shell 실행 공통 규약**: `MB`/`AC` 매핑, 모델 레지스트리 → [`scripts/_common.sh`](./scripts/_common.sh)
 - **Python 의존성**: [`setup.py`](./setup.py) 가 실제 설치 기준.
 
@@ -36,7 +36,7 @@
 - `data/` 아래 실제 디렉토리명은 `MobiBench`, `AndroidControl` 이다.
 - eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.
 - Stage 1 merge 는 `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT` 가 없으면 실패한다 (MODE = `--stage1-mode` 값).
-- Stage 2 train/merge 의 world-model variant 는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/` (또는 HF Hub `...-stage1-${MODE}-world-model`) 가 선행되어야 한다. Stage 2 스크립트의 `--stage1-mode` 가 상류 소스 선택을 결정한다.
+- Stage 2 eval (`lora_world_model_from_${MODE}` variant) 과 Stage 2 merge 는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/` 가 필수 선행이다 (없으면 hard-fail). Stage 2 train YAML 도 동일 로컬 경로를 우선 사용하며 주석에 HF Hub `...-stage1-${MODE}-world-model` 대안이 병기되어 있다. Stage 2 스크립트의 `--stage1-mode` 가 상류 소스를 결정한다.
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh) 는 `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}` 를 붙여 실행하지만, [`scripts/stage2_train.sh`](./scripts/stage2_train.sh) 는 의도적으로 torchrun prefix 를 붙이지 않는다. `NPROC_PER_NODE` 는 `.env` 에서 관리하며 기본값은 2 이다. notebook 의 YAML 생성 셀이 이 값으로 `gradient_accumulation_steps` 를 역계산 (`64 / (per_device * NPROC_PER_NODE)`) 해 global batch size 를 64 로 유지하므로, GPU 수를 바꾼 뒤에는 Section 0 의 Cell 6 과 YAML 생성 셀(9/11/15/17/61) 을 다시 실행해야 한다. 나누어떨어지지 않는 조합은 `ValueError` 로 중단된다.
 - [`scripts/split_data.py`](./scripts/split_data.py) 는 `AndroidControl` Stage 2 에 대해 기본적으로 `30000`개 stratified subsample 을 만든 뒤 train/test split 한다.
 - bash 자동화는 bash 4+ 전제를 가진다.
