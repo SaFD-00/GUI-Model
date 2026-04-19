@@ -310,7 +310,7 @@ data/raw/
 ## 11. 용어 / 파일 위치 빠른 참조
 
 - CLI 엔트리: `server/cli.py:main` (`monkey-collect` 커맨드)
-- 배치 파이프라인 핵심: `server/pipeline/batch_collector.py`
+- 배치 파이프라인 핵심: `server/pipeline/sweep.py`
 - AVD 제어: `server/infra/device/avd.py` (raw `emulator` 바이너리 사용, `headless` 옵션)
 - APK 해결/설치: `server/infra/device/apk_installer.py`
 - 앱 카탈로그: `server/pipeline/app_catalog.py`
