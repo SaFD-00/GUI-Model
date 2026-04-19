@@ -272,19 +272,29 @@ def _cmd_select(args):
     eval_dir  = Path(args.eval_dir)
     train_dir = Path(args.train_dir)
     metric    = args.metric
+    hf_repo_template = getattr(args, "hf_repo_template", None)
+
+    # epoch-*/ 우선, 하위호환으로 checkpoint-*/ 지원.
+    matches = sorted(eval_dir.glob("epoch-*/action_metrics.json"),
+                     key=lambda p: _ckpt_step(p.parent.name))
+    if not matches:
+        matches = sorted(eval_dir.glob("checkpoint-*/action_metrics.json"),
+                         key=lambda p: _ckpt_step(p.parent.name))
 
     candidates = []
-    for mpath in sorted(eval_dir.glob("checkpoint-*/action_metrics.json"),
-                        key=lambda p: _ckpt_step(p.parent.name)):
+    for mpath in matches:
         try:
             with open(mpath, 'r', encoding='utf-8') as f:
                 m = json.load(f)
         except Exception as e:
             print(f"[select] WARN: skip {mpath} ({e})", file=sys.stderr)
             continue
+        name = mpath.parent.name
+        epoch = _ckpt_step(name) if name.startswith("epoch-") else None
         row = {
-            "checkpoint":   mpath.parent.name,
-            "step":         _ckpt_step(mpath.parent.name),
+            "checkpoint":   name,
+            "step":         _ckpt_step(name),
+            "epoch":        epoch,
             "metrics_path": str(mpath),
         }
         for k in _SELECT_KEYS:
@@ -293,7 +303,7 @@ def _cmd_select(args):
         candidates.append(row)
 
     if not candidates:
-        print(f"[select] ERROR: no checkpoint metrics under {eval_dir}/checkpoint-*/",
+        print(f"[select] ERROR: no metrics under {eval_dir}/{{epoch,checkpoint}}-*/",
               file=sys.stderr)
         return 2
 
@@ -315,10 +325,22 @@ def _cmd_select(args):
               f"{c['cond_dir_acc']:>7.4f} {c['cond_app_acc']:>7.4f} "
               f"{c['cond_text_acc']:>7.4f} {c['parse_rate']:>7.2%}{mark}")
 
+    # --hf-repo-template 로 winner/candidate hf_repo_id 주입
+    if hf_repo_template:
+        for c in candidates:
+            if c["epoch"] is not None:
+                c["hf_repo_id"] = hf_repo_template.replace("{epoch}", str(c["epoch"]))
+        winner_repo_id = (hf_repo_template.replace("{epoch}", str(winner["epoch"]))
+                          if winner["epoch"] is not None else None)
+    else:
+        winner_repo_id = None
+
     train_dir.mkdir(parents=True, exist_ok=True)
     (train_dir / "BEST_CHECKPOINT").write_text(winner["checkpoint"] + "\n", encoding='utf-8')
     summary = {
         "selected":     winner["checkpoint"],
+        "epoch":        winner["epoch"],
+        "hf_repo_id":   winner_repo_id,
         "metric":       metric,
         "metric_value": winner[metric],
         "candidates":   candidates,
@@ -326,6 +348,8 @@ def _cmd_select(args):
     (train_dir / "BEST_CHECKPOINT.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
     print(f"[select] winner = {winner['checkpoint']}  ({metric}={winner[metric]:.4f})")
+    if winner_repo_id:
+        print(f"[select] hf_repo_id = {winner_repo_id}")
     print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT'}")
     print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT.json'}")
     return 0
@@ -343,12 +367,15 @@ def main():
 
     p_l = sub.add_parser("select", help="Select winner checkpoint by metric")
     p_l.add_argument("--eval-dir", required=True,
-                     help="Directory containing checkpoint-*/action_metrics.json (variant-specific)")
+                     help="Directory containing epoch-*/ or checkpoint-*/ action_metrics.json (variant-specific)")
     p_l.add_argument("--train-dir", required=True,
                      help="Training output_dir where BEST_CHECKPOINT will be written")
     p_l.add_argument("--metric", default="step_accuracy",
                      help=f"Metric key to maximize (default: step_accuracy). "
                           f"Options: {', '.join(_SELECT_KEYS)}")
+    p_l.add_argument("--hf-repo-template", default=None, dest="hf_repo_template",
+                     help="Optional HF repo id template with '{epoch}' placeholder. "
+                          "When provided, winner/candidate hf_repo_id is written to BEST_CHECKPOINT.json.")
     p_l.set_defaults(func=_cmd_select)
 
     args = p.parse_args()

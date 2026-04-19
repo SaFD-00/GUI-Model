@@ -249,3 +249,56 @@ require_yaml() {
     exit 1
   fi
 }
+
+# --- checkpoint → epoch 매핑 -------------------------------------------------
+# HF Trainer 가 저장한 trainer_state.json 의 "epoch" 필드를 int 로 반환.
+# 학습 YAML 은 save_strategy=epoch 이므로 정수에 근접하지만 방어적으로 round.
+ckpt_epoch_from_dir() {
+  local ckpt_dir="$1"
+  local state="$ckpt_dir/trainer_state.json"
+  if [ ! -f "$state" ]; then
+    echo "[!] trainer_state.json not found: $state" >&2
+    return 1
+  fi
+  python - "$state" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    s = json.load(f)
+e = s.get("epoch")
+if e is None:
+    sys.stderr.write(f"[!] 'epoch' missing in {sys.argv[1]}\n")
+    sys.exit(1)
+print(int(round(float(e))))
+PY
+}
+
+# --- HF Hub repo id 조립 (단일 실패 지점) ------------------------------------
+# Stage 1: SaFD-00/{short}-{slug}stage1-{mode}-world-model-epoch{E}
+hf_repo_id_stage1() {
+  local model_short="$1" ds="$2" mode="$3" epoch="$4"
+  printf 'SaFD-00/%s-%sstage1-%s-world-model-epoch%s' \
+    "$model_short" "${HF_SLUG[$ds]}" "$mode" "$epoch"
+}
+
+# Stage 2: SaFD-00/{short}-{slug}stage2-{variant_suffix}-epoch{E}
+#   variant_suffix ∈ {"base", "{mode}-world-model"}
+hf_repo_id_stage2() {
+  local model_short="$1" ds="$2" variant_suffix="$3" epoch="$4"
+  printf 'SaFD-00/%s-%sstage2-%s-epoch%s' \
+    "$model_short" "${HF_SLUG[$ds]}" "$variant_suffix" "$epoch"
+}
+
+# --- Local merged 디렉토리 경로 ---------------------------------------------
+# stage1: merged/{MODEL}_stage1_{MODE}/epoch-{E}
+# stage2: merged/{MODEL}_stage2_{variant_key}/epoch-{E}
+#   variant_key 예: "lora_base", "lora_world_model_from_full" 등 adapter dir suffix.
+local_merged_epoch_dir() {
+  local stage="$1" model_short="$2" ds="$3" variant_key="$4" epoch="$5"
+  case "$stage" in
+    stage1) printf '%s/outputs/%s/merged/%s_stage1_%s/epoch-%s' \
+              "$BASE_DIR" "$ds" "$model_short" "$variant_key" "$epoch" ;;
+    stage2) printf '%s/outputs/%s/merged/%s_stage2_%s/epoch-%s' \
+              "$BASE_DIR" "$ds" "$model_short" "$variant_key" "$epoch" ;;
+    *) echo "[!] local_merged_epoch_dir: unknown stage '$stage'" >&2; return 1 ;;
+  esac
+}

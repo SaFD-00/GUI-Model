@@ -277,7 +277,7 @@ def _cmd_score(args):
 
 
 def _ckpt_step(name: str) -> int:
-    """'checkpoint-1234' → 1234. 그 외 → -1."""
+    """'checkpoint-1234' or 'epoch-3' → 1234 or 3. 그 외 → -1."""
     try:
         return int(name.split("-", 1)[1])
     except (IndexError, ValueError):
@@ -288,20 +288,31 @@ def _cmd_select(args):
     eval_dir  = Path(args.eval_dir)
     train_dir = Path(args.train_dir)
     metric    = args.metric
+    hf_repo_template = getattr(args, "hf_repo_template", None)
 
-    # checkpoint-*/hungarian_metrics.json 수집 (eval_dir = .../{full|lora}_world_model)
+    # epoch-*/ 우선, 하위호환으로 checkpoint-*/ 지원.
+    # eval_dir = outputs/{DS}/eval/{MODEL}/stage1_eval/{MODE}_world_model/
+    matches = sorted(eval_dir.glob("epoch-*/hungarian_metrics.json"),
+                     key=lambda p: _ckpt_step(p.parent.name))
+    if not matches:
+        matches = sorted(eval_dir.glob("checkpoint-*/hungarian_metrics.json"),
+                         key=lambda p: _ckpt_step(p.parent.name))
+
     candidates = []
-    for mpath in sorted(eval_dir.glob("checkpoint-*/hungarian_metrics.json"),
-                        key=lambda p: _ckpt_step(p.parent.name)):
+    for mpath in matches:
         try:
             with open(mpath, 'r', encoding='utf-8') as f:
                 m = json.load(f)
         except Exception as e:
             print(f"[select] WARN: skip {mpath} ({e})", file=sys.stderr)
             continue
+        name = mpath.parent.name
+        # epoch-* 면 epoch 번호를 직접 파싱. checkpoint-* 면 None (step 만 보유).
+        epoch = _ckpt_step(name) if name.startswith("epoch-") else None
         candidates.append({
-            "checkpoint": mpath.parent.name,
-            "step": _ckpt_step(mpath.parent.name),
+            "checkpoint": name,
+            "step": _ckpt_step(name),
+            "epoch": epoch,
             "metrics_path": str(mpath),
             metric: m.get(metric, 0.0),
             "avg_bleu": m.get("avg_bleu", 0.0),
@@ -313,7 +324,7 @@ def _cmd_select(args):
         })
 
     if not candidates:
-        print(f"[select] ERROR: no checkpoint metrics found under {eval_dir}/checkpoint-*/",
+        print(f"[select] ERROR: no metrics found under {eval_dir}/{{epoch,checkpoint}}-*/",
               file=sys.stderr)
         return 2
 
@@ -362,11 +373,25 @@ def _cmd_select(args):
               f"{c['avg_bleu']:>10.4f} {c['avg_rouge_l']:>10.4f} "
               f"{c['exact_match_rate']*100:>6.2f} {el_str:>10}{mark}")
 
+    # --hf-repo-template 가 주어지면 각 candidate 와 winner 에 hf_repo_id 주입.
+    if hf_repo_template:
+        for c in candidates:
+            if c["epoch"] is not None:
+                c["hf_repo_id"] = hf_repo_template.replace("{epoch}", str(c["epoch"]))
+        if winner["epoch"] is not None:
+            winner_repo_id = hf_repo_template.replace("{epoch}", str(winner["epoch"]))
+        else:
+            winner_repo_id = None
+    else:
+        winner_repo_id = None
+
     # BEST_CHECKPOINT 기록
     train_dir.mkdir(parents=True, exist_ok=True)
     (train_dir / "BEST_CHECKPOINT").write_text(winner["checkpoint"] + "\n", encoding='utf-8')
     summary = {
         "selected": winner["checkpoint"],
+        "epoch": winner["epoch"],
+        "hf_repo_id": winner_repo_id,
         "metric": metric,
         "metric_value": winner[metric],
         "baseline": baseline,
@@ -375,6 +400,8 @@ def _cmd_select(args):
     (train_dir / "BEST_CHECKPOINT.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
     print(f"[select] winner = {winner['checkpoint']}  ({metric}={winner[metric]:.4f})")
+    if winner_repo_id:
+        print(f"[select] hf_repo_id = {winner_repo_id}")
     print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT'}")
     print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT.json'}")
     return 0
@@ -392,11 +419,14 @@ def main():
 
     p_sel = sub.add_parser("select", help="Select winner checkpoint by metric")
     p_sel.add_argument("--eval-dir", required=True,
-                       help="Directory containing checkpoint-*/hungarian_metrics.json (sibling base/ is read if present)")
+                       help="Directory containing epoch-*/ or checkpoint-*/ hungarian_metrics.json (sibling base/ is read if present)")
     p_sel.add_argument("--train-dir", required=True,
                        help="Training output_dir where BEST_CHECKPOINT will be written")
     p_sel.add_argument("--metric", default="avg_hungarian_f1",
                        help="Metric key to maximize (default: avg_hungarian_f1)")
+    p_sel.add_argument("--hf-repo-template", default=None, dest="hf_repo_template",
+                       help="Optional HF repo id template with '{epoch}' placeholder. "
+                            "When provided, winner/candidate hf_repo_id is written to BEST_CHECKPOINT.json.")
     p_sel.set_defaults(func=_cmd_select)
 
     args = parser.parse_args()

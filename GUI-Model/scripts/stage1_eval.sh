@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-# Stage 1 Evaluation Pipeline — 로컬 checkpoint sweep + Hungarian winner
+# Stage 1 Evaluation Pipeline — HF Hub merged 모델 sweep + Hungarian winner
 #
-# --stage1-mode full (default) | lora 에 따라 sweep 대상 adapter 디렉토리와 모델 로딩 방식을 분기한다.
+# 순서 전환 (train → merge → eval) 이후, eval 은 stage1_merge.sh 가 이미
+# HF Hub 에 푸시한 epoch 별 merged repo 를 pull 해서 평가한다. 로컬
+# outputs/{DS}/adapters/.../checkpoint-*/ 는 epoch 번호 소스로만 사용.
 #
-#   Phase A. Baseline Hungarian (zero-shot, $BASE_MODEL) — mode 무관
-#   Phase B. outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/checkpoint-*/ sweep
-#              - full: --model_name_or_path <checkpoint_dir>
-#              - lora: --model_name_or_path $BASE_MODEL --adapter_name_or_path <checkpoint_dir>
-#   Phase C. Winner 선택 (_hungarian_eval.py select) → BEST_CHECKPOINT 파일 기록
+# --stage1-mode full (default) | lora 에 따라 HF repo prefix 가 달라진다
+# (hf_repo_id_stage1 단일 정의).
+#
+#   Phase A. Baseline Hungarian (zero-shot, $BASE_MODEL)        — mode 무관
+#   Phase B. HF repo sweep (각 epoch 의 merged 모델)
+#              - vllm_infer --model_name_or_path <HF repo id>   (full/lora 공통)
+#   Phase C. Winner 선택 (_hungarian_eval.py select)
+#              → adapters/{MODEL}_stage1_{MODE}/BEST_CHECKPOINT{.json}
+#                (epoch, hf_repo_id 필드 포함)
 #
 # 산출물 (BASE_DIR 기준):
 #   outputs/{DS}/eval/{MODEL}/stage1_eval/base/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/eval/{MODEL}/stage1_eval/${MODE}_world_model/checkpoint-N/(generated_predictions|hungarian_metrics).json
-#   outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT       (plain text)
-#   outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT.json  (상세 순위)
+#   outputs/{DS}/eval/{MODEL}/stage1_eval/${MODE}_world_model/epoch-{E}/(generated_predictions|hungarian_metrics).json
+#   outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT       (plain text, "epoch-{E}")
+#   outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT.json  (상세 순위 + hf_repo_id)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -21,8 +27,6 @@ parse_args "$@"
 export DISABLE_VERSION_CHECK=1
 
 SCRIPT_TAG="stage1_eval_${STAGE1_MODE}"
-# notebook _DATASET_CONFIG.stage1.lora_rank (MB=AC=8)
-STAGE1_LORA_RANK=8
 
 # DS 코드 → data/ 아래 디렉토리명
 declare -A DS_DATADIR=( [MB]="MobiBench" [AC]="AndroidControl" )
@@ -40,11 +44,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     VLLM_COMMON_ARGS+=(--enable_thinking False)
   fi
 
-  if [ "$STAGE1_MODE" = "full" ]; then
-    SWEEP_VLLM_CONFIG='{"gpu_memory_utilization": 0.80}'
-  else
-    SWEEP_VLLM_CONFIG="{\"gpu_memory_utilization\": 0.80, \"max_lora_rank\": ${STAGE1_LORA_RANK}}"
-  fi
+  # Merged 모델은 full/lora 공통으로 단일 모델이므로 LoRA 인자 불필요.
+  SWEEP_VLLM_CONFIG='{"gpu_memory_utilization": 0.80}'
 
   for DS in "${DATASETS[@]}"; do
     PREFIX="${DS_PREFIX[$DS]}"
@@ -81,7 +82,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           --output '$OUT_BASE/hungarian_metrics.json'"
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase B. Checkpoint sweep — outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/checkpoint-*/
+    # Phase B. HF repo sweep — epoch 번호 소스는 로컬 checkpoint 디렉토리.
+    #   각 checkpoint-{step}/trainer_state.json 에서 epoch 을 추출해
+    #   hf_repo_id_stage1(MODEL, DS, MODE, E) 로 repo id 를 재조립한다.
     # ─────────────────────────────────────────────────────────────────────
     shopt -s nullglob
     CKPTS=("$TRAIN_DIR"/checkpoint-*/)
@@ -90,24 +93,21 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       echo "[!] [$MODEL_SHORT][$DS][$STAGE1_MODE] No checkpoints under $TRAIN_DIR (did stage1_train.sh --stage1-mode ${STAGE1_MODE} complete?)" >&2
       exit 1
     fi
-    echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] Sweeping ${#CKPTS[@]} checkpoints" >&2
+    echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] Sweeping ${#CKPTS[@]} epochs" >&2
 
     for CKPT_DIR in "${CKPTS[@]}"; do
-      CKPT_NAME=$(basename "$CKPT_DIR")
-      OUT_CKPT_REL="${EVAL_DIR_REL}/${STAGE1_MODE}_world_model/${CKPT_NAME}"
+      CKPT_DIR="${CKPT_DIR%/}"
+      EPOCH=$(ckpt_epoch_from_dir "$CKPT_DIR") || {
+        echo "[!] epoch 파싱 실패: $CKPT_DIR" >&2; exit 1;
+      }
+      HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH")
+      OUT_CKPT_REL="${EVAL_DIR_REL}/${STAGE1_MODE}_world_model/epoch-${EPOCH}"
       OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
-      CKPT_REL="${TRAIN_DIR_REL}/${CKPT_NAME}"
 
-      if [ "$STAGE1_MODE" = "full" ]; then
-        MODEL_ARGS="--model_name_or_path '$CKPT_REL'"
-      else
-        MODEL_ARGS="--model_name_or_path '$BASE_MODEL' --adapter_name_or_path '$CKPT_REL'"
-      fi
-
-      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${CKPT_NAME}" \
+      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_epoch${EPOCH}" \
         bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_CKPT_REL' && \
           python scripts/vllm_infer.py \
-            ${MODEL_ARGS} \
+            --model_name_or_path '$HUB_ID' \
             --dataset '$DS_TEST' \
             --dataset_dir '$LF_ROOT/data' \
             ${VLLM_COMMON_ARGS[*]} \
@@ -122,12 +122,15 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
     # ─────────────────────────────────────────────────────────────────────
     # Phase C. Winner 선택 → BEST_CHECKPOINT 파일 (adapter 디렉토리에 기록)
+    #   --hf-repo-template 로 winner HF repo id 를 BEST_CHECKPOINT.json 에 주입.
     # ─────────────────────────────────────────────────────────────────────
     WIN_EVAL_DIR="$EVAL_DIR/${STAGE1_MODE}_world_model"
+    HUB_TEMPLATE="$(hf_repo_id_stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" '{epoch}')"
     run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_select" \
       python "$BASE_DIR/scripts/_hungarian_eval.py" select \
         --eval-dir  "$WIN_EVAL_DIR" \
         --train-dir "$TRAIN_DIR" \
-        --metric    avg_hungarian_f1
+        --metric    avg_hungarian_f1 \
+        --hf-repo-template "$HUB_TEMPLATE"
   done
 done
