@@ -112,15 +112,16 @@ get_backend() {
   echo "${MODEL_BACKEND[$m]:-llamafactory}"
 }
 
-# --- CLI 인자 파싱: --model MODEL --dataset DS --------------------------------
+# --- CLI 인자 파싱: --model MODEL --dataset DS --stage1-mode full|lora --------
 # 사용법:
 #   bash script.sh --model qwen3-vl-8b --dataset MB
-#   bash script.sh --model qwen3-vl-8b          # 전체 데이터셋
-#   bash script.sh --dataset MB                  # 전체 모델
-#   bash script.sh                               # 전체 모델 + 전체 데이터셋
+#   bash script.sh --model qwen3-vl-8b --stage1-mode lora
+#   bash script.sh --stage1-mode lora           # 전체 모델 LoRA 학습/평가/merge
+#   bash script.sh                               # 기본값: 전체 모델 + 전체 DS + full
 parse_args() {
   local model_arg="all"
   local dataset_arg="all"
+  local stage1_mode_arg="full"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model)
@@ -129,22 +130,28 @@ parse_args() {
       --dataset)
         if [[ -z "${2:-}" ]]; then echo "Error: --dataset requires a value." >&2; exit 2; fi
         dataset_arg="$2"; shift 2 ;;
+      --stage1-mode)
+        if [[ -z "${2:-}" ]]; then echo "Error: --stage1-mode requires a value." >&2; exit 2; fi
+        stage1_mode_arg="$2"; shift 2 ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") [--model MODEL] [--dataset DS]
+Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE]
 
 Options:
-  --model MODEL   모델 short_name 또는 "all" (기본: all)
-  --dataset DS    MB | AC | all (기본: all)
-  -h, --help      이 도움말 표시
+  --model MODEL        모델 short_name 또는 "all" (기본: all)
+  --dataset DS         MB | AC | all (기본: all)
+  --stage1-mode MODE   full | lora (기본: full)
+                       Stage 1 학습 방식. Stage 2 스크립트에서는 world-model variant
+                       가 참조할 상류 Stage 1 소스를 선택.
+  -h, --help           이 도움말 표시
 
 Available models:
   ${ALL_MODELS[*]}
 
 Examples:
   $(basename "$0") --model qwen3-vl-8b --dataset MB
-  $(basename "$0") --model qwen3-vl-8b
-  $(basename "$0") --dataset MB
+  $(basename "$0") --model gemma-4-e2b --stage1-mode lora
+  $(basename "$0") --stage1-mode lora
   $(basename "$0")
 EOF
         exit 0
@@ -155,6 +162,14 @@ EOF
         ;;
     esac
   done
+
+  case "$stage1_mode_arg" in
+    full|lora) STAGE1_MODE="$stage1_mode_arg" ;;
+    *)
+      echo "Error: Unknown --stage1-mode '$stage1_mode_arg'. Use full | lora." >&2
+      exit 2
+      ;;
+  esac
 
   # model_arg → MODELS 배열
   if [[ "$model_arg" == "all" ]]; then

@@ -168,62 +168,90 @@ python scripts/split_data.py --dataset AndroidControl
 > **Global batch size 자동 계산**: Section 0 (Cell 6) 이 `.env` 의 `NPROC_PER_NODE` 와
 > 프레임워크별 `per_device_train_batch_size` (LF=2, Unsloth=1) 로부터 `gradient_accumulation_steps`
 > 를 역계산해 `GLOBAL_BATCH_SIZE=64` 를 유지한다. GPU 수가 바뀌면 `.env` 의 `NPROC_PER_NODE`
-> 만 수정하고 노트북 Cell 6 과 YAML 생성 셀(9/11/15/17) 을 다시 실행하면 된다.
+> 만 수정하고 노트북 Cell 6 과 YAML 생성 셀(9/11/15/17/61) 을 다시 실행하면 된다.
 
-1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성
+1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성 (Stage 1 full · lora 양쪽 + Stage 2 base · world-model-full · world-model-lora)
 2. Section 1-2: `dataset_info.json` 등록
-3. Section 3: Stage 1 학습 (모델+데이터셋별 개별 셀)
+3. Section 3: Stage 1 학습 (노트북 셀은 default=full 기준. LoRA 는 아래 쉘 스크립트 사용)
 4. Section 4: Stage 1 평가 및 winner 선택
-5. Section 5: Stage 1 merge/export (모델+데이터셋별 개별 셀)
-6. Section 6: Stage 2 학습 (모델+데이터셋별 개별 셀)
+5. Section 5: Stage 1 merge/export
+6. Section 6: Stage 2 학습 (world-model variant 는 상류 Stage 1 모드에 맞춰 선택)
 7. Section 7: Stage 2 평가 및 winner 선택
-8. Section 8: Stage 2 merge/export (모델+데이터셋별 개별 셀)
+8. Section 8: Stage 2 merge/export
 
 ### 2. shell script 경로
 
 shell script 는 notebook 으로 한 번 생성된 YAML 과 `LlamaFactory/data/dataset_info.json` 이 이미 있다는 전제에서 동작한다.
 
+Stage 1 은 `--stage1-mode full|lora` 플래그로 finetuning 방식을 선택한다 (기본: `full`). Stage 2 스크립트도 같은 플래그를 받아 world-model variant 의 상류 Stage 1 소스를 결정한다.
+
 ```bash
+# Stage 1 Full FT (default)
 bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset MB
-bash scripts/stage1_eval.sh --model qwen3-vl-8b --dataset MB
+bash scripts/stage1_eval.sh  --model qwen3-vl-8b --dataset MB
 bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset MB
 
+# Stage 1 LoRA
+bash scripts/stage1_train.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
+bash scripts/stage1_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora
+bash scripts/stage1_merge.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
+
+# Stage 2 — world-model variant 가 Stage 1 full 결과를 base 로 사용
 bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset MB
-bash scripts/stage2_eval.sh --model qwen3-vl-8b --dataset MB
+bash scripts/stage2_eval.sh  --model qwen3-vl-8b --dataset MB
 bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB
+
+# Stage 2 — world-model variant 가 Stage 1 lora 결과를 base 로 사용
+bash scripts/stage2_train.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
+bash scripts/stage2_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora
+bash scripts/stage2_merge.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
 ```
 
 지원 플래그:
 
 - `--model MODEL`: 모델 short_name 또는 `all` (기본: `all`)
 - `--dataset DS`: `MB` | `AC` | `all` (기본: `all`)
+- `--stage1-mode MODE`: `full` | `lora` (기본: `full`)
 - `-h`, `--help`: 도움말
 
 주요 동작:
 
-- `stage1_eval.sh` 는 baseline + checkpoint sweep 뒤 `avg_hungarian_f1` 기준 winner 를 `BEST_CHECKPOINT` 로 기록한다.
-- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 만든다.
-- `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model` checkpoint sweep 뒤 `step_accuracy` 기준 winner 를 기록한다 (Step Accuracy — AndroidControl 표준 정의, 메트릭 정의는 `ARCHITECTURE.md` §6 참고).
-- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}/` 를 만든다.
+- `stage1_eval.sh` 는 baseline + HF merged world-model 평가. `--stage1-mode` 에 따라 `stage1-{full|lora}-world-model` 레포를 참조하며 결과는 `outputs/{DS}/eval/{MODEL}/stage1_eval/{base,{full|lora}_world_model}/` 에 쓴다. checkpoint sweep → `avg_hungarian_f1` winner 를 adapter 디렉토리의 `BEST_CHECKPOINT` 로 기록한다.
+- `stage1_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage1_{full|lora}/` 를 만들고 HF Hub 에 `...-stage1-{full|lora}-world-model` 로 push 한다. LF LoRA 모드는 임시 merge YAML 에 `adapter_name_or_path` + `finetuning_type: lora` 블록을 삽입해 base+adapter merge 를 수행.
+- `stage2_train.sh` 는 `{MODEL}_base.yaml` + `{MODEL}_world-model-{full|lora}.yaml` 두 variant 를 학습한다.
+- `stage2_eval.sh` 는 baseline + `lora_base` / `lora_world_model_{full|lora}` checkpoint sweep 뒤 `step_accuracy` 기준 winner 를 기록 (Step Accuracy — AndroidControl 표준 정의, `ARCHITECTURE.md` §6 참고).
+- `stage2_merge.sh` 는 해당 winner 를 읽어 `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model_from_{full|lora}}/` 를 만들고 HF Hub 에 `...-stage2-{base|{full|lora}-world-model}` 로 push 한다.
 
 ## 산출물
 
-모든 결과물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심** 으로 모인다. `adapters/`·`merged/` 는 flat 네이밍 `{MODEL}_{detail}/`, `eval/` 만 중첩 구조를 유지한다.
+모든 결과물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심** 으로 모인다. `adapters/`·`merged/` 는 flat 네이밍 `{MODEL}_{detail}/`, `eval/` 만 중첩 구조를 유지한다. Stage 1 full/lora 산출물은 경로 접미사로 분리되어 공존 가능하다.
 
 ```
 GUI-Model/outputs/{MB|AC}/
 ├── adapters/
-│   ├── {model_short_name}_stage1_full/             # checkpoint-*, BEST_CHECKPOINT
-│   ├── {model_short_name}_stage2_lora_base/        # LoRA checkpoint-*, BEST_CHECKPOINT
-│   └── {model_short_name}_stage2_lora_world_model/ # LoRA checkpoint-*, BEST_CHECKPOINT
-├── eval/{model_short_name}/                         # 중첩 유지
-│   ├── stage1_eval/{base,full_world_model/checkpoint-*}/   # generated_predictions, hungarian_metrics
-│   └── stage2_eval/{base,lora_base,lora_world_model}/{base,checkpoint-*}/
+│   ├── {model_short_name}_stage1_full/                          # Stage 1 full FT 체크포인트
+│   ├── {model_short_name}_stage1_lora/                          # Stage 1 LoRA 체크포인트
+│   ├── {model_short_name}_stage2_lora_base/                     # Stage 2 LoRA (base) 체크포인트
+│   ├── {model_short_name}_stage2_lora_world_model_from_full/    # Stage 2 LoRA (상류=S1 full)
+│   └── {model_short_name}_stage2_lora_world_model_from_lora/    # Stage 2 LoRA (상류=S1 lora)
+├── eval/{model_short_name}/                                      # 중첩 유지
+│   ├── stage1_eval/{base,full_world_model,lora_world_model}/     # generated_predictions, hungarian_metrics
+│   └── stage2_eval/{base,lora_base,lora_world_model_{full|lora}}/
 └── merged/
-    ├── {model_short_name}_stage1_full/             # Stage 1 full-FT 병합 결과
-    ├── {model_short_name}_stage2_lora_base/        # Stage 2 LoRA (base) 병합 결과
-    └── {model_short_name}_stage2_lora_world_model/ # Stage 2 LoRA (world model) 병합 결과
+    ├── {model_short_name}_stage1_full/                          # Stage 1 full-FT 병합
+    ├── {model_short_name}_stage1_lora/                          # Stage 1 LoRA 병합
+    ├── {model_short_name}_stage2_lora_base/                     # Stage 2 LoRA (base) 병합
+    ├── {model_short_name}_stage2_lora_world_model_from_full/    # Stage 2 LoRA (상류=full) 병합
+    └── {model_short_name}_stage2_lora_world_model_from_lora/    # Stage 2 LoRA (상류=lora) 병합
 ```
+
+HF Hub 레포지토리 네이밍:
+
+- `SaFD-00/{short}-{slug}stage1-full-world-model`
+- `SaFD-00/{short}-{slug}stage1-lora-world-model`
+- `SaFD-00/{short}-{slug}stage2-base`                   (Stage 1 무관)
+- `SaFD-00/{short}-{slug}stage2-full-world-model`       (상류=S1 full)
+- `SaFD-00/{short}-{slug}stage2-lora-world-model`       (상류=S1 lora)
 
 ## 모델 추가 방법
 

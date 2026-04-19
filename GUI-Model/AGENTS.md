@@ -16,7 +16,7 @@
 
 ## 어디를 수정해야 하는가
 
-- **모델 추가**: `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` (backend 필드 포함) + `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 를 동시에 수정한다. backend 가 기본값(`llamafactory`) 이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에도 등록한다. `backend=unsloth` 인 경우 `unsloth/configs/GUI-Model-{MB,AC}/stage{1,2}_*/` YAML 은 notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성되므로 수동 작성 불필요. LF YAML 생성 셀들은 `backend == "unsloth"` 인 모델을 스킵하므로 gemma 계열은 LF `examples/custom/GUI-Model-{MB,AC}/stage{1,2}_*/` 아래 YAML 이 생성되지 않는다. notebook 실행 셀(Stage 1/2 train, merge)에도 새 모델 블록을 추가해야 한다.
+- **모델 추가**: `gui-model.ipynb` Cell 6 의 `_MODEL_CONFIG` (backend 필드 포함) + `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 를 동시에 수정한다. backend 가 기본값(`llamafactory`) 이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에도 등록한다. 모든 backend 는 Stage 1 YAML 을 **full / lora 두 벌** 자동 생성한다 (Cell 9 LF / Cell 11 Unsloth). LoRA 모드 per-model 추가 조정은 `hparam_overrides["stage1_lora"]` 를 쓴다. notebook 실행 셀(Stage 1/2 train, merge) 은 default=full 기준이고, LoRA 학습은 쉘 스크립트의 `--stage1-mode lora` 로 돌린다.
 - **Backend 변경**: 기존 모델을 다른 backend 로 옮길 때는 `_common.sh::MODEL_BACKEND` 한 줄만 수정하면 된다. 단, 해당 backend 용 YAML 이 준비되어 있어야 한다.
 - **notebook 실행 순서나 YAML 생성 흐름**: [`gui-model.ipynb`](./gui-model.ipynb) 와 [`scripts/stage1_*.sh`](./scripts/stage1_train.sh), [`scripts/stage2_*.sh`](./scripts/stage2_train.sh) 를 함께 맞춰라.
 - **데이터 분할 규칙**: [`scripts/split_data.py`](./scripts/split_data.py) 가 기준이다.
@@ -32,15 +32,15 @@
 - transformers 버전을 바꿀 때는 [`pyproject.toml`](./pyproject.toml) `[project].dependencies` 와 [`setup.py`](./setup.py) `INSTALL_REQUIRES` 두 곳을 함께 수정한다 (현재 `transformers==5.5.4` 로 고정). 서브프로젝트(`LlamaFactory/`, `unsloth/`) 의 `pyproject.toml` 은 건드리지 않는다 — 충돌 시 README 의 `--upgrade` / `--no-deps` 회피 절차로 처리.
 - Unsloth (Gemma-4 e2b/e4b) 학습 셀을 실행하기 전 `gui-model.ipynb` Cell 5 (`%%bash pip uninstall -y deepspeed`) 로 deepspeed 를 env 에서 반드시 제거한다. LlamaFactory 백엔드 학습으로 돌아갈 때는 `pip install -e .` 로 `deepspeed>=0.10.0,<=0.18.4` 를 재설치한다.
 - Gemma-4 e2b/e4b stage1 Full FT 의 Unsloth 권장 사양 키 (`load_in_16bit`, `optim`, `gradient_checkpointing`, `freeze_vision_tower`, `template`) 는 4 개 YAML (`unsloth/configs/GUI-Model-{MB,AC}/stage1_full/gemma-4-{e2b,e4b}_world-model.yaml`) 과 notebook `_MODEL_CONFIG` + Unsloth Stage1 YAML 생성 셀을 함께 동기화한다. `_unsloth_train.py` 가 `FastModel.from_pretrained(load_in_16bit=..., use_gradient_checkpointing=...)`, `get_chat_template(tokenizer, template)`, Full FT 분기에서 `freeze_vision_tower` 명시적 freeze, `SFTConfig.optim=...` 로 모두 소비하므로 키를 빼면 권장 동작이 깨진다. `gradient_checkpointing` 은 모델 로드 단계에서만 적용되며 `SFTConfig` 에 다시 넘기지 않는다.
-- 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `MB` 또는 `AC`, `{category}` 는 `adapters | eval | merged`. `adapters/` · `merged/` 는 flat 네이밍 `{MODEL}_{detail}/` (예: `gemma-4-e2b_stage1_full`, `qwen3-vl-8b_stage2_lora_world_model`). `eval/` 은 `{MODEL}/stage{1,2}_eval/...` 중첩 구조 유지. 모든 산출물의 루트는 `GUI-Model/outputs/` 이다.
+- 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `MB` 또는 `AC`, `{category}` 는 `adapters | eval | merged`. `adapters/` · `merged/` 는 flat 네이밍 `{MODEL}_{detail}/` (예: `gemma-4-e2b_stage1_full`, `gemma-4-e2b_stage1_lora`, `qwen3-vl-8b_stage2_lora_world_model_from_full`). `eval/` 은 `{MODEL}/stage{1,2}_eval/...` 중첩 구조 유지. 모든 산출물의 루트는 `GUI-Model/outputs/` 이다.
 - `data/` 아래 실제 디렉토리명은 `MobiBench`, `AndroidControl` 이다.
 - eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.
-- Stage 1 merge 는 `outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT` 가 없으면 실패한다.
-- Stage 2 eval 과 merge 는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 전제로 한다.
-- [`scripts/stage1_train.sh`](./scripts/stage1_train.sh) 는 `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}` 를 붙여 실행하지만, [`scripts/stage2_train.sh`](./scripts/stage2_train.sh) 는 의도적으로 torchrun prefix 를 붙이지 않는다. `NPROC_PER_NODE` 는 `.env` 에서 관리하며 기본값은 2 이다. notebook 의 YAML 생성 셀이 이 값으로 `gradient_accumulation_steps` 를 역계산 (`64 / (per_device * NPROC_PER_NODE)`) 해 global batch size 를 64 로 유지하므로, GPU 수를 바꾼 뒤에는 Section 0 의 Cell 6 과 YAML 생성 셀(9/11/15/17) 을 다시 실행해야 한다. 나누어떨어지지 않는 조합은 `ValueError` 로 중단된다.
+- Stage 1 merge 는 `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT` 가 없으면 실패한다 (MODE = `--stage1-mode` 값).
+- Stage 2 train/merge 의 world-model variant 는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/` (또는 HF Hub `...-stage1-${MODE}-world-model`) 가 선행되어야 한다. Stage 2 스크립트의 `--stage1-mode` 가 상류 소스 선택을 결정한다.
+- [`scripts/stage1_train.sh`](./scripts/stage1_train.sh) 는 `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}` 를 붙여 실행하지만, [`scripts/stage2_train.sh`](./scripts/stage2_train.sh) 는 의도적으로 torchrun prefix 를 붙이지 않는다. `NPROC_PER_NODE` 는 `.env` 에서 관리하며 기본값은 2 이다. notebook 의 YAML 생성 셀이 이 값으로 `gradient_accumulation_steps` 를 역계산 (`64 / (per_device * NPROC_PER_NODE)`) 해 global batch size 를 64 로 유지하므로, GPU 수를 바꾼 뒤에는 Section 0 의 Cell 6 과 YAML 생성 셀(9/11/15/17/61) 을 다시 실행해야 한다. 나누어떨어지지 않는 조합은 `ValueError` 로 중단된다.
 - [`scripts/split_data.py`](./scripts/split_data.py) 는 `AndroidControl` Stage 2 에 대해 기본적으로 `30000`개 stratified subsample 을 만든 뒤 train/test split 한다.
 - bash 자동화는 bash 4+ 전제를 가진다.
-- shell script CLI 는 `--model MODEL --dataset DS` 플래그 방식이다.
+- shell script CLI 는 `--model MODEL --dataset DS --stage1-mode {full|lora}` 플래그 방식이다 (기본: full).
 
 ## 빠른 검증 포인트
 

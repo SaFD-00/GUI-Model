@@ -44,14 +44,14 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
 
 `gui-model.ipynb` 는 아래 순서를 기준으로 작성되어 있다.
 
-1. Section 0: 환경 설정, 모델/데이터셋 config 정의, Stage 1/2 training YAML 및 Stage 1 eval YAML 생성
+1. Section 0: 환경 설정, 모델/데이터셋 config 정의, Stage 1 YAML (full · lora 양쪽) / Stage 2 YAML (base · world-model-full · world-model-lora) / Stage 1 eval YAML 생성
 2. Section 1-2: `LlamaFactory/data/dataset_info.json` 등록
-3. Section 3: Stage 1 full fine-tuning (모델+데이터셋별 개별 셀)
+3. Section 3: Stage 1 fine-tuning (노트북 셀은 default=full 기준 실행. LoRA 는 `scripts/stage1_train.sh --stage1-mode lora`)
 4. Section 4: Stage 1 평가 및 Hungarian F1 winner 선택
-5. Section 5: Stage 1 merge 및 export (모델+데이터셋별 개별 셀)
-6. Section 6: Stage 2 LoRA fine-tuning (모델+데이터셋별 개별 셀)
+5. Section 5: Stage 1 merge 및 export (full/lora 모드별 분리 산출)
+6. Section 6: Stage 2 LoRA fine-tuning (world-model variant 는 상류 Stage 1 모드에 따라 `world-model-full.yaml` 또는 `world-model-lora.yaml` 선택)
 7. Section 7: Stage 2 평가 및 Overall Score winner 선택
-8. Section 8: Stage 2 merge 및 export (모델+데이터셋별 개별 셀)
+8. Section 8: Stage 2 merge 및 export
 
 ## 2. 모델 설정
 
@@ -139,43 +139,51 @@ data/
 
 ### Stage 1 automation
 
+Stage 1 은 `--stage1-mode {full|lora}` 로 finetuning 방식을 선택한다 (기본: `full`). 모드별로 YAML 경로 · adapter 경로 · merged 경로 · HF Hub ID 가 모두 접미사로 분리되어 공존한다.
+
 - [`scripts/stage1_train.sh`](./scripts/stage1_train.sh)
-  - `backend=llamafactory`: `examples/custom/GUI-Model-{DS}/stage1_full/{MODEL}_world-model.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}`
-  - `backend=unsloth`: `unsloth/configs/GUI-Model-{DS}/stage1_full/{MODEL}_world-model.yaml`, `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py`
+  - `backend=llamafactory`: `examples/custom/GUI-Model-{DS}/stage1_${MODE}/{MODEL}_world-model.yaml`, `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}`
+  - `backend=unsloth`: `unsloth/configs/GUI-Model-{DS}/stage1_${MODE}/{MODEL}_world-model.yaml`, `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py`
+  - LF full YAML 은 `finetuning_type: full`, LF lora YAML 은 `finetuning_type: lora` + `lora_rank/alpha/target/dropout` 블록을 포함한다.
   - `NPROC_PER_NODE` 는 `.env` 에서 관리 (기본값 2). notebook Cell 6 이 이 값을 읽어 각 YAML 의 `gradient_accumulation_steps` 를 역계산하므로, GPU 수 변경 시 `.env` 수정 후 YAML 생성 셀(9/11)을 재실행해야 한다.
 - [`scripts/stage1_eval.sh`](./scripts/stage1_eval.sh)
-  - baseline zero-shot + checkpoint sweep (backend 독립)
-  - `LlamaFactory/scripts/vllm_infer.py` 로 생성 (`cd "$LF_ROOT"` 내부에서 호출, `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수)
-  - `_hungarian_eval.py` 로 score/select
+  - baseline zero-shot + HF merged world-model (`...-stage1-${MODE}-world-model`) 평가 (backend 독립)
+  - 결과 경로: `outputs/{DS}/eval/{MODEL}/stage1_eval/{base, ${MODE}_world_model}/`
+  - `_hungarian_eval.py` 로 score/select → adapter 경로의 `BEST_CHECKPOINT` 기록
 - [`scripts/stage1_merge.sh`](./scripts/stage1_merge.sh)
-  - `BEST_CHECKPOINT` 를 읽고 backend 분기
-  - `backend=llamafactory`: 임시 merge YAML 렌더 → `llamafactory-cli export`
-  - `backend=unsloth`: `scripts/_unsloth_merge.py --mode full` (full FT 체크포인트 copy+push)
-  - 산출물: `outputs/{DS}/merged/{MODEL}_stage1_full/` + HF Hub push
+  - `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT` 를 읽고 backend 분기
+  - `backend=llamafactory`:
+    - full 모드: 임시 merge YAML 의 `model_name_or_path` 를 winner checkpoint 로 설정 → `llamafactory-cli export`
+    - lora 모드: `model_name_or_path: {base_model}` + `adapter_name_or_path: {winner}` + `finetuning_type: lora` 블록 삽입
+  - `backend=unsloth`: `scripts/_unsloth_merge.py --mode {full|lora}`
+  - 산출물: `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/` + HF Hub push (`...-stage1-${MODE}-world-model`)
 
 ### Stage 2 automation
 
+Stage 2 스크립트도 `--stage1-mode {full|lora}` 를 받아 world-model variant 가 참조할 상류 Stage 1 소스를 결정한다 (기본: `full`). `base` variant 는 Stage 1 모드와 무관하게 항상 실행된다.
+
 - [`scripts/stage2_train.sh`](./scripts/stage2_train.sh)
-  - `examples/custom/GUI-Model-{DS}/stage2_lora/{MODEL}_{base,world-model}.yaml` 반복 실행 (unsloth 의 경우 `unsloth/configs/GUI-Model-{DS}/stage2_lora/{MODEL}_{base,world-model}.yaml`)
+  - 반복 실행: `{MODEL}_base.yaml` + `{MODEL}_world-model-${MODE}.yaml` (LF: `examples/custom/GUI-Model-{DS}/stage2_lora/`, Unsloth: `unsloth/configs/GUI-Model-{DS}/stage2_lora/`)
   - `backend=llamafactory`: llamafactory-cli (torchrun prefix 없음, 노트북 원본과 일치)
   - `backend=unsloth`: `accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} scripts/_unsloth_train.py` (`NPROC_PER_NODE` 는 `.env` 관리, 기본값 2)
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
-  - baseline zero-shot + `lora_base` / `lora_world_model` checkpoint sweep (backend 독립)
+  - baseline zero-shot + `lora_base` / `lora_world_model_${MODE}` checkpoint sweep (backend 독립)
   - `LlamaFactory/scripts/vllm_infer.py` 호출 시 `cd "$LF_ROOT"` 내부에서 실행하고 `--dataset_dir '$LF_ROOT/data'` 절대 경로 필수
-  - `lora_world_model` 평가는 로컬 `outputs/{DS}/merged/{MODEL}_stage1_full/` 를 base model 로 사용한다
+  - `lora_world_model_${MODE}` 평가는 HF `...-stage2-${MODE}-world-model` 을 로드한다 (stage2_merge 후)
 - [`scripts/stage2_merge.sh`](./scripts/stage2_merge.sh)
   - 각 LoRA variant 의 `BEST_CHECKPOINT` 를 읽어 merge
   - `backend=llamafactory`: `llamafactory-cli export` → `merged_16bit`
   - `backend=unsloth`: `scripts/_unsloth_merge.py --mode lora` → `save_pretrained_merged(method="merged_16bit")`
-  - 산출물: `outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}/` + HF Hub push
+  - 산출물: `outputs/{DS}/merged/{MODEL}_stage2_lora_{base, world_model_from_${MODE}}/` + HF Hub push (`...-stage2-base`, `...-stage2-${MODE}-world-model`)
 
 ### Shell script CLI
 
 ```bash
-bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset MB
-bash scripts/stage1_train.sh --model qwen3-vl-8b          # 전체 데이터셋
-bash scripts/stage1_train.sh --dataset MB                  # 전체 모델
-bash scripts/stage1_train.sh                               # 전체 모델 + 전체 데이터셋
+bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset MB                        # full (default)
+bash scripts/stage1_train.sh --model qwen3-vl-8b                                     # 전체 데이터셋 full
+bash scripts/stage1_train.sh --model gemma-4-e2b --dataset MB --stage1-mode lora     # LoRA 모드
+bash scripts/stage2_train.sh --stage1-mode lora                                      # 전체 모델, world-model 은 S1-lora 기준
+bash scripts/stage1_train.sh                                                         # 전체 모델 + 전체 DS + full
 ```
 
 ## 5. 실행 데이터 흐름
@@ -184,57 +192,60 @@ bash scripts/stage1_train.sh                               # 전체 모델 + 전
 raw JSONL + screenshots
   -> split_data.py
   -> dataset_info.json registration
-  -> [per model] Stage 1 train
+  -> [per model] Stage 1 train  (mode = full | lora)
   -> [per model] Stage 1 eval
-  -> BEST_CHECKPOINT
+  -> BEST_CHECKPOINT  (in adapters/..._stage1_{mode})
   -> [per model] Stage 1 merge
-  -> outputs/{DS}/merged/{MODEL}_stage1_full
-  -> [per model] Stage 2 train
+  -> outputs/{DS}/merged/{MODEL}_stage1_{mode}  +  HF Hub ...-stage1-{mode}-world-model
+  -> [per model] Stage 2 train  (base + world-model-{mode})
   -> [per model] Stage 2 eval
-  -> BEST_CHECKPOINT
+  -> BEST_CHECKPOINT  (in adapters/..._stage2_lora_{base, world_model_from_{mode}})
   -> [per model] Stage 2 merge
-  -> outputs/{DS}/merged/{MODEL}_stage2_lora_{base,world_model}
+  -> outputs/{DS}/merged/{MODEL}_stage2_lora_{base, world_model_from_{mode}}
 ```
 
 ### 산출물 위치
 
-모든 산출물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심 + category 분리** 구조로 모인다.
+모든 산출물은 `GUI-Model/outputs/` 단일 루트 아래에 **데이터셋 중심 + category 분리** 구조로 모인다. Stage 1 full/lora 산출물은 경로 접미사로 분리되어 공존 가능하다.
 
 ```
 GUI-Model/outputs/{DS}/
 ├── adapters/
 │   ├── {model_short_name}_stage1_full/
+│   ├── {model_short_name}_stage1_lora/
 │   │   ├── checkpoint-*/
 │   │   ├── BEST_CHECKPOINT
 │   │   └── BEST_CHECKPOINT.json
 │   ├── {model_short_name}_stage2_lora_base/
-│   │   ├── checkpoint-*/
-│   │   └── BEST_CHECKPOINT
-│   └── {model_short_name}_stage2_lora_world_model/
-│       ├── checkpoint-*/
-│       └── BEST_CHECKPOINT
+│   ├── {model_short_name}_stage2_lora_world_model_from_full/
+│   └── {model_short_name}_stage2_lora_world_model_from_lora/
 ├── eval/{model_short_name}/              # sub-hierarchy 가 있어 중첩 유지
 │   ├── stage1_eval/
 │   │   ├── base/
-│   │   └── full_world_model/
-│   │       └── checkpoint-*/
+│   │   ├── full_world_model/
+│   │   └── lora_world_model/
 │   └── stage2_eval/
 │       ├── base/
-│       ├── lora_base/{base,checkpoint-*}/
-│       └── lora_world_model/{base,checkpoint-*}/
+│       ├── lora_base/
+│       ├── lora_world_model_full/
+│       └── lora_world_model_lora/
 └── merged/
     ├── {model_short_name}_stage1_full/
+    ├── {model_short_name}_stage1_lora/
     ├── {model_short_name}_stage2_lora_base/
-    └── {model_short_name}_stage2_lora_world_model/
+    ├── {model_short_name}_stage2_lora_world_model_from_full/
+    └── {model_short_name}_stage2_lora_world_model_from_lora/
 ```
 
 ### HuggingFace 업로드 ID 패턴
 
-| Stage | 패턴 |
+| Stage / variant | 패턴 |
 |-------|------|
-| Stage 1 | `SaFD-00/{short_name}-{slug}stage1-world-model` |
-| Stage 2 base | `SaFD-00/{short_name}-{slug}stage2-base` |
-| Stage 2 world | `SaFD-00/{short_name}-{slug}stage2-world-model` |
+| Stage 1 (full FT) | `SaFD-00/{short_name}-{slug}stage1-full-world-model` |
+| Stage 1 (LoRA)    | `SaFD-00/{short_name}-{slug}stage1-lora-world-model` |
+| Stage 2 base      | `SaFD-00/{short_name}-{slug}stage2-base` |
+| Stage 2 world (from S1 full) | `SaFD-00/{short_name}-{slug}stage2-full-world-model` |
+| Stage 2 world (from S1 lora) | `SaFD-00/{short_name}-{slug}stage2-lora-world-model` |
 
 `{slug}` 는 `mb-` (MobiBench) 또는 `ac-` (AndroidControl).
 
@@ -244,20 +255,20 @@ GUI-Model/outputs/{DS}/
 
 - baseline: 각 모델의 zero-shot
 - winner metric: `avg_hungarian_f1`
-- winner 기록 위치:
-  - `outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT`
-  - `outputs/{DS}/adapters/{MODEL}_stage1_full/BEST_CHECKPOINT.json`
+- winner 기록 위치 (MODE = `full` | `lora`):
+  - `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT`
+  - `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT.json`
 
 ### Stage 2
 
 - baseline: 각 모델의 zero-shot
-- 비교 대상:
+- 비교 대상 (스크립트의 `--stage1-mode` 값에 따라 world-model variant 상류 선택):
   - `lora_base`
-  - `lora_world_model`
+  - `lora_world_model_${MODE}`  (`MODE` = `full` | `lora`)
 - winner metric: `step_accuracy`
 - winner 기록 위치:
   - `outputs/{DS}/adapters/{MODEL}_stage2_lora_base/BEST_CHECKPOINT`
-  - `outputs/{DS}/adapters/{MODEL}_stage2_lora_world_model/BEST_CHECKPOINT`
+  - `outputs/{DS}/adapters/{MODEL}_stage2_lora_world_model_from_${MODE}/BEST_CHECKPOINT`
 
 #### Step Accuracy (SA) 정의
 
@@ -301,7 +312,7 @@ Reference baselines (해석용):
 
 - `gui_model/` 패키지에는 핵심 파이프라인이 없다. 변경 작업은 notebook, shell script, custom YAML 경로를 우선 검토해야 한다.
 - merge 스크립트는 `BEST_CHECKPOINT` 가 없으면 hard-fail 한다. fallback 동작은 없다.
-- Stage 2 eval 과 merge 는 Stage 1 로컬 merge 결과물에 의존한다.
+- Stage 2 eval 과 merge 는 Stage 1 로컬 merge 결과물에 의존한다. `--stage1-mode` 값에 따라 `outputs/{DS}/merged/{MODEL}_stage1_{full|lora}/` 중 하나가 전제가 된다.
 - merge 스크립트는 `.env` 또는 환경변수의 `HF_TOKEN` (HF Hub push 용) 과 Python `pyyaml` 을 전제로 한다.
 - shell automation 은 bash 4+ 환경을 요구한다.
 - 모델 추가 시 notebook `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다. backend 가 기본값(`llamafactory`)이 아니면 `MODEL_BACKEND` 도 동기화한다.

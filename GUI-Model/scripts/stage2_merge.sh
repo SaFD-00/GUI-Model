@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # Stage 2 Merge & Upload — BEST_CHECKPOINT 기반 winner adapter 자동 선택
 #
-# 두 variant 각각:
-#   merge_base          - Base model          + lora_base/<winner>
-#   merge_world_model   - stage1_merged       + lora_world_model/<winner>
+# --stage1-mode full (default) | lora 에 따라 world-model 상류를 선택:
+#   merge_base                       - Base model + lora_base/<winner>
+#   merge_world_model_from_${MODE}   - stage1_${MODE} merged + lora_world_model_from_${MODE}/<winner>
 #
 # Backend 분기 (_common.sh::MODEL_BACKEND):
 #   - llamafactory: 임시 merge YAML 생성 → llamafactory-cli export
 #   - unsloth:      scripts/_unsloth_merge.py --mode lora (merged_16bit safetensors)
 #
 # BEST_CHECKPOINT 없으면 해당 variant 를 [SKIP] 경고 후 건너뜀.
-# 전제: .env 의 HF_TOKEN. stage1_merge.sh 가 outputs/{DS}/merged/{MODEL}_stage1_full/ 를 생성해둔 상태.
+# 전제: .env 의 HF_TOKEN.
+#       stage1_merge.sh --stage1-mode ${MODE} 가
+#       outputs/{DS}/merged/{MODEL}_stage1_${MODE}/ 를 생성해둔 상태 (world_model variant 에만 해당).
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
 parse_args "$@"
 export DISABLE_VERSION_CHECK=1
 
-SCRIPT_TAG="stage2_merge"
+SCRIPT_TAG="stage2_merge_from_${STAGE1_MODE}"
 MERGED_COUNT=0
 SKIPPED_COUNT=0
 
@@ -26,15 +28,18 @@ for MODEL_SHORT in "${MODELS[@]}"; do
   BACKEND="$(get_backend "$MODEL_SHORT")"
 
   for DS in "${DATASETS[@]}"; do
-    # LF cwd 기준 상대경로 (../outputs/...) + BASE_DIR 기준 절대경로 동시 유지.
-    STAGE1_MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
-    STAGE1_MERGED="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}_stage1_full"
+    # Stage 1 merged (mode-tagged) — world-model variant base
+    STAGE1_MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_${STAGE1_MODE}"
+    STAGE1_MERGED="$BASE_DIR/outputs/${DS}/merged/${MODEL_SHORT}_stage1_${STAGE1_MODE}"
 
+    S1_MERGED_AVAILABLE=1
     if [ ! -d "$STAGE1_MERGED" ]; then
-      echo "[SKIP] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED — stage1_merge.sh 미완료, 건너뜁니다." >&2
-      SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-      continue
+      echo "[WARN] [$MODEL_SHORT][$DS] Missing $STAGE1_MERGED — world-model-${STAGE1_MODE} merge 건너뜀. (base variant 는 계속 진행)" >&2
+      S1_MERGED_AVAILABLE=0
     fi
+
+    WORLD_ADAPTER_SUB="${MODEL_SHORT}_stage2_lora_world_model_from_${STAGE1_MODE}"
+    WORLD_MERGED_SUB="${MODEL_SHORT}_stage2_lora_world_model_from_${STAGE1_MODE}"
 
     declare -A BASE_PATH=(
       [merge_base]="$BASE_MODEL"
@@ -46,18 +51,23 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     )
     declare -A LORA_DIR_REL=(
       [merge_base]="../outputs/${DS}/adapters/${MODEL_SHORT}_stage2_lora_base"
-      [merge_world_model]="../outputs/${DS}/adapters/${MODEL_SHORT}_stage2_lora_world_model"
+      [merge_world_model]="../outputs/${DS}/adapters/${WORLD_ADAPTER_SUB}"
     )
     declare -A MERGED_DIR=(
       [merge_base]="stage2_lora_base"
-      [merge_world_model]="stage2_lora_world_model"
+      [merge_world_model]="${WORLD_MERGED_SUB}"
     )
     declare -A HUB_SUFFIX_MAP=(
       [merge_base]="base"
-      [merge_world_model]="world-model"
+      [merge_world_model]="${STAGE1_MODE}-world-model"
     )
 
     for VARIANT in merge_base merge_world_model; do
+      if [ "$VARIANT" = "merge_world_model" ] && [ "$S1_MERGED_AVAILABLE" -eq 0 ]; then
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+        continue
+      fi
+
       LORA_REL="${LORA_DIR_REL[$VARIANT]}"
       BEST_FILE="$LF_ROOT/$LORA_REL/BEST_CHECKPOINT"
 
@@ -69,7 +79,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
       CKPT_NAME=$(tr -d '[:space:]' < "$BEST_FILE")
       # LORA_REL 이 "../outputs/..." 형태이므로 절대경로는 BASE_DIR 기준으로 재구성.
-      LORA_SUB="${LORA_REL#../}"              # "outputs/{DS}/adapters/{M}/stage2_lora_*"
+      LORA_SUB="${LORA_REL#../}"              # "outputs/{DS}/adapters/{M}_stage2_lora_*"
       ADAPTER_ABS="$BASE_DIR/$LORA_SUB/$CKPT_NAME"
       ADAPTER_REL="${LORA_REL}/${CKPT_NAME}"
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Using Stage 2 winner: ${CKPT_NAME}" >&2
@@ -131,7 +141,7 @@ EOF
   done
 done
 
-echo "--- Stage 2 Merge: $MERGED_COUNT merged, $SKIPPED_COUNT skipped ---" >&2
+echo "--- Stage 2 Merge (from ${STAGE1_MODE}): $MERGED_COUNT merged, $SKIPPED_COUNT skipped ---" >&2
 if [ "$MERGED_COUNT" -eq 0 ] && [ "$SKIPPED_COUNT" -gt 0 ]; then
   echo "[!] No variants were merged. Run stage2 evaluation first." >&2
   exit 1
