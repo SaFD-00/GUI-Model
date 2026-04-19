@@ -187,80 +187,75 @@ class AvdPool:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start_all(self) -> list[AvdHandle]:
-        """Start every AVD, wait for boot, and return handles.
+    def start_one(self, name: str, *, index: int) -> AvdHandle:
+        """Start a single AVD, wait for boot, and return its handle.
 
-        Each AVD ``i`` gets console port ``console_port_base + 2*i`` (so the
-        adb serial is ``emulator-<console_port>`` and is deterministic without
-        needing a post-hoc lookup).
+        AVD at ``index`` gets console port ``console_port_base + 2*index``,
+        host_port ``host_port_base + index``. Serial is deterministic:
+        ``emulator-<console_port>``.
         """
         emulator_bin = _find_emulator()
         adb_bin = _find_adb()
 
-        for i, name in enumerate(self.avd_names):
-            host_port = self.host_port_base + i
-            console_port = self.console_port_base + 2 * i
-            serial = f"emulator-{console_port}"
+        host_port = self.host_port_base + index
+        console_port = self.console_port_base + 2 * index
+        serial = f"emulator-{console_port}"
 
-            cmd = [emulator_bin, "-avd", name, "-port", str(console_port)]
-            if self.headless:
-                cmd += ["-no-window", "-no-audio", "-no-boot-anim"]
+        cmd = [emulator_bin, "-avd", name, "-port", str(console_port)]
+        if self.headless:
+            cmd += ["-no-window", "-no-audio", "-no-boot-anim"]
 
-            logger.info(
-                "avd: starting {} on console {} (headless={})",
-                name, console_port, self.headless,
-            )
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+        logger.info(
+            "avd: starting {} on console {} (headless={})",
+            name, console_port, self.headless,
+        )
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
-            _wait_for_boot(serial, self.boot_timeout, adb=adb_bin)
+        _wait_for_boot(serial, self.boot_timeout, adb=adb_bin)
 
-            handle = AvdHandle(
-                name=name,
-                serial=serial,
-                host_port=host_port,
-                console_port=console_port,
-                process=process,
-            )
-            self.handles.append(handle)
-            logger.info("avd: {} booted as {}", name, serial)
+        handle = AvdHandle(
+            name=name,
+            serial=serial,
+            host_port=host_port,
+            console_port=console_port,
+            process=process,
+        )
+        self.handles.append(handle)
+        logger.info("avd: {} booted as {}", name, serial)
+        return handle
 
-        return list(self.handles)
-
-    def stop_all(self) -> None:
-        """Stop every running AVD via ``adb emu kill``, falling back to terminate()."""
-        if not self.handles:
-            return
-
+    def stop(self, handle: AvdHandle) -> None:
+        """Stop a single running AVD via ``adb emu kill`` (fallback to terminate())."""
         try:
-            adb_bin = _find_adb()
+            adb_bin: str | None = _find_adb()
         except FileNotFoundError:
             adb_bin = None
 
-        for handle in self.handles:
-            killed = False
-            if adb_bin:
-                try:
-                    _run(
-                        [adb_bin, "-s", handle.serial, "emu", "kill"],
-                        check=False,
-                        timeout=10.0,
-                    )
-                    killed = True
-                except (RuntimeError, subprocess.TimeoutExpired) as exc:
-                    logger.warning("avd: emu kill {} failed: {}", handle.serial, exc)
+        killed = False
+        if adb_bin:
+            try:
+                _run(
+                    [adb_bin, "-s", handle.serial, "emu", "kill"],
+                    check=False,
+                    timeout=10.0,
+                )
+                killed = True
+            except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                logger.warning("avd: emu kill {} failed: {}", handle.serial, exc)
 
-            proc = handle.process
-            if not killed and proc is not None and hasattr(proc, "terminate"):
-                try:
-                    proc.terminate()
-                except Exception as exc:
-                    logger.warning("avd: terminate {} failed: {}", handle.name, exc)
+        proc = handle.process
+        if not killed and proc is not None and hasattr(proc, "terminate"):
+            try:
+                proc.terminate()
+            except Exception as exc:
+                logger.warning("avd: terminate {} failed: {}", handle.name, exc)
 
-        self.handles.clear()
+        if handle in self.handles:
+            self.handles.remove(handle)
 
     # ------------------------------------------------------------------
     # Provisioning
@@ -325,4 +320,5 @@ class AvdPool:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        self.stop_all()
+        for handle in list(self.handles):
+            self.stop(handle)

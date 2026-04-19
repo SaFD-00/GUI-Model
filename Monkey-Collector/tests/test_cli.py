@@ -112,24 +112,25 @@ class TestRunArgsDefaults:
             assert args.delay == 1500
 
 
-class TestCollectBatchArgsParsing:
+class TestSweepArgsParsing:
     def test_required_args(self):
         from server.cli import main
 
         with patch("sys.argv", [
-            "monkey-collect", "collect-batch",
+            "monkey-collect", "sweep",
             "--avds", "monkey-0,monkey-1",
-        ]), patch("server.cli.cmd_collect_batch") as mock_cmd:
+        ]), patch("server.cli.cmd_sweep") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
             assert args.avds == "monkey-0,monkey-1"
             assert args.apps_csv == "apps.csv"
             assert args.apks_dir == "apks"
-            assert args.parallel == 2
+            assert not hasattr(args, "parallel")
             assert args.host_port_base == 6000
             assert args.boot_timeout == 180.0
             assert args.uninstall_after is False
             assert args.dry_run is False
+            assert args.force is False
             assert args.categories is None
             assert args.priorities is None
 
@@ -137,11 +138,10 @@ class TestCollectBatchArgsParsing:
         from server.cli import main
 
         with patch("sys.argv", [
-            "monkey-collect", "collect-batch",
+            "monkey-collect", "sweep",
             "--apps-csv", "/tmp/apps.csv",
             "--apks-dir", "/tmp/apks",
             "--avds", "a,b,c",
-            "--parallel", "3",
             "--categories", "Shopping,Media",
             "--priorities", "High",
             "--output", "/tmp/out",
@@ -152,15 +152,15 @@ class TestCollectBatchArgsParsing:
             "--host-port-base", "7000",
             "--boot-timeout", "60",
             "--uninstall-after",
-            "--new-session",
+            "--force",
             "--dry-run",
-        ]), patch("server.cli.cmd_collect_batch") as mock_cmd:
+        ]), patch("server.cli.cmd_sweep") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
             assert args.apps_csv == "/tmp/apps.csv"
             assert args.apks_dir == "/tmp/apks"
             assert args.avds == "a,b,c"
-            assert args.parallel == 3
+            assert not hasattr(args, "parallel")
             assert args.categories == "Shopping,Media"
             assert args.priorities == "High"
             assert args.steps == 50
@@ -168,15 +168,52 @@ class TestCollectBatchArgsParsing:
             assert args.host_port_base == 7000
             assert args.boot_timeout == 60
             assert args.uninstall_after is True
-            assert args.new_session is True
+            assert args.force is True
             assert args.dry_run is True
 
     def test_avds_is_required(self):
         from server.cli import main
 
-        with patch("sys.argv", ["monkey-collect", "collect-batch"]), \
+        with patch("sys.argv", ["monkey-collect", "sweep"]), \
                 pytest.raises(SystemExit):
             main()
+
+
+class TestResetArgsParsing:
+    def test_all_flag(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "reset", "--all", "--yes",
+        ]), patch("server.cli.cmd_reset") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.all is True
+            assert args.yes is True
+            assert args.dry_run is False
+            assert args.output == "data/raw"
+            assert args.categories is None
+
+    def test_scope_flags(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "reset",
+            "--categories", "Shopping,Media",
+            "--packages", "com.a,com.b",
+            "--apps-csv", "/tmp/apps.csv",
+            "--priorities", "High",
+            "--output", "/tmp/out",
+            "--dry-run",
+        ]), patch("server.cli.cmd_reset") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.categories == "Shopping,Media"
+            assert args.packages == "com.a,com.b"
+            assert args.apps_csv == "/tmp/apps.csv"
+            assert args.priorities == "High"
+            assert args.output == "/tmp/out"
+            assert args.dry_run is True
 
 
 class TestPageMapArgsParsing:

@@ -1,4 +1,4 @@
-"""Tests for server.infra.device.avd — AvdPool lifecycle and provisioning."""
+"""Tests for server.infra.device.avd — single-AVD lifecycle and provisioning."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class _RunRecorder:
 
 
 class _FakePopen:
-    """Minimal stand-in for subprocess.Popen used by start_all."""
+    """Minimal stand-in for subprocess.Popen used by start_one."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.args = args
@@ -104,18 +104,18 @@ def _extract_serial(cmd: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# start_all / boot waiting
+# start_one / boot waiting
 # ---------------------------------------------------------------------------
 
 
-class TestStartAll:
+class TestStartOne:
     def test_start_waits_for_boot(
         self,
         monkeypatch: pytest.MonkeyPatch,
         fake_popen: list[_FakePopen],
         fast_sleep: None,
     ) -> None:
-        """boot_completed returns "" twice then "1" → start_all succeeds."""
+        """boot_completed returns "" twice then "1" → start_one succeeds."""
         attempts: dict[str, int] = {}
 
         def responder(cmd: list[str]) -> str:
@@ -132,13 +132,12 @@ class TestStartAll:
         monkeypatch.setattr(avd_mod, "_run", recorder)
 
         pool = AvdPool(["monkey-0"], host_port_base=6000, boot_timeout=10.0)
-        handles = pool.start_all()
+        handle = pool.start_one("monkey-0", index=0)
 
-        assert len(handles) == 1
-        assert handles[0].serial == "emulator-5554"
-        assert handles[0].console_port == 5554
-        assert handles[0].name == "monkey-0"
-        assert handles[0].host_port == 6000
+        assert handle.serial == "emulator-5554"
+        assert handle.console_port == 5554
+        assert handle.name == "monkey-0"
+        assert handle.host_port == 6000
         assert attempts["emulator-5554"] >= 3
 
     def test_start_timeout_raises(
@@ -150,13 +149,10 @@ class TestStartAll:
         """boot never completes → TimeoutError or RuntimeError."""
         recorder = _RunRecorder(lambda _cmd: "")
         monkeypatch.setattr(avd_mod, "_run", recorder)
-        monkeypatch.setattr(
-            avd_mod, "_discover_emulator_serial", lambda _name, _adb=None: "emulator-5554"
-        )
 
         pool = AvdPool(["monkey-0"], boot_timeout=0.5)
         with pytest.raises((TimeoutError, RuntimeError)):
-            pool.start_all()
+            pool.start_one("monkey-0", index=0)
 
     def test_headless_adds_no_window_flags(
         self,
@@ -168,7 +164,7 @@ class TestStartAll:
         monkeypatch.setattr(avd_mod, "_run", recorder)
 
         pool = AvdPool(["monkey-0"], boot_timeout=5.0, headless=True)
-        pool.start_all()
+        pool.start_one("monkey-0", index=0)
 
         emu_cmd = list(fake_popen[0].args[0])
         assert "-no-window" in emu_cmd
@@ -187,21 +183,20 @@ class TestStartAll:
         monkeypatch.setattr(avd_mod, "_run", recorder)
 
         pool = AvdPool(["monkey-0"], boot_timeout=5.0)  # default: headless=False
-        pool.start_all()
+        pool.start_one("monkey-0", index=0)
 
         emu_cmd = list(fake_popen[0].args[0])
         assert "-no-window" not in emu_cmd
         assert "-no-audio" not in emu_cmd
         assert "-no-boot-anim" not in emu_cmd
 
-    def test_host_port_assignment(
+    def test_host_port_assignment_by_index(
         self,
         monkeypatch: pytest.MonkeyPatch,
         fake_popen: list[_FakePopen],
         fast_sleep: None,
     ) -> None:
-        """Two AVDs → host_port = 6000, 6001."""
-        serials = iter(["emulator-5554", "emulator-5556"])
+        """Calling start_one sequentially with increasing index → deterministic ports."""
 
         def responder(cmd: list[str]) -> str:
             if "sys.boot_completed" in " ".join(cmd):
@@ -210,24 +205,22 @@ class TestStartAll:
 
         recorder = _RunRecorder(responder)
         monkeypatch.setattr(avd_mod, "_run", recorder)
-        monkeypatch.setattr(
-            avd_mod, "_discover_emulator_serial", lambda _name, _adb=None: next(serials)
-        )
 
         pool = AvdPool(["monkey-0", "monkey-1"], host_port_base=6000, boot_timeout=5.0)
-        handles = pool.start_all()
+        h0 = pool.start_one("monkey-0", index=0)
+        h1 = pool.start_one("monkey-1", index=1)
 
-        assert [h.host_port for h in handles] == [6000, 6001]
-        assert [h.serial for h in handles] == ["emulator-5554", "emulator-5556"]
+        assert [h0.host_port, h1.host_port] == [6000, 6001]
+        assert [h0.serial, h1.serial] == ["emulator-5554", "emulator-5556"]
 
 
 # ---------------------------------------------------------------------------
-# stop_all
+# stop
 # ---------------------------------------------------------------------------
 
 
-class TestStopAll:
-    def test_stop_all_calls_emu_kill(
+class TestStop:
+    def test_stop_calls_emu_kill(
         self,
         monkeypatch: pytest.MonkeyPatch,
         fake_popen: list[_FakePopen],
@@ -240,27 +233,26 @@ class TestStopAll:
 
         recorder = _RunRecorder(responder)
         monkeypatch.setattr(avd_mod, "_run", recorder)
-        monkeypatch.setattr(
-            avd_mod, "_discover_emulator_serial", lambda _name, _adb=None: "emulator-5554"
-        )
 
         pool = AvdPool(["monkey-0"], boot_timeout=5.0)
-        pool.start_all()
+        handle = pool.start_one("monkey-0", index=0)
         recorder.calls.clear()
 
-        pool.stop_all()
+        pool.stop(handle)
 
         joined = [" ".join(c) for c in recorder.calls]
         assert any("emu kill" in s for s in joined), f"expected emu kill, got {joined}"
+        assert handle not in pool.handles
 
-    def test_stop_all_is_idempotent(
+    def test_stop_detached_handle_does_not_raise(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Calling stop_all on an empty pool is a no-op."""
+        """Calling stop() on a handle that was never registered is a no-op."""
         monkeypatch.setattr(avd_mod, "_run", _RunRecorder())
-        pool = AvdPool([])
-        pool.stop_all()  # should not raise
+        pool = AvdPool(["monkey-0"])
+        handle = AvdHandle(name="monkey-0", serial="emulator-5554", host_port=6000)
+        pool.stop(handle)  # should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -338,12 +330,9 @@ class TestContextManager:
 
         recorder = _RunRecorder(responder)
         monkeypatch.setattr(avd_mod, "_run", recorder)
-        monkeypatch.setattr(
-            avd_mod, "_discover_emulator_serial", lambda _name, _adb=None: "emulator-5554"
-        )
 
         with AvdPool(["monkey-0"], boot_timeout=5.0) as pool:
-            pool.start_all()
+            pool.start_one("monkey-0", index=0)
             recorder.calls.clear()
 
         joined = [" ".join(c) for c in recorder.calls]

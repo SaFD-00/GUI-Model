@@ -122,7 +122,7 @@ def write_missing_report(
     lines.append("# Missing APKs report")
     lines.append("")
     lines.append("`fetch_fdroid_apks.py` 가 자동으로 다운로드할 수 없는 앱 목록입니다.")
-    lines.append("수동으로 APK 를 확보해 `apks/{package_id}.apk` 로 넣으면 `collect-batch` 가 사용합니다.")
+    lines.append("수동으로 APK 를 확보해 `apks/{package_id}.apk` 로 넣으면 `sweep` 이 사용합니다.")
     lines.append("")
     lines.append(f"## F-Droid 인덱스에 없음 ({len(not_in_repo)}개)")
     lines.append("")

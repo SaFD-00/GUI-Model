@@ -57,8 +57,8 @@ def cmd_run(args: argparse.Namespace) -> None:
             logger.info(f"  {args.output}/{sid}")
 
 
-def cmd_collect_batch(args: argparse.Namespace) -> None:
-    """Collect GUI data from multiple apps across a pool of AVDs in parallel."""
+def cmd_sweep(args: argparse.Namespace) -> None:
+    """Sweep GUI data from multiple apps across AVDs sequentially (one AVD at a time)."""
     from pathlib import Path
 
     from server.domain.activity_coverage import ActivityCoverageTracker
@@ -69,9 +69,9 @@ def cmd_collect_batch(args: argparse.Namespace) -> None:
     from server.infra.network.server import CollectionServer
     from server.infra.storage.storage import DataWriter
     from server.pipeline.app_catalog import AppCatalog, AppJob
-    from server.pipeline.batch_collector import BatchCollector
     from server.pipeline.collector import Collector
     from server.pipeline.explorer import SmartExplorer
+    from server.pipeline.sweep import Sweep
     from server.pipeline.text_generator import create_text_generator
 
     catalog = AppCatalog.load(args.apps_csv)
@@ -120,23 +120,22 @@ def cmd_collect_batch(args: argparse.Namespace) -> None:
             activity_coverage_tracker=activity_tracker,
             cost_tracker=cost_tracker,
             text_generator=text_gen,
-            new_session=args.new_session,
         )
 
-    batch = BatchCollector(
+    sweep = Sweep(
         catalog=catalog,
         avd_pool=pool,
         installer_factory=installer_factory,
         collector_factory=collector_factory,
         output_dir=args.output,
-        parallel=args.parallel,
         uninstall_after=args.uninstall_after,
     )
 
-    results = batch.run(
+    results = sweep.run(
         categories=categories,
         priorities=priorities,
         dry_run=args.dry_run,
+        force=args.force,
     )
 
     if args.dry_run:
@@ -146,7 +145,7 @@ def cmd_collect_batch(args: argparse.Namespace) -> None:
     skipped = sum(1 for r in results if r.skipped)
     failed = len(results) - succeeded - skipped
     logger.info(
-        f"Batch complete: {succeeded} succeeded, {skipped} skipped, {failed} failed "
+        f"Sweep complete: {succeeded} succeeded, {skipped} skipped, {failed} failed "
         f"(total {len(results)})"
     )
 
@@ -156,6 +155,53 @@ def _split_or_none(raw: str | None) -> list[str] | None:
         return None
     items = [p.strip() for p in raw.split(",") if p.strip()]
     return items or None
+
+
+def cmd_reset(args: argparse.Namespace) -> None:
+    """Delete collected session data by scope (all / categories / packages / apps-csv)."""
+    from server.pipeline.reset import delete_targets, resolve_targets
+
+    scope_flags = [
+        bool(args.all),
+        bool(args.categories),
+        bool(args.packages),
+        bool(args.apps_csv),
+    ]
+    if args.all and any(scope_flags[1:]):
+        logger.error("--all is mutually exclusive with --categories/--packages/--apps-csv")
+        sys.exit(2)
+    if not any(scope_flags):
+        logger.error("reset requires a scope: --all, --categories, --packages, or --apps-csv")
+        sys.exit(2)
+
+    targets = resolve_targets(
+        output_dir=args.output,
+        all_=args.all,
+        categories=_split_or_none(args.categories),
+        packages=_split_or_none(args.packages),
+        apps_csv=args.apps_csv,
+        priorities=_split_or_none(args.priorities),
+    )
+
+    if not targets:
+        logger.info("No matching directories found; nothing to delete.")
+        return
+
+    logger.info(f"Reset scope resolved to {len(targets)} path(s):")
+    for p in targets:
+        logger.info(f"  {p}")
+
+    if not args.yes and not args.dry_run:
+        reply = input(f"Delete {len(targets)} path(s)? [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            logger.info("Aborted.")
+            return
+
+    deleted = delete_targets(targets, dry_run=args.dry_run)
+    if args.dry_run:
+        logger.info(f"[dry-run] Would delete {len(targets)} path(s)")
+    else:
+        logger.info(f"Reset complete: deleted {deleted} path(s)")
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
@@ -276,10 +322,10 @@ def main() -> None:
         help="Delete existing session and start fresh (default: continue existing session for same app)",
     )
 
-    # collect-batch (parallel AVD collection)
+    # sweep (sequential AVD collection)
     p = sub.add_parser(
-        "collect-batch",
-        help="Collect GUI data from multiple apps across a pool of AVDs in parallel",
+        "sweep",
+        help="Sweep GUI data from multiple apps across AVDs sequentially",
     )
     p.add_argument("--apps-csv", default="apps.csv", help="Path to apps.csv catalog")
     p.add_argument(
@@ -291,12 +337,6 @@ def main() -> None:
         "--avds",
         required=True,
         help="Comma-separated names of pre-created AVDs (e.g. monkey-1,monkey-2)",
-    )
-    p.add_argument(
-        "--parallel",
-        type=int,
-        default=2,
-        help="Number of worker processes (<= number of AVDs)",
     )
     p.add_argument(
         "--categories",
@@ -343,16 +383,61 @@ def main() -> None:
         help="Uninstall each app after its session (default: keep)",
     )
     p.add_argument(
-        "--new-session",
+        "--force",
         action="store_true",
         default=False,
-        help="Delete existing session per app and start fresh",
+        help="Re-collect apps even if their sessions are already marked complete",
     )
     p.add_argument(
         "--dry-run",
         action="store_true",
         default=False,
         help="Print the job plan only; do not start AVDs or collect",
+    )
+
+    # reset (delete collected data)
+    p = sub.add_parser(
+        "reset",
+        help="Delete collected session data by scope (all / categories / packages)",
+    )
+    p.add_argument("--output", default="data/raw", help="Data root directory")
+    p.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        help="Wipe the entire output root (exclusive with other scope flags)",
+    )
+    p.add_argument(
+        "--categories",
+        default=None,
+        help="Comma-separated categories to wipe",
+    )
+    p.add_argument(
+        "--packages",
+        default=None,
+        help="Comma-separated package IDs to wipe (searched across categories)",
+    )
+    p.add_argument(
+        "--apps-csv",
+        default=None,
+        help="Resolve packages via apps.csv filtered by --categories/--priorities",
+    )
+    p.add_argument(
+        "--priorities",
+        default=None,
+        help="Comma-separated priorities (only used with --apps-csv)",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print paths that would be deleted without deleting",
+    )
+    p.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip interactive confirmation",
     )
 
     # convert
@@ -399,8 +484,10 @@ def main() -> None:
 
     if args.command == "run":
         cmd_run(args)
-    elif args.command == "collect-batch":
-        cmd_collect_batch(args)
+    elif args.command == "sweep":
+        cmd_sweep(args)
+    elif args.command == "reset":
+        cmd_reset(args)
     elif args.command == "convert":
         cmd_convert(args)
     elif args.command == "convert-all":

@@ -1,18 +1,18 @@
 # Missing APKs report
 
 `fetch_fdroid_apks.py` 가 자동으로 다운로드할 수 없는 앱 목록입니다.
-수동으로 APK 를 확보해 `apks/{package_id}.apk` 로 넣으면 `collect-batch` 가 사용합니다.
+수동으로 APK 를 확보해 `apks/{package_id}.apk` 로 넣으면 `sweep` 이 사용합니다.
 
 ## F-Droid 인덱스에 없음 (16개)
 
 apps.csv 의 `package_id` 가 F-Droid 퍼블리시된 패키지와 일치하지 않습니다. 정확한 package_id 로 수정 후 재실행하거나 수동 수집하세요.
 
-- `com.simplemobiletools.contacts.pro` (Simple Contacts, Communication/Phone) — package_id not found in F-Droid index-v2 (check apps.csv)
-- `net.osmand` (OsmAnd, Navigation/Maps) — package_id not found in F-Droid index-v2 (check apps.csv)
-- `io.github.nicehash.metro` (Metro, Media/Music) — package_id not found in F-Droid index-v2 (check apps.csv)
 - `com.simplemobiletools.calendar.pro` (Simple Calendar, Productivity/Calendar) — package_id not found in F-Droid index-v2 (check apps.csv)
-- `com.foobnix.pdf.reader` (Librera Reader, Media/Reading) — package_id not found in F-Droid index-v2 (check apps.csv)
+- `com.simplemobiletools.contacts.pro` (Simple Contacts, Communication/Phone) — package_id not found in F-Droid index-v2 (check apps.csv)
+- `io.github.nicehash.metro` (Metro, Media/Music) — package_id not found in F-Droid index-v2 (check apps.csv)
 - `com.simplemobiletools.gallery.pro` (Simple Gallery, Media/Photo) — package_id not found in F-Droid index-v2 (check apps.csv)
+- `com.foobnix.pdf.reader` (Librera Reader, Media/Reading) — package_id not found in F-Droid index-v2 (check apps.csv)
+- `net.osmand` (OsmAnd, Navigation/Maps) — package_id not found in F-Droid index-v2 (check apps.csv)
 - `de.grobox.stocktransportr` (Transportr, Navigation/Transit) — package_id not found in F-Droid index-v2 (check apps.csv)
 - `meditofoundation.medito` (Medito, Health/Meditation) — package_id not found in F-Droid index-v2 (check apps.csv)
 - `org.gnucash.android` (GnuCash, Finance/Expense) — package_id not found in F-Droid index-v2 (check apps.csv)

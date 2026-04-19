@@ -13,6 +13,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
+import android.widget.Toast
 
 /**
  * Floating overlay button for starting/stopping collection.
@@ -102,6 +103,11 @@ class FloatingCollectorButton(private val service: CollectorService) {
         val pkg = service.getCurrentForegroundPackage()
         if (pkg == null) {
             Log.w(TAG, "No foreground app detected. Open the target app first.")
+            Toast.makeText(
+                service,
+                "Open the target app first, then tap ▶.",
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
         Log.i(TAG, "Auto-detected target app: $pkg")

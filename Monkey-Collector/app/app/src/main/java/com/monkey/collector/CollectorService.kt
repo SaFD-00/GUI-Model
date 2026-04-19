@@ -398,7 +398,7 @@ class CollectorService : AccessibilityService() {
                 val root = w.root ?: continue
                 val pkg = root.packageName?.toString() ?: continue
                 root.recycle()
-                if (pkg in EXCLUDED_PACKAGES) continue
+                if (pkg in EXCLUDED_PACKAGES || isLauncher(pkg)) continue
                 return pkg
             }
             null

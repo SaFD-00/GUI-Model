@@ -8,7 +8,7 @@ from server.infra.device.avd import AvdHandle, AvdPool
 from server.infra.network.server import CollectionServer
 from server.infra.storage.storage import DataWriter
 from server.pipeline.app_catalog import AppCatalog, AppJob
-from server.pipeline.batch_collector import BatchCollector, JobResult
+from server.pipeline.sweep import JobResult, Sweep
 from server.pipeline.collector import Collector
 from server.pipeline.explorer import SmartExplorer
 from server.pipeline.text_generator import (
@@ -25,7 +25,6 @@ __all__ = [
     "AppJob",
     "AvdHandle",
     "AvdPool",
-    "BatchCollector",
     "CollectionServer",
     "Collector",
     "Converter",
@@ -36,6 +35,7 @@ __all__ = [
     "PageGraph",
     "RandomTextGenerator",
     "SmartExplorer",
+    "Sweep",
     "TextGenerator",
     "build_graph_from_session",
 ]
