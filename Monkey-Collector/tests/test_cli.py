@@ -110,3 +110,137 @@ class TestRunArgsDefaults:
             assert args.output == "data/raw"
             assert args.device is None
             assert args.delay == 1500
+
+
+class TestCollectBatchArgsParsing:
+    def test_required_args(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "collect-batch",
+            "--avds", "monkey-0,monkey-1",
+        ]), patch("server.cli.cmd_collect_batch") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.avds == "monkey-0,monkey-1"
+            assert args.apps_csv == "apps.csv"
+            assert args.apks_dir == "apks"
+            assert args.parallel == 2
+            assert args.host_port_base == 6000
+            assert args.boot_timeout == 180.0
+            assert args.uninstall_after is False
+            assert args.dry_run is False
+            assert args.categories is None
+            assert args.priorities is None
+
+    def test_all_flags(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "collect-batch",
+            "--apps-csv", "/tmp/apps.csv",
+            "--apks-dir", "/tmp/apks",
+            "--avds", "a,b,c",
+            "--parallel", "3",
+            "--categories", "Shopping,Media",
+            "--priorities", "High",
+            "--output", "/tmp/out",
+            "--steps", "50",
+            "--seed", "7",
+            "--delay", "500",
+            "--input-mode", "random",
+            "--host-port-base", "7000",
+            "--boot-timeout", "60",
+            "--uninstall-after",
+            "--new-session",
+            "--dry-run",
+        ]), patch("server.cli.cmd_collect_batch") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.apps_csv == "/tmp/apps.csv"
+            assert args.apks_dir == "/tmp/apks"
+            assert args.avds == "a,b,c"
+            assert args.parallel == 3
+            assert args.categories == "Shopping,Media"
+            assert args.priorities == "High"
+            assert args.steps == 50
+            assert args.input_mode == "random"
+            assert args.host_port_base == 7000
+            assert args.boot_timeout == 60
+            assert args.uninstall_after is True
+            assert args.new_session is True
+            assert args.dry_run is True
+
+    def test_avds_is_required(self):
+        from server.cli import main
+
+        with patch("sys.argv", ["monkey-collect", "collect-batch"]), \
+                pytest.raises(SystemExit):
+            main()
+
+
+class TestPageMapArgsParsing:
+    def test_required_args(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "page-map",
+            "--session", "/data/raw/s1",
+        ]), patch("server.cli.cmd_page_map") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.session == "/data/raw/s1"
+            assert args.threshold == 0.85
+            assert args.output is None
+            assert args.no_open is False
+
+    def test_threshold_and_no_open(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "page-map",
+            "--session", "/data/raw/s1",
+            "--threshold", "0.5",
+            "--output", "/tmp/graph.html",
+            "--no-open",
+        ]), patch("server.cli.cmd_page_map") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.threshold == 0.5
+            assert args.output == "/tmp/graph.html"
+            assert args.no_open is True
+
+
+class TestPageMapAllArgsParsing:
+    def test_defaults(self):
+        from server.cli import main
+
+        with patch("sys.argv", ["monkey-collect", "page-map-all"]), \
+                patch("server.cli.cmd_page_map_all") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.raw_dir == "data/raw"
+            assert args.threshold == 0.85
+            assert args.no_open is False
+
+
+class TestRegenerateArgsParsing:
+    def test_defaults(self):
+        from server.cli import main
+
+        with patch("sys.argv", ["monkey-collect", "regenerate"]), \
+                patch("server.cli.cmd_regenerate") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.raw_dir == "data/raw"
+
+    def test_custom_raw_dir(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "regenerate",
+            "--raw-dir", "/data/other",
+        ]), patch("server.cli.cmd_regenerate") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.raw_dir == "/data/other"

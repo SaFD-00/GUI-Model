@@ -57,6 +57,107 @@ def cmd_run(args: argparse.Namespace) -> None:
             logger.info(f"  {args.output}/{sid}")
 
 
+def cmd_collect_batch(args: argparse.Namespace) -> None:
+    """Collect GUI data from multiple apps across a pool of AVDs in parallel."""
+    from pathlib import Path
+
+    from server.domain.activity_coverage import ActivityCoverageTracker
+    from server.domain.cost_tracker import CostTracker
+    from server.infra.device.adb import AdbClient
+    from server.infra.device.apk_installer import ApkInstaller, ApkResolver
+    from server.infra.device.avd import AvdHandle, AvdPool
+    from server.infra.network.server import CollectionServer
+    from server.infra.storage.storage import DataWriter
+    from server.pipeline.app_catalog import AppCatalog, AppJob
+    from server.pipeline.batch_collector import BatchCollector
+    from server.pipeline.collector import Collector
+    from server.pipeline.explorer import SmartExplorer
+    from server.pipeline.text_generator import create_text_generator
+
+    catalog = AppCatalog.load(args.apps_csv)
+    resolver = ApkResolver(args.apks_dir)
+
+    avd_names = [n.strip() for n in args.avds.split(",") if n.strip()]
+    if not avd_names:
+        logger.error("--avds must list at least one AVD name")
+        sys.exit(2)
+
+    categories = _split_or_none(args.categories)
+    priorities = _split_or_none(args.priorities)
+
+    pool = AvdPool(
+        avd_names=avd_names,
+        host_port_base=args.host_port_base,
+        boot_timeout=args.boot_timeout,
+        headless=args.headless,
+    )
+
+    def installer_factory(handle: AvdHandle) -> ApkInstaller:
+        adb = AdbClient(device_serial=handle.serial)
+        return ApkInstaller(adb=adb, resolver=resolver)
+
+    def collector_factory(handle: AvdHandle, job: AppJob, base_dir: Path) -> Collector:
+        adb = AdbClient(device_serial=handle.serial)
+        activity_tracker = ActivityCoverageTracker()
+        cost_tracker = CostTracker()
+        text_gen = create_text_generator(
+            mode=args.input_mode, seed=args.seed, cost_tracker=cost_tracker,
+        )
+        explorer = SmartExplorer(
+            adb,
+            config={"seed": args.seed, "action_delay_ms": args.delay},
+            text_generator=text_gen,
+        )
+        server = CollectionServer(host="0.0.0.0", port=handle.host_port)
+        writer = DataWriter(base_dir=str(base_dir))
+        return Collector(
+            adb=adb,
+            explorer=explorer,
+            server=server,
+            writer=writer,
+            max_steps=args.steps,
+            action_delay=args.delay / 1000.0,
+            activity_coverage_tracker=activity_tracker,
+            cost_tracker=cost_tracker,
+            text_generator=text_gen,
+            new_session=args.new_session,
+        )
+
+    batch = BatchCollector(
+        catalog=catalog,
+        avd_pool=pool,
+        installer_factory=installer_factory,
+        collector_factory=collector_factory,
+        output_dir=args.output,
+        parallel=args.parallel,
+        uninstall_after=args.uninstall_after,
+    )
+
+    results = batch.run(
+        categories=categories,
+        priorities=priorities,
+        dry_run=args.dry_run,
+    )
+
+    if args.dry_run:
+        return
+
+    succeeded = sum(1 for r in results if r.succeeded)
+    skipped = sum(1 for r in results if r.skipped)
+    failed = len(results) - succeeded - skipped
+    logger.info(
+        f"Batch complete: {succeeded} succeeded, {skipped} skipped, {failed} failed "
+        f"(total {len(results)})"
+    )
+
+
+def _split_or_none(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    items = [p.strip() for p in raw.split(",") if p.strip()]
+    return items or None
+
+
 def cmd_convert(args: argparse.Namespace) -> None:
     """Convert a single session to JSONL."""
     from server.export.converter import Converter
@@ -175,6 +276,85 @@ def main() -> None:
         help="Delete existing session and start fresh (default: continue existing session for same app)",
     )
 
+    # collect-batch (parallel AVD collection)
+    p = sub.add_parser(
+        "collect-batch",
+        help="Collect GUI data from multiple apps across a pool of AVDs in parallel",
+    )
+    p.add_argument("--apps-csv", default="apps.csv", help="Path to apps.csv catalog")
+    p.add_argument(
+        "--apks-dir",
+        default="apks",
+        help="Directory containing {package_id}.apk files",
+    )
+    p.add_argument(
+        "--avds",
+        required=True,
+        help="Comma-separated names of pre-created AVDs (e.g. monkey-1,monkey-2)",
+    )
+    p.add_argument(
+        "--parallel",
+        type=int,
+        default=2,
+        help="Number of worker processes (<= number of AVDs)",
+    )
+    p.add_argument(
+        "--categories",
+        default=None,
+        help="Comma-separated categories to include (omit for all)",
+    )
+    p.add_argument(
+        "--priorities",
+        default=None,
+        help="Comma-separated priorities to include, e.g. High,Medium (omit for all)",
+    )
+    p.add_argument("--output", default="data/raw", help="Output base directory")
+    p.add_argument("--steps", type=int, default=100, help="Max steps per app session")
+    p.add_argument("--seed", type=int, default=42, help="Random seed")
+    p.add_argument("--delay", type=int, default=1500, help="Action delay in ms")
+    p.add_argument(
+        "--input-mode",
+        choices=["api", "random"],
+        default="api",
+        help="Input text generation mode",
+    )
+    p.add_argument(
+        "--host-port-base",
+        type=int,
+        default=6000,
+        help="TCP port for first AVD; each subsequent AVD uses base+i",
+    )
+    p.add_argument(
+        "--boot-timeout",
+        type=float,
+        default=180.0,
+        help="Per-AVD boot timeout (seconds)",
+    )
+    p.add_argument(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="Run emulators without GUI (-no-window -no-audio -no-boot-anim). Default: show window.",
+    )
+    p.add_argument(
+        "--uninstall-after",
+        action="store_true",
+        default=False,
+        help="Uninstall each app after its session (default: keep)",
+    )
+    p.add_argument(
+        "--new-session",
+        action="store_true",
+        default=False,
+        help="Delete existing session per app and start fresh",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print the job plan only; do not start AVDs or collect",
+    )
+
     # convert
     p = sub.add_parser("convert", help="Convert session to JSONL")
     p.add_argument("--session", required=True, help="Session directory path")
@@ -219,6 +399,8 @@ def main() -> None:
 
     if args.command == "run":
         cmd_run(args)
+    elif args.command == "collect-batch":
+        cmd_collect_batch(args)
     elif args.command == "convert":
         cmd_convert(args)
     elif args.command == "convert-all":

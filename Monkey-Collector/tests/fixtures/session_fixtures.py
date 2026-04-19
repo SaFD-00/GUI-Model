@@ -3,7 +3,10 @@
 import json
 from pathlib import Path
 
-from server.infra.xml.parser.structured_parser import parse_to_html_xml
+from server.infra.xml.parser.structured_parser import (
+    encode_to_html_xml,
+    parse_to_html_xml,
+)
 from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML
 
 # Minimal 1x1 white PNG (67 bytes)
@@ -43,6 +46,10 @@ def create_mock_session(
         parsed = parse_to_html_xml(raw_xml)
         if parsed:
             (xml_dir / f"{i:04d}_parsed.xml").write_text(parsed)
+        # Encoded XML (_encoded.xml) — bounds-stripped LLM input; Converter reads this
+        encoded = encode_to_html_xml(raw_xml)
+        if encoded:
+            (xml_dir / f"{i:04d}_encoded.xml").write_text(encoded)
         # Event
         events.append({
             "action_type": "tap",

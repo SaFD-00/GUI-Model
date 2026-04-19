@@ -84,6 +84,58 @@
   - [`converter.py`](./server/export/converter.py): raw session -> ShareGPT JSONL
   - [`graph_visualizer.py`](./server/export/graph_visualizer.py): page graph HTML 시각화
 
+### Batch / 병렬 수집 레이어
+
+여러 AVD 에서 `apps.csv` 기반 카테고리별 수집을 병렬 실행하기 위한 상위 레이어.
+
+- `server/pipeline/app_catalog.py`
+  - `AppCatalog`: stdlib csv 로 `apps.csv` 파싱, BOM/대소문자 정규화
+  - `AppJob`: frozen dataclass (category, sub_category, app_name, package_id, source, priority, notes)
+  - `filter(categories, priorities)`: case-insensitive 필터
+- `server/infra/device/apk_installer.py`
+  - `ApkResolver`: `{apks_dir}/{package_id}.apk` 경로 해결
+  - `ApkInstaller`: `pm list packages` 로 기설치 확인 후 `adb install -r`, 결과를 `InstallResult` (INSTALLED / ALREADY / MISSING_APK / FAILED) 로 반환
+  - `uninstall`: `adb uninstall <pkg>` subprocess 래퍼
+- `server/infra/device/avd.py`
+  - **raw `emulator` 바이너리 직접 호출** (`$ANDROID_HOME/emulator/emulator`) — `android emulator start` 래퍼는 창 플래그 등 raw 옵션을 넘길 수 없기 때문
+  - AVD `i` 의 콘솔 포트는 `console_port_base + 2*i` (기본 5554) → serial 은 결정적 `emulator-{console_port}` (별도 discover 불필요)
+  - `headless=True` 일 때 `-no-window -no-audio -no-boot-anim` 추가 (기본은 창 표시)
+  - `_wait_for_boot`: `getprop sys.boot_completed` 폴링
+  - `AvdPool.provision`: `adb reverse`, `enabled_accessibility_services`, `accessibility_enabled`, overlay appops 를 일괄 적용
+  - context manager 로 `__exit__` 자동 stop_all
+- `server/pipeline/batch_collector.py`
+  - `BatchCollector`: `Queue[AppJob]` + `ThreadPoolExecutor`. 각 worker 는 하나의 `AvdHandle` 에 sticky 할당되어 queue 가 빌 때까지 소비.
+  - 의존성은 factory 주입 (`InstallerFactory`, `CollectorFactory`) — 테스트 용이.
+  - `JobResult(job, avd_name, install_result, session_id, error)`. `skipped` 는 MISSING_APK/FAILED, `succeeded` 는 session_id 존재 + error 없음.
+
+실행 흐름 (collect-batch):
+
+```
+AppCatalog.load(apps.csv)
+  -> filter(categories, priorities)
+  -> Queue[AppJob]
+AvdPool.start_all()
+  -> [AvdHandle(name, serial, host_port=6000+i), ...]
+ThreadPoolExecutor(max_workers=N):
+  worker i:
+    provision(handle_i)         # reverse + a11y + overlay
+    loop queue.get_nowait():
+      ApkInstaller.install(job) # MISSING/FAILED → JobResult 후 continue
+      Collector(handle_i.serial, handle_i.host_port, base=output/category)
+        .run(job.package_id)    # 단일 세션 수집
+      (opt) ApkInstaller.uninstall()
+AvdPool.stop_all()
+```
+
+네트워크: 각 AVD 에 `adb -s <serial> reverse tcp:<port> tcp:<port>` 를 걸어 Collector app 의 TcpClient 가 `localhost:<port>` 로 보내는 패킷을 호스트의 `CollectionServer` 로 포워딩한다. port 는 worker 별로 다르므로 각 AVD 가 독립 서버 인스턴스에 연결된다.
+
+### 운영 스크립트
+
+배치 수집을 쓰기 전 단계에서 쓰이는 도구들. 런타임 파이프라인과 분리되어 있다.
+
+- [`scripts/fetch_fdroid_apks.py`](./scripts/fetch_fdroid_apks.py) — F-Droid `index-v2.json` 을 받아 `apps.csv` 의 F-Droid 앱들을 `apks/{package_id}.apk` 로 다운로드. PlayStore/System/실패 항목은 `apks/MISSING.md` 에 정리.
+- [`scripts/install_collector_to_avds.sh`](./scripts/install_collector_to_avds.sh) — Collector debug APK 를 여러 AVD 에 병렬 설치. 각 AVD 마다 `-port 5554+2i` 부여 → serial 결정적, 포트 충돌 없음. 한 AVD 실패가 다른 AVD 를 막지 않음.
+
 ## 3. 데이터 흐름
 
 ### 수집 루프
@@ -180,6 +232,7 @@ data/raw/{package}/
 [`server/cli.py`](./server/cli.py) 가 아래 서브커맨드를 제공한다.
 
 - `run`
+- `collect-batch`
 - `convert`
 - `convert-all`
 - `page-map`
@@ -191,6 +244,10 @@ data/raw/{package}/
 [`server/__init__.py`](./server/__init__.py) 는 아래 주요 타입을 export 한다.
 
 - `Collector`
+- `BatchCollector`, `JobResult`
+- `AppCatalog`, `AppJob`
+- `ApkInstaller`, `ApkResolver`, `InstallResult`
+- `AvdPool`, `AvdHandle`
 - `SmartExplorer`
 - `TextGenerator`
 - `RandomTextGenerator`
