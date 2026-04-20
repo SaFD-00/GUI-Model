@@ -160,6 +160,67 @@ class StepAccuracySingle(unittest.TestCase):
         self.assertFalse(r["step_correct"])
         self.assertTrue(r["type_correct"])
 
+    # ── 추가 pin-down 케이스 ─────────────────────────────────────────────
+    def test_click_both_index_none(self):
+        # 양쪽 index=None → str(None)==str(None) 로 True (현 구현 동작 고정)
+        r = evaluate_single({"type": "click", "index": None},
+                            {"type": "click", "index": None})
+        self.assertTrue(r["step_correct"])
+        self.assertTrue(r["has_index_check"])
+
+    def test_scroll_both_direction_missing(self):
+        # 양쪽 direction 부재 → _norm(None)=='' 동치 → True
+        r = evaluate_single({"type": "scroll"}, {"type": "scroll"})
+        self.assertTrue(r["step_correct"])
+        self.assertTrue(r["has_dir_check"])
+
+    def test_open_app_empty_params_dict(self):
+        # params={} 양쪽 → _pval 이 None 반환 → _norm 동치 True
+        r = evaluate_single({"type": "open_app", "params": {}},
+                            {"type": "open_app", "params": {}})
+        self.assertTrue(r["step_correct"])
+        self.assertTrue(r["has_app_check"])
+
+    def test_input_top_level_text_fallback(self):
+        # gt 는 nested, pred 는 top-level text — _pval 이 top-level 우선
+        r = evaluate_single({"type": "input", "index": None, "params": {"text": "hello"}},
+                            {"type": "input", "text": "hello"})
+        self.assertTrue(r["step_correct"])
+        self.assertTrue(r["has_text_check"])
+
+    def test_type_case_insensitive(self):
+        # 'click' vs 'CLICK' → lower() 정규화로 type_correct True
+        r = evaluate_single({"type": "click", "index": "3"},
+                            {"type": "CLICK", "index": "3"})
+        self.assertTrue(r["step_correct"])
+        self.assertTrue(r["type_correct"])
+
+    def test_type_whitespace_not_stripped(self):
+        # 현 구현은 type 에 strip 하지 않음 (lower 만) — 회귀 방지용 고정
+        r = evaluate_single({"type": "click", "index": "3"},
+                            {"type": " click ", "index": "3"})
+        self.assertFalse(r["type_correct"])
+        self.assertFalse(r["step_correct"])
+
+    def test_unknown_type_has_checks_all_false(self):
+        # unknown type 분기에서 has_*_check 가 어느 것도 켜지지 않아야 함
+        r = evaluate_single({"type": "spell_cast"}, {"type": "spell_cast"})
+        self.assertFalse(r["has_index_check"])
+        self.assertFalse(r["has_dir_check"])
+        self.assertFalse(r["has_app_check"])
+        self.assertFalse(r["has_text_check"])
+
+    def test_pred_none_all_flags_false(self):
+        # pred_action=None → parsed 포함 모든 플래그 False
+        r = evaluate_single({"type": "click", "index": "1"}, None)
+        self.assertFalse(r["parsed"])
+        self.assertFalse(r["type_correct"])
+        self.assertFalse(r["step_correct"])
+        self.assertFalse(r["has_index_check"])
+        self.assertFalse(r["has_dir_check"])
+        self.assertFalse(r["has_app_check"])
+        self.assertFalse(r["has_text_check"])
+
 
 class StepAccuracyAggregate(unittest.TestCase):
     """evaluate_predictions 집계 로직."""
@@ -249,6 +310,96 @@ class StepAccuracyAggregate(unittest.TestCase):
         # 2 건만 채점되어야 함
         self.assertEqual(m["total"], 2)
 
+    # ── 추가 pin-down 케이스 ─────────────────────────────────────────────
+    def test_unknown_type_lowers_macro(self):
+        # click 2건 (정답) + unknown 1건 → macro = (1.0 + 0.0) / 2 = 0.5
+        pairs = [
+            ({"type": "click", "index": "1"}, '{"type":"click","index":"1"}'),
+            ({"type": "click", "index": "2"}, '{"type":"click","index":"2"}'),
+            ({"type": "spell_cast", "magic": "fire"},
+             '{"type":"spell_cast","magic":"fire"}'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+        self.assertEqual(m["total"], 3)
+        self.assertAlmostEqual(m["type_accuracy"], 1.0, places=4)
+        # micro SA = 2/3
+        self.assertAlmostEqual(m["step_accuracy"], 2 / 3, places=4)
+        # macro = (click_step_acc + spell_cast_step_acc) / 2 = (1.0 + 0.0) / 2
+        self.assertAlmostEqual(m["macro_step_accuracy"], 0.5, places=4)
+        self.assertIn("spell_cast", m["per_type"])
+        self.assertEqual(m["per_type"]["spell_cast"]["count"], 1)
+        self.assertEqual(m["per_type"]["spell_cast"]["step_acc"], 0.0)
+
+    def test_cond_acc_zero_when_no_type(self):
+        # navigate_back 1건만 → 모든 cond_*_acc 는 n=0 로 0.0
+        pairs = [
+            ({"type": "navigate_back"}, '{"type":"navigate_back"}'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+        self.assertAlmostEqual(m["cond_index_acc"], 0.0, places=4)
+        self.assertAlmostEqual(m["cond_dir_acc"],   0.0, places=4)
+        self.assertAlmostEqual(m["cond_app_acc"],   0.0, places=4)
+        self.assertAlmostEqual(m["cond_text_acc"],  0.0, places=4)
+
+    def test_output_key_fallback(self):
+        # pred_entry 에 predict 대신 output 키 — line 180 fallback 고정
+        gt_f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        pr_f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        gt_f.write(json.dumps({"messages": [{"from": "gpt",
+                                             "value": '{"type":"click","index":"5"}'}]}) + "\n")
+        pr_f.write(json.dumps({"output": '{"type":"click","index":"5"}'}) + "\n")
+        gt_f.close(); pr_f.close()
+        try:
+            m = evaluate_predictions(gt_f.name, pr_f.name)
+        finally:
+            Path(gt_f.name).unlink(); Path(pr_f.name).unlink()
+        self.assertAlmostEqual(m["step_accuracy"], 1.0, places=4)
+        self.assertAlmostEqual(m["parse_rate"],    1.0, places=4)
+
+    def test_per_type_count_sum_equals_total(self):
+        # per_type 전체 count 합 == total 불변식
+        pairs = [
+            ({"type": "click", "index": "1"}, '{"type":"click","index":"1"}'),
+            ({"type": "click", "index": "2"}, '{"type":"click","index":"2"}'),
+            ({"type": "click", "index": "3"}, '{"type":"click","index":"X"}'),
+            ({"type": "scroll", "direction": "down"},
+             '{"type":"scroll","direction":"down"}'),
+            ({"type": "scroll", "direction": "up"},
+             '{"type":"scroll","direction":"up"}'),
+            ({"type": "finish", "status": "complete"}, '{"type":"finish"}'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+        self.assertEqual(
+            sum(v["count"] for v in m["per_type"].values()),
+            m["total"],
+        )
+
+    def test_finish_status_different_value_still_correct(self):
+        # finish 는 type-only 정책 → status 가 달라도 step_correct True
+        pairs = [
+            ({"type": "finish", "status": "complete"},
+             '{"type":"finish","status":"failed"}'),
+        ]
+        gt_p, pr_p = _gt_pred_jsonl(pairs)
+        try:
+            m = evaluate_predictions(str(gt_p), str(pr_p))
+        finally:
+            gt_p.unlink(); pr_p.unlink()
+        self.assertAlmostEqual(m["step_accuracy"], 1.0, places=4)
+        self.assertAlmostEqual(m["type_accuracy"], 1.0, places=4)
+
 
 class ParseAction(unittest.TestCase):
     def test_plain_json(self):
@@ -268,6 +419,27 @@ class ParseAction(unittest.TestCase):
 
     def test_empty(self):
         self.assertIsNone(parse_action(""))
+
+    def test_inline_extraction_from_garbage(self):
+        # 앞뒤 garbage 사이에 단순 객체 — 최종 fallback regex (\{[^{}]*\}) 분기
+        self.assertEqual(
+            parse_action('blah blah {"type":"click","index":"1"} trailing'),
+            {"type": "click", "index": "1"},
+        )
+
+    def test_nested_json_via_json_loads(self):
+        # 중첩 object 는 첫 json.loads 분기로 통과 (inline regex 는 nested 처리 불가)
+        self.assertEqual(
+            parse_action('{"type":"open_app","params":{"app":"Gmail"}}'),
+            {"type": "open_app", "params": {"app": "Gmail"}},
+        )
+
+    def test_codefence_multiline_whitespace(self):
+        # 코드펜스 앞뒤 다중 개행 + fence 내부 공백 라인 포함
+        self.assertEqual(
+            parse_action('\n\n```json\n\n{"type":"click","index":"9"}\n\n```\n'),
+            {"type": "click", "index": "9"},
+        )
 
 
 if __name__ == "__main__":

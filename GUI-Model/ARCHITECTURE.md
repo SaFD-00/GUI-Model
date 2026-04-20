@@ -327,7 +327,7 @@ Reference baselines (해석용):
 - `finish.status` constant baseline: 100% (해석 무의미)
 
 정본은 `gui-model.ipynb` Cell 139 이며 `scripts/_action_eval.py` 와 글자 단위 동치를 유지한다.
-회귀 테스트는 `tests/test_action_eval.py` (30 케이스).
+회귀 테스트는 `tests/test_action_eval.py` (46 케이스 — parse_action / evaluate_single / evaluate_predictions 분기와 unknown type 집계·`cond_*` n=0·`predict`/`output` 키 fallback 포함).
 
 ## 7. 중요한 운영 제약
 
