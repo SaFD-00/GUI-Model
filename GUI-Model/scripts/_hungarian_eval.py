@@ -113,6 +113,10 @@ def _text_sim(a, b):
         return 0.0
     sa = set(a.lower().replace("|", "").split())
     sb = set(b.lower().replace("|", "").split())
+    if not sa and not sb:
+        return 1.0
+    if not sa or not sb:
+        return 0.0
     return len(sa & sb) / len(sa | sb)
 
 

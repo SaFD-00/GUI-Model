@@ -122,6 +122,7 @@ parse_args() {
   local model_arg="all"
   local dataset_arg="all"
   local stage1_mode_arg="full"
+  local epochs_arg="1,2,3"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model)
@@ -133,9 +134,12 @@ parse_args() {
       --stage1-mode)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-mode requires a value." >&2; exit 2; fi
         stage1_mode_arg="$2"; shift 2 ;;
+      --epochs)
+        if [[ -z "${2:-}" ]]; then echo "Error: --epochs requires a value." >&2; exit 2; fi
+        epochs_arg="$2"; shift 2 ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE]
+Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE] [--epochs LIST]
 
 Options:
   --model MODEL        모델 short_name 또는 "all" (기본: all)
@@ -143,6 +147,9 @@ Options:
   --stage1-mode MODE   full | lora (기본: full)
                        Stage 1 학습 방식. Stage 2 스크립트에서는 world-model variant
                        가 참조할 상류 Stage 1 소스를 선택.
+  --epochs LIST        콤마로 구분된 epoch 정수 리스트 (기본: 1,2,3)
+                       stage{1,2}_eval.sh 전용 — HF Hub merged repo sweep 대상.
+                       다른 스크립트에서는 무시됨.
   -h, --help           이 도움말 표시
 
 Available models:
@@ -151,6 +158,7 @@ Available models:
 Examples:
   $(basename "$0") --model qwen3-vl-8b --dataset MB
   $(basename "$0") --model gemma-4-e2b --stage1-mode lora
+  $(basename "$0") --model qwen3-vl-8b --dataset AC --epochs 1,2,3
   $(basename "$0") --stage1-mode lora
   $(basename "$0")
 EOF
@@ -192,6 +200,20 @@ EOF
       exit 2
       ;;
   esac
+
+  # epochs_arg → EPOCHS 배열 (stage{1,2}_eval.sh 에서 HF Hub sweep 대상으로 사용)
+  IFS=',' read -r -a EPOCHS <<< "$epochs_arg"
+  if [[ "${#EPOCHS[@]}" -eq 0 ]]; then
+    echo "Error: --epochs 값이 비어있습니다." >&2
+    exit 2
+  fi
+  for _e in "${EPOCHS[@]}"; do
+    if ! [[ "$_e" =~ ^[0-9]+$ ]]; then
+      echo "Error: --epochs 는 콤마로 구분된 정수여야 합니다 (got: '$epochs_arg')." >&2
+      exit 2
+    fi
+  done
+  unset _e
 }
 
 # --- (deprecated) 하위 호환용 ---

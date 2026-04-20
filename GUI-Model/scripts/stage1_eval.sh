@@ -2,8 +2,9 @@
 # Stage 1 Evaluation Pipeline — HF Hub merged 모델 sweep + Hungarian winner
 #
 # 순서 전환 (train → merge → eval) 이후, eval 은 stage1_merge.sh 가 이미
-# HF Hub 에 푸시한 epoch 별 merged repo 를 pull 해서 평가한다. 로컬
-# outputs/{DS}/adapters/.../checkpoint-*/ 는 epoch 번호 소스로만 사용.
+# HF Hub 에 푸시한 epoch 별 merged repo 를 pull 해서 평가한다. 평가 대상 epoch
+# 은 `--epochs` 플래그 (기본 1,2,3) 로 지정하며, 로컬 checkpoint 디렉토리는
+# 조회하지 않는다.
 #
 # --stage1-mode full (default) | lora 에 따라 HF repo prefix 가 달라진다
 # (hf_repo_id_stage1 단일 정의).
@@ -82,24 +83,13 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           --output '$OUT_BASE/hungarian_metrics.json'"
 
     # ─────────────────────────────────────────────────────────────────────
-    # Phase B. HF repo sweep — epoch 번호 소스는 로컬 checkpoint 디렉토리.
-    #   각 checkpoint-{step}/trainer_state.json 에서 epoch 을 추출해
-    #   hf_repo_id_stage1(MODEL, DS, MODE, E) 로 repo id 를 재조립한다.
+    # Phase B. HF repo sweep — `--epochs` 로 받은 정수 리스트를 그대로 사용.
+    #   hf_repo_id_stage1(MODEL, DS, MODE, E) 로 HF Hub merged repo id 를 조립.
+    #   로컬 adapter 디렉토리 존재 여부와 무관하게 동작한다.
     # ─────────────────────────────────────────────────────────────────────
-    shopt -s nullglob
-    CKPTS=("$TRAIN_DIR"/checkpoint-*/)
-    shopt -u nullglob
-    if [ "${#CKPTS[@]}" -eq 0 ]; then
-      echo "[!] [$MODEL_SHORT][$DS][$STAGE1_MODE] No checkpoints under $TRAIN_DIR (did stage1_train.sh --stage1-mode ${STAGE1_MODE} complete?)" >&2
-      exit 1
-    fi
-    echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] Sweeping ${#CKPTS[@]} epochs" >&2
+    echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] Sweeping epochs: ${EPOCHS[*]}" >&2
 
-    for CKPT_DIR in "${CKPTS[@]}"; do
-      CKPT_DIR="${CKPT_DIR%/}"
-      EPOCH=$(ckpt_epoch_from_dir "$CKPT_DIR") || {
-        echo "[!] epoch 파싱 실패: $CKPT_DIR" >&2; exit 1;
-      }
+    for EPOCH in "${EPOCHS[@]}"; do
       HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH")
       OUT_CKPT_REL="${EVAL_DIR_REL}/${STAGE1_MODE}_world_model/epoch-${EPOCH}"
       OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"

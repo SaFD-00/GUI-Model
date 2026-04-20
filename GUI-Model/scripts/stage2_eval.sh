@@ -3,7 +3,8 @@
 #
 # 순서 전환 (train → merge → eval) 이후, eval 은 stage2_merge.sh 가 이미
 # HF Hub 에 푸시한 variant × epoch 별 merged repo 를 pull 해서 평가한다.
-# 로컬 outputs/{DS}/adapters/.../checkpoint-*/ 는 epoch 번호 소스로만 사용.
+# 평가 대상 epoch 은 `--epochs` 플래그 (기본 1,2,3) 로 지정하며,
+# 로컬 outputs/{DS}/adapters/.../checkpoint-*/ 는 조회하지 않는다.
 #
 # --stage1-mode full (default) | lora 는 world-model variant 의 HF repo prefix
 # (`{MODE}-world-model`) 를 결정할 뿐, 로컬 merged 디렉토리에 의존하지 않는다.
@@ -102,20 +103,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       EVAL_DIR_REL="${S2_EVAL_OUT_REL}/${VARIANT}"
       EVAL_DIR="$LF_ROOT/$EVAL_DIR_REL"
 
-      shopt -s nullglob
-      CKPTS=("$LORA_DIR"/checkpoint-*/)
-      shopt -u nullglob
-      if [ "${#CKPTS[@]}" -eq 0 ]; then
-        echo "[!] [$MODEL_SHORT][$DS][$VARIANT] No checkpoints under $LORA_DIR — run stage2_train.sh first." >&2
-        exit 1
-      fi
-      echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Sweeping ${#CKPTS[@]} epochs" >&2
+      echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Sweeping epochs: ${EPOCHS[*]}" >&2
 
-      for CKPT_DIR in "${CKPTS[@]}"; do
-        CKPT_DIR="${CKPT_DIR%/}"
-        EPOCH=$(ckpt_epoch_from_dir "$CKPT_DIR") || {
-          echo "[!] epoch 파싱 실패: $CKPT_DIR" >&2; exit 1;
-        }
+      for EPOCH in "${EPOCHS[@]}"; do
         HUB_ID=$(hf_repo_id_stage2 "$MODEL_SHORT" "$DS" "${VARIANT_HUB_SUFFIX[$VARIANT]}" "$EPOCH")
         OUT_CKPT_REL="${EVAL_DIR_REL}/epoch-${EPOCH}"
         OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
