@@ -67,20 +67,25 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     # ─────────────────────────────────────────────────────────────────────
     OUT_BASE_REL="${S2_EVAL_OUT_REL}/base"
     OUT_BASE="$LF_ROOT/$OUT_BASE_REL"
-    run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_baseline" \
-      bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_BASE_REL' && \
-        python scripts/vllm_infer.py \
-          --model_name_or_path '$BASE_MODEL' \
-          --dataset '$DS_TEST' \
-          --dataset_dir '$LF_ROOT/data' \
-          ${VLLM_COMMON_ARGS[*]} \
-          --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
-          --save_name        '$OUT_BASE_REL/generated_predictions.jsonl' \
-          --matrix_save_name '$OUT_BASE_REL/predict_results.json' && \
-        python '$BASE_DIR/scripts/_action_eval.py' score \
-          --test   '$TEST_JSONL' \
-          --pred   '$OUT_BASE/generated_predictions.jsonl' \
-          --output '$OUT_BASE/action_metrics.json'"
+    BASE_TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_baseline"
+    if skip_if_done "$BASE_TAG" "$OUT_BASE/action_metrics.json"; then
+      :
+    else
+      run_logged "$BASE_TAG" \
+        bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_BASE_REL' && \
+          python scripts/vllm_infer.py \
+            --model_name_or_path '$BASE_MODEL' \
+            --dataset '$DS_TEST' \
+            --dataset_dir '$LF_ROOT/data' \
+            ${VLLM_COMMON_ARGS[*]} \
+            --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+            --save_name        '$OUT_BASE_REL/generated_predictions.jsonl' \
+            --matrix_save_name '$OUT_BASE_REL/predict_results.json' && \
+          python '$BASE_DIR/scripts/_action_eval.py' score \
+            --test   '$TEST_JSONL' \
+            --pred   '$OUT_BASE/generated_predictions.jsonl' \
+            --output '$OUT_BASE/action_metrics.json'"
+    fi
 
     # ─────────────────────────────────────────────────────────────────────
     # Phase B + C. lora_base / lora_world_model_from_${MODE} 각각 HF sweep + select
@@ -105,12 +110,18 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
       echo "[+] [$MODEL_SHORT][$DS][$VARIANT] Sweeping epochs: ${EPOCHS[*]}" >&2
 
+      SWEEP_RAN=0
       for EPOCH in "${EPOCHS[@]}"; do
         HUB_ID=$(hf_repo_id_stage2 "$MODEL_SHORT" "$DS" "${VARIANT_HUB_SUFFIX[$VARIANT]}" "$EPOCH")
         OUT_CKPT_REL="${EVAL_DIR_REL}/epoch-${EPOCH}"
         OUT_CKPT="$LF_ROOT/$OUT_CKPT_REL"
+        EPOCH_TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_epoch${EPOCH}"
 
-        run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_epoch${EPOCH}" \
+        if skip_if_done "$EPOCH_TAG" "$OUT_CKPT/action_metrics.json"; then
+          continue
+        fi
+
+        run_logged "$EPOCH_TAG" \
           bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_CKPT_REL' && \
             python scripts/vllm_infer.py \
               --model_name_or_path '$HUB_ID' \
@@ -124,17 +135,24 @@ for MODEL_SHORT in "${MODELS[@]}"; do
               --test   '$TEST_JSONL' \
               --pred   '$OUT_CKPT/generated_predictions.jsonl' \
               --output '$OUT_CKPT/action_metrics.json'"
+        SWEEP_RAN=1
       done
 
       # Phase C: winner 선택 → BEST_CHECKPOINT 기록 (adapter 출력 디렉토리에)
       # winner metric: step_accuracy (AndroidControl 표준 정의)
+      # Phase B 에서 새 평가가 하나도 없었고 BEST_CHECKPOINT.json 이 이미 있으면 skip.
       HUB_TEMPLATE=$(hf_repo_id_stage2 "$MODEL_SHORT" "$DS" "${VARIANT_HUB_SUFFIX[$VARIANT]}" '{epoch}')
-      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_select" \
-        python "$BASE_DIR/scripts/_action_eval.py" select \
-          --eval-dir  "$EVAL_DIR" \
-          --train-dir "$LORA_DIR" \
-          --metric    step_accuracy \
-          --hf-repo-template "$HUB_TEMPLATE"
+      SELECT_TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_select"
+      if (( SWEEP_RAN == 0 )) && skip_if_done "$SELECT_TAG" "$LORA_DIR/BEST_CHECKPOINT.json"; then
+        :
+      else
+        run_logged "$SELECT_TAG" \
+          python "$BASE_DIR/scripts/_action_eval.py" select \
+            --eval-dir  "$EVAL_DIR" \
+            --train-dir "$LORA_DIR" \
+            --metric    step_accuracy \
+            --hf-repo-template "$HUB_TEMPLATE"
+      fi
     done
 
     unset VARIANT_ADAPTER_SUB VARIANT_HUB_SUFFIX

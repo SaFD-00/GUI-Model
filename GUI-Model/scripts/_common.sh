@@ -259,6 +259,19 @@ run_logged() {
   echo "[+] [$tag] done   log: $log" >&2
 }
 
+# --- skip-if-exists 가드 -----------------------------------------------------
+# usage: if skip_if_done <tag> <marker>; then continue; fi
+# marker 파일이 이미 존재하면 stderr 에 skip 메시지를 찍고 0 (success) 을 반환.
+# 호출부에서 `continue` / `:` 로 우회하는 패턴으로 사용한다.
+skip_if_done() {
+  local tag="$1" marker="$2"
+  if [ -f "$marker" ]; then
+    echo "[=] [$tag] skip (already done): $marker" >&2
+    return 0
+  fi
+  return 1
+}
+
 # --- YAML / 디렉토리 가드 ----------------------------------------------------
 # usage: require_yaml <절대 또는 LF_ROOT 상대 경로> <노트북 cell 안내>
 require_yaml() {

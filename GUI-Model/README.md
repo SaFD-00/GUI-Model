@@ -209,6 +209,13 @@ bash scripts/stage2_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora
 
 > `--epochs` 생략 시 기본값 `1,2,3` 이 적용된다. 학습한 `num_train_epochs` 와 다른 값을 쓰려면 명시해야 한다 (예: `--epochs 3` 으로 최종 epoch 만 평가).
 
+> **재실행 시 skip**: `stage{1,2}_eval*.sh` 는 각 unit (baseline / epoch 별 sweep / winner select) 의 marker 파일이 이미 존재하면 해당 unit 을 재실행하지 않고 `[=] ... skip (already done): ...` 로그만 남긴다. Marker 는 Stage 1 은 `hungarian_metrics.json`, Stage 2 는 `action_metrics.json`, winner 는 `BEST_CHECKPOINT.json`. 강제 재평가는 해당 파일을 `rm` 한 뒤 재실행.
+
+> **분할 스크립트**: 필요에 따라 baseline 만 / world-model sweep 만 분리 실행할 수 있다.
+> - `scripts/stage1_eval_base.sh`, `scripts/stage2_eval_base.sh` — Phase A (zero-shot baseline) 단독
+> - `scripts/stage1_eval_world_model.sh`, `scripts/stage2_eval_world_model.sh` — Phase B + C (HF Hub sweep + winner select) 단독
+> 플래그는 `stage{1,2}_eval.sh` 와 동일하며, skip 동작도 같다.
+
 지원 플래그:
 
 - `--model MODEL`: 모델 short_name 또는 `all` (기본: `all`)
