@@ -122,6 +122,14 @@ class CollectionServer:
         """
         return self.send_action({"type": "SESSION_END"})
 
+    def send_start(self, package: str) -> bool:
+        """Tell the connected client to begin collecting *package*.
+
+        The client is expected to start its collection pipeline and reply with
+        a ``P`` message carrying the same package name.
+        """
+        return self.send_action({"type": "START", "package": package})
+
     def wait_for_xml(
         self, timeout: float = 25.0
     ) -> tuple[str, dict] | None:

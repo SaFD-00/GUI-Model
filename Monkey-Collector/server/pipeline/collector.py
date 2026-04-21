@@ -1,15 +1,14 @@
 """Collector facade: wire TCP server, explorer, storage, and drive sessions.
 
-Flow:
-  1. Start TCP server and wait for client connection
-  2. Receive target package name from client (P message)
-  3. Loop:
-     a. App detects screen change → sends screenshot + XML via TCP
-        (or sends N signal if no visual change)
-     b. Server receives → parses XML → selects action
-     c. Server executes action via ADB
-     d. Saves screenshot/XML/event to disk (skipped on no-change)
-  4. Finalize session
+Flow (server-driven):
+  1. Start TCP server and wait for client (Android CollectorService) to connect.
+  2. Send ``{"type": "START", "package": pkg}`` to the client.
+  3. Client replies with a ``P`` message carrying the same package name.
+  4. Server launches the app via ADB; the AccessibilityService picks it up and
+     begins streaming ``S`` (screenshot) + ``X`` (XML) signals.
+  5. Loop: parse XML → select action → execute via ADB → save payload.
+  6. Finalize session; optionally loop to the next package with
+     ``run_queue([...])``.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from server.pipeline.text_generator import TextGenerator
 
 
 class Collector:
-    """Orchestrates data collection using App+Server architecture."""
+    """Orchestrates server-driven data collection on a single device."""
 
     def __init__(
         self,
@@ -62,8 +61,12 @@ class Collector:
         self._text_generator = text_generator
         self._new_session = new_session
 
-    def run(self, package: str | None = None) -> str:
-        """Run a single collection session."""
+    def run(self, package: str) -> str:
+        """Run a single server-driven collection session.
+
+        Starts and stops the TCP server internally; suitable for one-off
+        single-app runs.
+        """
         self.server.on_screenshot = self._on_screenshot
         self.server.start()
         try:
@@ -72,28 +75,29 @@ class Collector:
             self.server.stop()
         return session_id
 
-    def run_multi(self, package: str | None = None) -> list[str]:
-        """Run multiple collection sessions without restarting server."""
+    def run_queue(self, packages: list[str]) -> list[str]:
+        """Sequentially collect every package in *packages* on one device.
+
+        The TCP server stays up for the whole run; between packages the
+        client is expected to reconnect (triggered by our ``SESSION_END``
+        handshake inside ``finalize_session``).
+        """
         session_ids: list[str] = []
         self.server.on_screenshot = self._on_screenshot
         self.server.start()
 
         try:
-            session_num = 0
-            while True:
-                session_num += 1
+            for idx, pkg in enumerate(packages, start=1):
                 logger.info(
-                    f"=== Waiting for session #{session_num} "
-                    f"(Ctrl+C to quit) ==="
+                    f"=== Session {idx}/{len(packages)} — package={pkg} ==="
                 )
-
-                if session_num > 1:
+                if idx > 1:
                     self.server.reset_for_new_session()
                 self.explorer.clear_excluded()
                 self._latest_screenshot = None
 
                 try:
-                    session_id = self._run_session(package)
+                    session_id = self._run_session(pkg)
                 except KeyboardInterrupt:
                     logger.info("Interrupted during session")
                     break
@@ -101,14 +105,11 @@ class Collector:
                 if session_id:
                     session_ids.append(session_id)
                     logger.info(
-                        f"Session #{session_num} complete: {session_id}"
+                        f"Session {idx} complete: {session_id} "
+                        f"({len(session_ids)}/{len(packages)} done)"
                     )
                 else:
-                    logger.warning(
-                        f"Session #{session_num} ended without result"
-                    )
-
-                logger.info(f"Total sessions completed: {len(session_ids)}")
+                    logger.warning(f"Session {idx} ended without result for {pkg}")
         except KeyboardInterrupt:
             logger.info("Shutting down server...")
         finally:
@@ -116,16 +117,37 @@ class Collector:
 
         return session_ids
 
-    def _run_session(self, package: str | None = None) -> str:
-        """Run a single collection session (server must already be started)."""
+    def _run_session(self, package: str) -> str:
+        """Run a single collection session for *package* (server must be started).
+
+        The server drives the handshake: it sends ``START`` once the client is
+        connected, waits for the client's ``P`` reply, then launches the app
+        via ADB before handing off to ``run_collection_loop``.
+        """
         if not wait_for_connection(self):
+            return ""
+
+        if not self.server.send_start(package):
+            logger.error(f"Failed to send START command for {package}")
             return ""
 
         pkg = receive_target_package(self, package)
         if pkg is None:
+            logger.error(f"Client did not acknowledge START for {package}")
             return ""
-        package = pkg
+        if pkg != package:
+            logger.warning(
+                f"Client reported package={pkg} but server requested {package}; "
+                f"using server value"
+            )
+        package = package  # trust the server-driven value
         logger.info(f"Target package: {package}")
+
+        try:
+            self.adb.force_stop(package)
+        except Exception as e:
+            logger.debug(f"force_stop({package}) ignored: {e}")
+        self.adb.launch_app(package)
 
         session_id, resume_step = init_or_resume_session(self, package)
         logger.info(f"Starting session: {session_id}")

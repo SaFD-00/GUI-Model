@@ -26,12 +26,17 @@ class TcpClient(
     private val writeLock = Any()
     private var readerThread: Thread? = null
     private var onSessionEnd: (() -> Unit)? = null
+    private var onStart: ((String) -> Unit)? = null
 
     @Volatile
     private var connected = false
 
     fun setOnSessionEnd(callback: () -> Unit) {
         onSessionEnd = callback
+    }
+
+    fun setOnStart(callback: (String) -> Unit) {
+        onStart = callback
     }
 
     fun connect(): Boolean {
@@ -61,7 +66,9 @@ class TcpClient(
     /**
      * Start a background thread that reads control signals from the server.
      *
-     * The server sends \r\n-delimited JSON messages. Currently supported:
+     * The server sends \r\n-delimited JSON messages. Supported types:
+     * - {"type": "START", "package": "<pkg>"} — server requests the app to
+     *   begin collecting the given package.
      * - {"type": "SESSION_END"} — server requests the app to stop collection.
      */
     private fun startReaderThread() {
@@ -75,6 +82,15 @@ class TcpClient(
                     try {
                         val json = JSONObject(line.trim())
                         when (json.optString("type")) {
+                            "START" -> {
+                                val pkg = json.optString("package", "")
+                                if (pkg.isEmpty()) {
+                                    Log.w(TAG, "START message missing package field: $line")
+                                } else {
+                                    Log.i(TAG, "Received START from server: $pkg")
+                                    onStart?.invoke(pkg)
+                                }
+                            }
                             "SESSION_END" -> {
                                 Log.i(TAG, "Received SESSION_END from server")
                                 onSessionEnd?.invoke()

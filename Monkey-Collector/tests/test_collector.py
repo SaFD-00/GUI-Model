@@ -269,27 +269,30 @@ class TestRunSessionNoConnection:
 
 
 @pytest.mark.integration
-class TestRunMulti:
+class TestRunQueue:
     @patch("server.pipeline.collection_loop.time.sleep")
     @patch.object(Collector, "_run_session")
-    def test_two_sessions(self, mock_run_session, mock_sleep, mock_adb):
-        """Two sessions complete, then KeyboardInterrupt stops the loop."""
-        mock_run_session.side_effect = ["session_1", "session_2", KeyboardInterrupt()]
+    def test_sequential_packages(self, mock_run_session, mock_sleep, mock_adb):
+        """run_queue walks every package and accumulates session ids."""
+        mock_run_session.side_effect = ["session_1", "session_2"]
 
         from server.pipeline.explorer import SmartExplorer
         from server.infra.network.server import CollectionServer
         from server.infra.storage.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
-        mock_explorer = MagicMock(spec=SmartExplorer)
         collector = Collector(
-            adb=mock_adb, explorer=mock_explorer, server=mock_server,
+            adb=mock_adb, explorer=MagicMock(spec=SmartExplorer), server=mock_server,
             writer=MagicMock(spec=DataWriter), max_steps=5, action_delay=0, xml_timeout=0.1,
         )
 
-        result = collector.run_multi()
+        result = collector.run_queue(["com.one", "com.two"])
         assert result == ["session_1", "session_2"]
-        assert mock_server.reset_for_new_session.call_count == 2  # called before sessions 2 and 3
+        assert mock_run_session.call_count == 2
+        mock_run_session.assert_any_call("com.one")
+        mock_run_session.assert_any_call("com.two")
+        # reset between the two sessions (once before session 2)
+        assert mock_server.reset_for_new_session.call_count == 1
         mock_server.stop.assert_called_once()
 
     @patch("server.pipeline.collection_loop.time.sleep")
@@ -308,24 +311,17 @@ class TestRunMulti:
             writer=MagicMock(spec=DataWriter), max_steps=5, action_delay=0, xml_timeout=0.1,
         )
 
-        result = collector.run_multi()
+        result = collector.run_queue(["com.one", "com.two"])
         assert result == ["session_1"]
         mock_server.stop.assert_called_once()
 
     @patch("server.pipeline.collection_loop.time.sleep")
     @patch.object(Collector, "_run_session")
-    def test_interrupt_between_sessions(self, mock_run_session, mock_sleep, mock_adb):
-        """KeyboardInterrupt at the outer loop level."""
-        # First session OK, then the outer while-True catches KeyboardInterrupt
-        call_count = 0
-        def side_effect(*a, **kw):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return "session_1"
-            # Simulate interrupt between sessions (e.g. during reset)
-            raise KeyboardInterrupt()
-        mock_run_session.side_effect = side_effect
+    def test_empty_session_id_logged_but_queue_continues(
+        self, mock_run_session, mock_sleep, mock_adb,
+    ):
+        """Empty string from _run_session is skipped but the queue continues."""
+        mock_run_session.side_effect = ["", "session_2"]
 
         from server.pipeline.explorer import SmartExplorer
         from server.infra.network.server import CollectionServer
@@ -337,41 +333,47 @@ class TestRunMulti:
             writer=MagicMock(spec=DataWriter), max_steps=5, action_delay=0, xml_timeout=0.1,
         )
 
-        result = collector.run_multi()
-        assert "session_1" in result
-        mock_server.stop.assert_called_once()
+        result = collector.run_queue(["com.one", "com.two"])
+        assert result == ["session_2"]
 
 
 @pytest.mark.integration
-class TestPackageFromClient:
+class TestServerDrivenHandshake:
     @patch("server.pipeline.collection_loop.time.sleep")
-    def test_package_none_receives(self, mock_sleep, mock_adb):
-        """package=None → receives package from client."""
-        signals = [_make_xml_signal(pkg="com.from.client"), ("finish", None, None)]
+    def test_send_start_called_with_package(self, mock_sleep, mock_adb):
+        """_run_session sends START with the requested package before launching."""
+        signals = [_make_xml_signal(pkg="com.test.app"), ("finish", None, None)]
         collector, explorer, server, writer = _make_collector(mock_adb, signals)
-        server.wait_for_package.return_value = "com.from.client"
 
-        session_id = collector.run(package=None)
-        assert "com.from.client" in session_id
+        collector.run(package="com.test.app")
+
+        server.send_start.assert_called_once_with("com.test.app")
+        mock_adb.launch_app.assert_called_once_with("com.test.app")
 
     @patch("server.pipeline.collection_loop.time.sleep")
-    def test_package_none_timeout(self, mock_sleep, mock_adb):
-        """package=None + package timeout → empty string."""
+    def test_send_start_failure_aborts_session(self, mock_sleep, mock_adb):
+        """If send_start returns False, session is aborted without launching."""
         collector, explorer, server, writer = _make_collector(mock_adb, [])
-        server.wait_for_package.return_value = None
+        server.send_start.return_value = False
 
-        session_id = collector.run(package=None)
+        session_id = collector.run(package="com.test.app")
+
         assert session_id == ""
+        mock_adb.launch_app.assert_not_called()
 
     @patch("server.pipeline.collection_loop.time.sleep")
-    def test_package_override(self, mock_sleep, mock_adb):
-        """Specified package overridden by client P message."""
-        signals = [_make_xml_signal(pkg="com.override"), ("finish", None, None)]
+    def test_package_mismatch_warns_and_uses_server_value(
+        self, mock_sleep, mock_adb,
+    ):
+        """Client reporting a different package is logged but server value wins."""
+        signals = [_make_xml_signal(pkg="com.server"), ("finish", None, None)]
         collector, explorer, server, writer = _make_collector(mock_adb, signals)
-        server.wait_for_package.return_value = "com.override"
+        server.wait_for_package.return_value = "com.client"
 
-        session_id = collector.run(package="com.original")
-        assert "com.override" in session_id
+        session_id = collector.run(package="com.server")
+
+        assert "com.server" in session_id
+        mock_adb.launch_app.assert_called_once_with("com.server")
 
 
 @pytest.mark.integration

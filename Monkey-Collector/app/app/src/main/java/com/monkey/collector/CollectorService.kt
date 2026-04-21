@@ -58,7 +58,11 @@ class CollectorService : AccessibilityService() {
     private var isCollecting: Boolean = false
     @Volatile private var lastCaptureTime: Long = 0
     private var screenStabilizer: ScreenStabilizer? = null
-    private var floatingButton: FloatingCollectorButton? = null
+
+    // Standby loop state: keeps a TCP connection to the server so the server
+    // can push START messages whenever it wants the client to begin collecting.
+    private var standbyThread: Thread? = null
+    @Volatile private var shutdownRequested: Boolean = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -74,8 +78,13 @@ class CollectorService : AccessibilityService() {
             notificationTimeout = DEBOUNCE_MS
         }
 
-        floatingButton = FloatingCollectorButton(this)
-        floatingButton?.addToWindow()
+        // If the user has already configured the server in a previous session,
+        // start connecting immediately so the server can drive the device.
+        val prefs = getSharedPreferences("collector_settings", Context.MODE_PRIVATE)
+        val savedIp = prefs.getString("server_ip", "") ?: ""
+        if (savedIp.isNotEmpty()) {
+            beginStandby()
+        }
 
         Log.i(TAG, "Service connected")
     }
@@ -193,10 +202,8 @@ class CollectorService : AccessibilityService() {
                     false
                 }
 
-                // Step 3: Hide floating button, take screenshot, show again
-                floatingButton?.dismiss()
+                // Step 3: Take screenshot
                 val bitmap = ScreenCapture.takeSync(this)
-                floatingButton?.show()
 
                 // Step 4: Dump XML (existing logic)
                 val xml = XmlDumper.dumpNodeTree(root)
@@ -235,11 +242,11 @@ class CollectorService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        shutdownRequested = true
+        stopStandby()
         stopCollection()
         screenStabilizer?.release()
         screenStabilizer = null
-        floatingButton?.remove()
-        floatingButton = null
     }
 
     fun startCollection(
@@ -248,7 +255,8 @@ class CollectorService : AccessibilityService() {
         targetPkg: String,
         screenWidth: Int,
         screenHeight: Int,
-        screenDensityDpi: Int
+        screenDensityDpi: Int,
+        existingClient: TcpClient? = null,
     ) {
         targetPackage = targetPkg
         currentActivityName = ""
@@ -276,16 +284,18 @@ class CollectorService : AccessibilityService() {
             Log.w(TAG, "MediaProjection not granted, running without visual stabilization")
         }
 
-        // Connect TCP client and send target package
-        tcpClient = TcpClient(serverIp, serverPort)
-        tcpClient?.setOnSessionEnd {
+        // Reuse the standby connection if the server already pushed us a START;
+        // otherwise open a fresh socket (kept for API symmetry).
+        val client = existingClient ?: TcpClient(serverIp, serverPort)
+        tcpClient = client
+        client.setOnSessionEnd {
             Log.i(TAG, "Server ended session, stopping collection")
             Handler(Looper.getMainLooper()).post { stopCollection() }
         }
         Thread {
-            val connected = tcpClient?.connect() ?: false
+            val connected = client.isConnected() || client.connect()
             if (connected) {
-                tcpClient?.sendPackageName(targetPackage)
+                client.sendPackageName(targetPackage)
                 isCollecting = true
                 Log.i(TAG, "Collection started: target=$targetPkg, server=$serverIp:$serverPort")
             } else {
@@ -313,10 +323,82 @@ class CollectorService : AccessibilityService() {
         // Stop foreground
         stopForeground(STOP_FOREGROUND_REMOVE)
 
-        // Update floating button state
-        floatingButton?.onCollectionStopped()
-
         Log.i(TAG, "Collection stopped. Steps: $stepCount")
+    }
+
+    /**
+     * Start (or restart) the server standby loop.
+     *
+     * Holds a persistent TCP connection to the server so it can push START
+     * messages — those trigger [startCollection] with the server-chosen
+     * target package.  Reconnects automatically if the socket drops.
+     */
+    fun beginStandby() {
+        if (shutdownRequested) return
+        if (standbyThread?.isAlive == true) return
+
+        val prefs = getSharedPreferences("collector_settings", Context.MODE_PRIVATE)
+        val ip = prefs.getString("server_ip", "") ?: ""
+        val port = prefs.getInt("server_port", 12345)
+        if (ip.isEmpty()) {
+            Log.w(TAG, "Server IP not configured; standby skipped")
+            return
+        }
+
+        standbyThread = Thread {
+            while (!shutdownRequested) {
+                if (isCollecting) {
+                    // A session is in progress; wait for stopCollection() to
+                    // release the connection before attempting a new standby.
+                    try { Thread.sleep(1000) } catch (_: InterruptedException) { break }
+                    continue
+                }
+
+                val client = TcpClient(ip, port)
+                client.setOnStart { pkg ->
+                    Log.i(TAG, "Standby: server START for $pkg")
+                    val metrics = resources.displayMetrics
+                    Handler(Looper.getMainLooper()).post {
+                        startCollection(
+                            serverIp = ip,
+                            serverPort = port,
+                            targetPkg = pkg,
+                            screenWidth = metrics.widthPixels,
+                            screenHeight = metrics.heightPixels,
+                            screenDensityDpi = metrics.densityDpi,
+                            existingClient = client,
+                        )
+                    }
+                }
+                client.setOnSessionEnd {
+                    Handler(Looper.getMainLooper()).post { stopCollection() }
+                }
+
+                if (client.connect()) {
+                    Log.i(TAG, "Standby: connected to $ip:$port, waiting for START")
+                    // Block until the connection drops (reader thread handles messages).
+                    while (client.isConnected() && !shutdownRequested && !isCollecting) {
+                        try { Thread.sleep(500) } catch (_: InterruptedException) { break }
+                    }
+                } else {
+                    Log.w(TAG, "Standby: connect failed, retrying in 3s")
+                }
+
+                if (!shutdownRequested && !isCollecting) {
+                    try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
+                }
+            }
+            Log.i(TAG, "Standby thread exiting")
+        }.apply {
+            isDaemon = true
+            name = "CollectorService-Standby"
+            start()
+        }
+    }
+
+    fun stopStandby() {
+        standbyThread?.interrupt()
+        standbyThread = null
     }
 
     private fun startForegroundService() {
@@ -388,7 +470,7 @@ class CollectorService : AccessibilityService() {
     }
 
     /**
-     * Get the package name of the current foreground app (public, for FloatingButton).
+     * Get the package name of the current foreground app.
      */
     fun getCurrentForegroundPackage(): String? {
         return try {

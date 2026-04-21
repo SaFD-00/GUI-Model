@@ -28,9 +28,11 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             MediaProjectionHelper.saveResult(result.resultCode, result.data)
+            // Kick off the standby loop so the server can drive collection.
+            CollectorService.instance?.beginStandby()
             Toast.makeText(
                 this,
-                "Ready! Open the target app and tap the floating ▶ button to start.",
+                "Ready. Server will launch target apps automatically.",
                 Toast.LENGTH_LONG
             ).show()
             finish()
@@ -75,7 +77,8 @@ class MainActivity : AppCompatActivity() {
 
         // Info text
         layout.addView(TextView(this).apply {
-            text = "Target app is auto-detected when you press the floating ▶ button."
+            text = "Collection is driven by the server. Keep the Accessibility " +
+                    "service enabled; the server controls which app is collected."
             textSize = 14f
             setPadding(0, 16, 0, 16)
         })

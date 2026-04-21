@@ -121,3 +121,57 @@ def test_app_job_is_frozen() -> None:
     )
     with pytest.raises(Exception):  # noqa: B017
         job.category = "Z"  # type: ignore[misc]
+
+
+def test_installed_column_missing_defaults_to_false(catalog: AppCatalog) -> None:
+    for app in catalog.filter():
+        assert app.installed is False
+
+
+def test_installed_column_parsed(tmp_path: Path) -> None:
+    content = (
+        "category,sub_category,app_name,package_id,source,priority,notes,installed\n"
+        "Shopping,General,Amazon,com.amazon,PlayStore,High,top,true\n"
+        "Shopping,General,eBay,com.ebay,PlayStore,Medium,auction,False\n"
+        "Social,Chat,Signal,org.sig,PlayStore,High,msg,1\n"
+        "Social,Chat,Telegram,org.tg,PlayStore,Low,msg,\n"
+        "Utility,System,Calc,com.calc,System,Medium,builtin,YES\n"
+    )
+    path = tmp_path / "apps_installed.csv"
+    path.write_text(content, encoding="utf-8")
+    cat = AppCatalog.load(path)
+    apps = {a.package_id: a.installed for a in cat.filter()}
+    assert apps == {
+        "com.amazon": True,
+        "com.ebay": False,
+        "org.sig": True,
+        "org.tg": False,
+        "com.calc": True,
+    }
+
+
+def test_filter_by_installed(tmp_path: Path) -> None:
+    content = (
+        "category,sub_category,app_name,package_id,source,priority,notes,installed\n"
+        "A,B,One,p.one,PlayStore,High,,true\n"
+        "A,B,Two,p.two,PlayStore,High,,false\n"
+        "A,B,Three,p.three,PlayStore,High,,true\n"
+    )
+    path = tmp_path / "apps.csv"
+    path.write_text(content, encoding="utf-8")
+    cat = AppCatalog.load(path)
+
+    installed = cat.installed_apps()
+    assert {a.package_id for a in installed} == {"p.one", "p.three"}
+
+    uninstalled = cat.filter(installed=False)
+    assert {a.package_id for a in uninstalled} == {"p.two"}
+
+    assert len(cat.filter(installed=None)) == 3
+
+
+def test_find_by_package(catalog: AppCatalog) -> None:
+    app = catalog.find_by_package("com.whatsapp")
+    assert app is not None
+    assert app.app_name == "WhatsApp"
+    assert catalog.find_by_package("com.nope.missing") is None

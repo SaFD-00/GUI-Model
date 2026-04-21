@@ -9,35 +9,47 @@ class TestRunArgsParsing:
     def test_defaults(self):
         from server.cli import main
 
-        with patch("sys.argv", ["monkey-collect", "run"]), patch("server.cli.cmd_run") as mock_cmd:
-                main()
-                args = mock_cmd.call_args[0][0]
-                assert args.app is None
-                assert args.steps == 100
-                assert args.seed == 42
-                assert args.port == 12345
-                assert args.single is False
-                assert args.input_mode == "api"
+        with patch(
+            "sys.argv", ["monkey-collect", "run", "--apps", "all"]
+        ), patch("server.cli.cmd_run") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.apps == ["all"]
+            assert args.steps == 100
+            assert args.seed == 42
+            assert args.port == 12345
+            assert args.input_mode == "api"
+            assert args.new_session is False
+            assert args.force is False
+
+    def test_apps_required(self):
+        from server.cli import main
+
+        with patch("sys.argv", ["monkey-collect", "run"]), \
+                pytest.raises(SystemExit):
+            main()
 
     def test_all_flags(self):
         from server.cli import main
 
         with patch("sys.argv", [
             "monkey-collect", "run",
-            "--app", "com.test.app",
+            "--apps", "com.test.app", "com.other.app",
             "--steps", "50",
             "--seed", "99",
             "--port", "54321",
-            "--single",
+            "--new-session",
+            "--force",
             "--input-mode", "random",
         ]), patch("server.cli.cmd_run") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
-            assert args.app == "com.test.app"
+            assert args.apps == ["com.test.app", "com.other.app"]
             assert args.steps == 50
             assert args.seed == 99
             assert args.port == 54321
-            assert args.single is True
+            assert args.new_session is True
+            assert args.force is True
             assert args.input_mode == "random"
 
 
@@ -100,83 +112,40 @@ class TestNoCommand:
 
 
 class TestRunArgsDefaults:
-    def test_default_output_device(self):
-        """Default output and device values."""
+    def test_default_output(self):
+        """Default output value."""
         from server.cli import main
 
-        with patch("sys.argv", ["monkey-collect", "run"]), patch("server.cli.cmd_run") as mock_cmd:
+        with patch(
+            "sys.argv", ["monkey-collect", "run", "--apps", "all"]
+        ), patch("server.cli.cmd_run") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
             assert args.output == "data/raw"
-            assert args.device is None
             assert args.delay == 1500
 
 
-class TestSweepArgsParsing:
-    def test_required_args(self):
+class TestSyncInstalledArgsParsing:
+    def test_defaults(self):
         from server.cli import main
 
-        with patch("sys.argv", [
-            "monkey-collect", "sweep",
-            "--avds", "monkey-0,monkey-1",
-        ]), patch("server.cli.cmd_sweep") as mock_cmd:
+        with patch(
+            "sys.argv", ["monkey-collect", "sync-installed"]
+        ), patch("server.cli.cmd_sync_installed") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
-            assert args.avds == "monkey-0,monkey-1"
             assert args.apps_csv == "apps.csv"
-            assert args.apks_dir == "apks"
-            assert not hasattr(args, "parallel")
-            assert args.host_port_base == 6000
-            assert args.boot_timeout == 180.0
-            assert args.uninstall_after is False
-            assert args.dry_run is False
-            assert args.force is False
-            assert args.categories is None
-            assert args.priorities is None
 
-    def test_all_flags(self):
+    def test_custom_apps_csv(self):
         from server.cli import main
 
         with patch("sys.argv", [
-            "monkey-collect", "sweep",
+            "monkey-collect", "sync-installed",
             "--apps-csv", "/tmp/apps.csv",
-            "--apks-dir", "/tmp/apks",
-            "--avds", "a,b,c",
-            "--categories", "Shopping,Media",
-            "--priorities", "High",
-            "--output", "/tmp/out",
-            "--steps", "50",
-            "--seed", "7",
-            "--delay", "500",
-            "--input-mode", "random",
-            "--host-port-base", "7000",
-            "--boot-timeout", "60",
-            "--uninstall-after",
-            "--force",
-            "--dry-run",
-        ]), patch("server.cli.cmd_sweep") as mock_cmd:
+        ]), patch("server.cli.cmd_sync_installed") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
             assert args.apps_csv == "/tmp/apps.csv"
-            assert args.apks_dir == "/tmp/apks"
-            assert args.avds == "a,b,c"
-            assert not hasattr(args, "parallel")
-            assert args.categories == "Shopping,Media"
-            assert args.priorities == "High"
-            assert args.steps == 50
-            assert args.input_mode == "random"
-            assert args.host_port_base == 7000
-            assert args.boot_timeout == 60
-            assert args.uninstall_after is True
-            assert args.force is True
-            assert args.dry_run is True
-
-    def test_avds_is_required(self):
-        from server.cli import main
-
-        with patch("sys.argv", ["monkey-collect", "sweep"]), \
-                pytest.raises(SystemExit):
-            main()
 
 
 class TestResetArgsParsing:
@@ -192,26 +161,20 @@ class TestResetArgsParsing:
             assert args.yes is True
             assert args.dry_run is False
             assert args.output == "data/raw"
-            assert args.categories is None
+            assert args.packages is None
 
-    def test_scope_flags(self):
+    def test_packages(self):
         from server.cli import main
 
         with patch("sys.argv", [
             "monkey-collect", "reset",
-            "--categories", "Shopping,Media",
             "--packages", "com.a,com.b",
-            "--apps-csv", "/tmp/apps.csv",
-            "--priorities", "High",
             "--output", "/tmp/out",
             "--dry-run",
         ]), patch("server.cli.cmd_reset") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
-            assert args.categories == "Shopping,Media"
             assert args.packages == "com.a,com.b"
-            assert args.apps_csv == "/tmp/apps.csv"
-            assert args.priorities == "High"
             assert args.output == "/tmp/out"
             assert args.dry_run is True
 

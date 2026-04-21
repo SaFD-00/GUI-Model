@@ -18,7 +18,9 @@ def wait_for_connection(collector: Collector, timeout_seconds: int = 120) -> boo
     """Block until a device connects or timeout."""
     import time
 
-    logger.info("Waiting for device to connect (press floating ▶ button)...")
+    logger.info(
+        "Waiting for device to connect (ensure CollectorService is running)..."
+    )
     for _ in range(timeout_seconds):
         time.sleep(1)
         if collector.server.is_client_connected():
