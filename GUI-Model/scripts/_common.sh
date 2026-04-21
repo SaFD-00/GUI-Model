@@ -122,7 +122,10 @@ parse_args() {
   local model_arg="all"
   local dataset_arg="all"
   local stage1_mode_arg="full"
+  local stage2_mode_arg="lora"
+  local stage1_epoch_arg=""
   local epochs_arg="1,2,3"
+  local variants_arg=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model)
@@ -134,33 +137,40 @@ parse_args() {
       --stage1-mode)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-mode requires a value." >&2; exit 2; fi
         stage1_mode_arg="$2"; shift 2 ;;
+      --stage2-mode)
+        if [[ -z "${2:-}" ]]; then echo "Error: --stage2-mode requires a value." >&2; exit 2; fi
+        stage2_mode_arg="$2"; shift 2 ;;
+      --stage1-epoch)
+        if [[ -z "${2:-}" ]]; then echo "Error: --stage1-epoch requires a value." >&2; exit 2; fi
+        stage1_epoch_arg="$2"; shift 2 ;;
       --epochs)
         if [[ -z "${2:-}" ]]; then echo "Error: --epochs requires a value." >&2; exit 2; fi
         epochs_arg="$2"; shift 2 ;;
+      --variants)
+        if [[ -z "${2:-}" ]]; then echo "Error: --variants requires a value." >&2; exit 2; fi
+        variants_arg="$2"; shift 2 ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE] [--epochs LIST]
+Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE]
+                         [--stage2-mode MODE] [--stage1-epoch N] [--epochs LIST]
+                         [--variants LIST]
 
 Options:
   --model MODEL        모델 short_name 또는 "all" (기본: all)
   --dataset DS         MB | AC | all (기본: all)
-  --stage1-mode MODE   full | lora (기본: full)
-                       Stage 1 학습 방식. Stage 2 스크립트에서는 world-model variant
-                       가 참조할 상류 Stage 1 소스를 선택.
+  --stage1-mode MODE   full | lora (기본: full) — Stage 1 학습 방식.
+  --stage2-mode MODE   full | lora (기본: lora) — Stage 2 학습 방식 (Stage 2 전용).
+  --stage1-epoch N     Stage 2 world-model variant 가 상류 base 로 삼을 Stage 1 epoch.
+                       stage2_{train,merge,eval}.sh 전용.
   --epochs LIST        콤마로 구분된 epoch 정수 리스트 (기본: 1,2,3)
-                       stage{1,2}_eval.sh 전용 — HF Hub merged repo sweep 대상.
-                       다른 스크립트에서는 무시됨.
+                       stage{1,2}_eval.sh 에서 HF Hub merged repo sweep 대상.
+  --variants LIST      콤마로 구분된 변형 목록. stage{1,2}_eval.sh 전용.
+                       Stage1: base, full_world_model, lora_world_model
+                       Stage2: base, full_base, lora_base, full_world_model, lora_world_model
   -h, --help           이 도움말 표시
 
 Available models:
   ${ALL_MODELS[*]}
-
-Examples:
-  $(basename "$0") --model qwen3-vl-8b --dataset MB
-  $(basename "$0") --model gemma-4-e2b --stage1-mode lora
-  $(basename "$0") --model qwen3-vl-8b --dataset AC --epochs 1,2,3
-  $(basename "$0") --stage1-mode lora
-  $(basename "$0")
 EOF
         exit 0
         ;;
@@ -173,11 +183,21 @@ EOF
 
   case "$stage1_mode_arg" in
     full|lora) STAGE1_MODE="$stage1_mode_arg" ;;
-    *)
-      echo "Error: Unknown --stage1-mode '$stage1_mode_arg'. Use full | lora." >&2
-      exit 2
-      ;;
+    *) echo "Error: --stage1-mode must be full | lora (got '$stage1_mode_arg')." >&2; exit 2 ;;
   esac
+  case "$stage2_mode_arg" in
+    full|lora) STAGE2_MODE="$stage2_mode_arg" ;;
+    *) echo "Error: --stage2-mode must be full | lora (got '$stage2_mode_arg')." >&2; exit 2 ;;
+  esac
+
+  STAGE1_EPOCH=""
+  if [[ -n "$stage1_epoch_arg" ]]; then
+    if ! [[ "$stage1_epoch_arg" =~ ^[0-9]+$ ]]; then
+      echo "Error: --stage1-epoch must be a positive integer (got '$stage1_epoch_arg')." >&2
+      exit 2
+    fi
+    STAGE1_EPOCH="$stage1_epoch_arg"
+  fi
 
   # model_arg → MODELS 배열
   if [[ "$model_arg" == "all" ]]; then
@@ -190,22 +210,16 @@ EOF
     exit 2
   fi
 
-  # dataset_arg → DATASETS 배열
   case "$dataset_arg" in
     MB)  DATASETS=(MB) ;;
     AC)  DATASETS=(AC) ;;
     all) DATASETS=(MB AC) ;;
-    *)
-      echo "Error: Unknown dataset '$dataset_arg'. Use MB | AC | all." >&2
-      exit 2
-      ;;
+    *) echo "Error: Unknown dataset '$dataset_arg'. Use MB | AC | all." >&2; exit 2 ;;
   esac
 
-  # epochs_arg → EPOCHS 배열 (stage{1,2}_eval.sh 에서 HF Hub sweep 대상으로 사용)
   IFS=',' read -r -a EPOCHS <<< "$epochs_arg"
   if [[ "${#EPOCHS[@]}" -eq 0 ]]; then
-    echo "Error: --epochs 값이 비어있습니다." >&2
-    exit 2
+    echo "Error: --epochs 값이 비어있습니다." >&2; exit 2
   fi
   for _e in "${EPOCHS[@]}"; do
     if ! [[ "$_e" =~ ^[0-9]+$ ]]; then
@@ -214,6 +228,11 @@ EOF
     fi
   done
   unset _e
+
+  VARIANTS=()
+  if [[ -n "$variants_arg" ]]; then
+    IFS=',' read -r -a VARIANTS <<< "$variants_arg"
+  fi
 }
 
 # --- (deprecated) 하위 호환용 ---
@@ -308,25 +327,36 @@ PY
 }
 
 # --- HF Hub repo id 조립 (단일 실패 지점) ------------------------------------
-# Stage 1: SaFD-00/{short}-{slug}stage1-{mode}-world-model-epoch{E}
+# Stage 1: SaFD-00/{short}-{slug}world-model-stage1-{mode}-epoch{E}
+#   ex: SaFD-00/qwen2.5-vl-7b-ac-world-model-stage1-full-epoch1
 hf_repo_id_stage1() {
   local model_short="$1" ds="$2" mode="$3" epoch="$4"
-  printf 'SaFD-00/%s-%sstage1-%s-world-model-epoch%s' \
+  printf 'SaFD-00/%s-%sworld-model-stage1-%s-epoch%s' \
     "$model_short" "${HF_SLUG[$ds]}" "$mode" "$epoch"
 }
 
-# Stage 2: SaFD-00/{short}-{slug}stage2-{variant_suffix}-epoch{E}
-#   variant_suffix ∈ {"base", "{mode}-world-model"}
-hf_repo_id_stage2() {
-  local model_short="$1" ds="$2" variant_suffix="$3" epoch="$4"
-  printf 'SaFD-00/%s-%sstage2-%s-epoch%s' \
-    "$model_short" "${HF_SLUG[$ds]}" "$variant_suffix" "$epoch"
+# Stage 2 (base variant):
+#   SaFD-00/{short}-{slug}base-stage2-{mode2}-epoch{E2}
+#   ex: SaFD-00/qwen2.5-vl-7b-ac-base-stage2-full-epoch1
+hf_repo_id_stage2_base() {
+  local model_short="$1" ds="$2" mode2="$3" epoch2="$4"
+  printf 'SaFD-00/%s-%sbase-stage2-%s-epoch%s' \
+    "$model_short" "${HF_SLUG[$ds]}" "$mode2" "$epoch2"
+}
+
+# Stage 2 (world-model variant — Stage 1 계보 포함):
+#   SaFD-00/{short}-{slug}world-model-stage1-{mode1}-epoch{E1}-stage2-{mode2}-epoch{E2}
+#   ex: SaFD-00/qwen2.5-vl-7b-ac-world-model-stage1-full-epoch3-stage2-lora-epoch1
+hf_repo_id_stage2_world_model() {
+  local model_short="$1" ds="$2" mode1="$3" epoch1="$4" mode2="$5" epoch2="$6"
+  printf 'SaFD-00/%s-%sworld-model-stage1-%s-epoch%s-stage2-%s-epoch%s' \
+    "$model_short" "${HF_SLUG[$ds]}" "$mode1" "$epoch1" "$mode2" "$epoch2"
 }
 
 # --- Local merged 디렉토리 경로 ---------------------------------------------
 # stage1: merged/{MODEL}_stage1_{MODE}/epoch-{E}
 # stage2: merged/{MODEL}_stage2_{variant_key}/epoch-{E}
-#   variant_key 예: "lora_base", "lora_world_model_from_full" 등 adapter dir suffix.
+#   variant_key 예: "{full|lora}_base", "{full|lora}_world_model_from_{full|lora}".
 local_merged_epoch_dir() {
   local stage="$1" model_short="$2" ds="$3" variant_key="$4" epoch="$5"
   case "$stage" in
@@ -336,4 +366,47 @@ local_merged_epoch_dir() {
               "$BASE_DIR" "$ds" "$model_short" "$variant_key" "$epoch" ;;
     *) echo "[!] local_merged_epoch_dir: unknown stage '$stage'" >&2; return 1 ;;
   esac
+}
+
+# --- Variant 유효성 체크 + 기본값 ---------------------------------------------
+# Stage 1 변형: base, full_world_model, lora_world_model
+STAGE1_ALL_VARIANTS=(base full_world_model lora_world_model)
+# Stage 2 변형: base, full_base, lora_base, full_world_model, lora_world_model
+STAGE2_ALL_VARIANTS=(base full_base lora_base full_world_model lora_world_model)
+
+# Stage 1 variants 를 지정하지 않았으면 전체를 사용. 잘못된 항목은 error.
+resolve_stage1_variants() {
+  if [[ "${#VARIANTS[@]}" -eq 0 ]]; then
+    VARIANTS=("${STAGE1_ALL_VARIANTS[@]}")
+    return
+  fi
+  for v in "${VARIANTS[@]}"; do
+    local ok=0
+    for allowed in "${STAGE1_ALL_VARIANTS[@]}"; do
+      if [[ "$v" == "$allowed" ]]; then ok=1; break; fi
+    done
+    if (( ok == 0 )); then
+      echo "Error: unknown stage1 variant '$v'." >&2
+      echo "Allowed: ${STAGE1_ALL_VARIANTS[*]}" >&2
+      exit 2
+    fi
+  done
+}
+
+resolve_stage2_variants() {
+  if [[ "${#VARIANTS[@]}" -eq 0 ]]; then
+    VARIANTS=("${STAGE2_ALL_VARIANTS[@]}")
+    return
+  fi
+  for v in "${VARIANTS[@]}"; do
+    local ok=0
+    for allowed in "${STAGE2_ALL_VARIANTS[@]}"; do
+      if [[ "$v" == "$allowed" ]]; then ok=1; break; fi
+    done
+    if (( ok == 0 )); then
+      echo "Error: unknown stage2 variant '$v'." >&2
+      echo "Allowed: ${STAGE2_ALL_VARIANTS[*]}" >&2
+      exit 2
+    fi
+  done
 }

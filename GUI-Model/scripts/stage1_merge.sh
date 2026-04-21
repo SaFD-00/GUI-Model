@@ -13,7 +13,7 @@
 #   - unsloth:      scripts/_unsloth_merge.py --mode {full|lora}
 #
 # HF repo id 규칙 (단일 정의: _common.sh::hf_repo_id_stage1):
-#   SaFD-00/{short}-{slug}stage1-{MODE}-world-model-epoch{E}
+#   SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}
 #
 # 로컬 산출물 (사용자 정책: 전부 보존):
 #   outputs/{DS}/merged/{MODEL}_stage1_{MODE}/epoch-{E}/

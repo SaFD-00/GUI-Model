@@ -57,6 +57,32 @@ def feature_to_jsonable(feat: tuple[str, list]) -> object | None:
     return None
 
 
+def extract_primary_app(actions_field: object) -> str | None:
+    """Return the app_name of the first ``open_app`` action in ``actions_field``.
+
+    Used downstream to assign each episode a single "primary app" label for
+    in-domain / out-of-domain split construction. Returns ``None`` when the
+    episode has no ``open_app`` action or the field is missing/malformed.
+    """
+    if actions_field is None:
+        return None
+    items = actions_field if isinstance(actions_field, list) else [actions_field]
+    for raw in items:
+        if not isinstance(raw, str):
+            continue
+        try:
+            a = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(a, dict):
+            continue
+        if str(a.get("action_type", "")).lower() == "open_app":
+            name = a.get("app_name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Extract AndroidControl per-episode metadata to JSONL."
@@ -137,6 +163,8 @@ def main() -> None:
                         if val is not None:
                             record[name] = val
                         seen_keys.add(name)
+
+                    record["primary_app"] = extract_primary_app(record.get("actions"))
 
                     fout.write(json.dumps(record, ensure_ascii=False))
                     fout.write("\n")

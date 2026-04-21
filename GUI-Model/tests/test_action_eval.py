@@ -22,6 +22,7 @@ import importlib
 _action_eval = importlib.import_module("_action_eval")
 evaluate_single = _action_eval.evaluate_single
 evaluate_predictions = _action_eval.evaluate_predictions
+evaluate_pairs = _action_eval.evaluate_pairs
 parse_action = _action_eval.parse_action
 
 
@@ -440,6 +441,57 @@ class ParseAction(unittest.TestCase):
             parse_action('\n\n```json\n\n{"type":"click","index":"9"}\n\n```\n'),
             {"type": "click", "index": "9"},
         )
+
+
+class IdOodAggregation(unittest.TestCase):
+    """evaluate_pairs 로 ID + OOD 통합 집계가 올바른지 검증."""
+
+    def _mk_pairs(self, specs):
+        gt_entries, pred_entries = [], []
+        for gt, pred_text in specs:
+            gt_entries.append({"messages": [{"from": "gpt", "value": json.dumps(gt)}]})
+            pred_entries.append({"predict": pred_text})
+        return gt_entries, pred_entries
+
+    def test_overall_equals_concat_of_id_and_ood(self):
+        id_specs = [
+            ({"type": "click", "index": "3"}, '{"type":"click","index":"3"}'),     # correct
+            ({"type": "click", "index": "4"}, '{"type":"click","index":"9"}'),     # wrong index
+        ]
+        ood_specs = [
+            ({"type": "scroll", "direction": "down"}, '{"type":"scroll","direction":"up"}'),   # wrong dir
+            ({"type": "navigate_back"}, '{"type":"navigate_back"}'),                            # correct
+        ]
+        gt_id, pr_id = self._mk_pairs(id_specs)
+        gt_ood, pr_ood = self._mk_pairs(ood_specs)
+
+        m_id = evaluate_pairs(gt_id, pr_id)
+        m_ood = evaluate_pairs(gt_ood, pr_ood)
+        m_all = evaluate_pairs(gt_id + gt_ood, pr_id + pr_ood)
+
+        self.assertEqual(m_id["total"], 2)
+        self.assertEqual(m_ood["total"], 2)
+        self.assertEqual(m_all["total"], 4)
+        # overall step_accuracy = (1 + 1) / 4 = 0.5
+        self.assertAlmostEqual(m_all["step_accuracy"], 0.5, places=4)
+        # in_domain: 1 of 2 correct → 0.5; out_of_domain: 1 of 2 → 0.5
+        self.assertAlmostEqual(m_id["step_accuracy"], 0.5, places=4)
+        self.assertAlmostEqual(m_ood["step_accuracy"], 0.5, places=4)
+
+    def test_per_type_counts_merge_across_splits(self):
+        id_specs = [
+            ({"type": "click", "index": "1"}, '{"type":"click","index":"1"}'),
+            ({"type": "click", "index": "2"}, '{"type":"click","index":"2"}'),
+        ]
+        ood_specs = [
+            ({"type": "click", "index": "9"}, '{"type":"click","index":"0"}'),
+        ]
+        gt_id, pr_id = self._mk_pairs(id_specs)
+        gt_ood, pr_ood = self._mk_pairs(ood_specs)
+        m_all = evaluate_pairs(gt_id + gt_ood, pr_id + pr_ood)
+        self.assertEqual(m_all["per_type"]["click"]["count"], 3)
+        # 2 correct out of 3
+        self.assertAlmostEqual(m_all["per_type"]["click"]["step_acc"], 2 / 3, places=4)
 
 
 if __name__ == "__main__":

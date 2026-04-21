@@ -5,22 +5,16 @@ Standalone Hungarian/BLEU/ROUGE evaluator for Stage 1 World-Modeling predictions
 Ported from gui-model.ipynb Cell 55+56. Used by scripts/stage1_eval.sh
 and can be re-run from notebook Cell 56 with identical results.
 
-Subcommands
------------
+Subcommand
+----------
 score   : 단일 prediction.jsonl 의 평균 메트릭 계산 → hungarian_metrics.json 저장
-select  : 여러 checkpoint 평가 결과를 비교해 winner 를 BEST_CHECKPOINT 파일에 기록
 
-Examples
---------
+Example
+-------
   python scripts/_hungarian_eval.py score \\
       --test  data/AndroidControl/gui-model_stage1_test.jsonl \\
-      --pred  outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-1055/generated_predictions.jsonl \\
-      --output outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/checkpoint-1055/hungarian_metrics.json
-
-  python scripts/_hungarian_eval.py select \\
-      --eval-dir  outputs/AC/eval/{MODEL}/stage1_eval/full_world_model \\
-      --train-dir outputs/AC/adapters/{MODEL}_stage1_full \\
-      --metric    avg_hungarian_f1
+      --pred  outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/epoch-1/generated_predictions.jsonl \\
+      --output outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/epoch-1/hungarian_metrics.json
 """
 from __future__ import annotations
 
@@ -31,8 +25,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-# bs4 / munkres 는 score 서브커맨드에서만 사용. select 는 미설치 환경에서도 돌아야 하므로
-# 지연 로딩 (매크로 import 대신 _lazy_deps() 호출).
+# bs4 / munkres 는 score 서브커맨드에서만 사용. 지연 로딩.
 BeautifulSoup = None  # type: ignore
 Munkres = None  # type: ignore
 
@@ -280,139 +273,8 @@ def _cmd_score(args):
     return 0
 
 
-def _ckpt_step(name: str) -> int:
-    """'checkpoint-1234' or 'epoch-3' → 1234 or 3. 그 외 → -1."""
-    try:
-        return int(name.split("-", 1)[1])
-    except (IndexError, ValueError):
-        return -1
-
-
-def _cmd_select(args):
-    eval_dir  = Path(args.eval_dir)
-    train_dir = Path(args.train_dir)
-    metric    = args.metric
-    hf_repo_template = getattr(args, "hf_repo_template", None)
-
-    # epoch-*/ 우선, 하위호환으로 checkpoint-*/ 지원.
-    # eval_dir = outputs/{DS}/eval/{MODEL}/stage1_eval/{MODE}_world_model/
-    matches = sorted(eval_dir.glob("epoch-*/hungarian_metrics.json"),
-                     key=lambda p: _ckpt_step(p.parent.name))
-    if not matches:
-        matches = sorted(eval_dir.glob("checkpoint-*/hungarian_metrics.json"),
-                         key=lambda p: _ckpt_step(p.parent.name))
-
-    candidates = []
-    for mpath in matches:
-        try:
-            with open(mpath, 'r', encoding='utf-8') as f:
-                m = json.load(f)
-        except Exception as e:
-            print(f"[select] WARN: skip {mpath} ({e})", file=sys.stderr)
-            continue
-        name = mpath.parent.name
-        # epoch-* 면 epoch 번호를 직접 파싱. checkpoint-* 면 None (step 만 보유).
-        epoch = _ckpt_step(name) if name.startswith("epoch-") else None
-        candidates.append({
-            "checkpoint": name,
-            "step": _ckpt_step(name),
-            "epoch": epoch,
-            "metrics_path": str(mpath),
-            metric: m.get(metric, 0.0),
-            "avg_bleu": m.get("avg_bleu", 0.0),
-            "avg_rouge_l": m.get("avg_rouge_l", 0.0),
-            "avg_hungarian_f1": m.get("avg_hungarian_f1", 0.0),
-            "avg_hungarian_ea": m.get("avg_hungarian_ea", 0.0),
-            "exact_match_rate": m.get("exact_match_rate", 0.0),
-            "total": m.get("total", 0),
-        })
-
-    if not candidates:
-        print(f"[select] ERROR: no metrics found under {eval_dir}/{{epoch,checkpoint}}-*/",
-              file=sys.stderr)
-        return 2
-
-    # Optional: Baseline (비교용) 로드 — eval_dir 의 형제 디렉토리 base/ 에 위치
-    baseline_path = eval_dir.parent / "base" / "hungarian_metrics.json"
-    baseline = None
-    if baseline_path.exists():
-        try:
-            with open(baseline_path, 'r', encoding='utf-8') as f:
-                baseline = json.load(f)
-        except Exception:
-            baseline = None
-
-    # Optional: trainer_state.json 에서 epoch 별 eval_loss 추출 (교차확인용)
-    tstate_path = train_dir / "trainer_state.json"
-    eval_loss_by_step = {}
-    if tstate_path.exists():
-        try:
-            with open(tstate_path, 'r', encoding='utf-8') as f:
-                tstate = json.load(f)
-            for ev in tstate.get("log_history", []):
-                if "eval_loss" in ev and "step" in ev:
-                    eval_loss_by_step[int(ev["step"])] = float(ev["eval_loss"])
-        except Exception:
-            pass
-    for c in candidates:
-        c["eval_loss"] = eval_loss_by_step.get(c["step"])
-
-    # winner 선정: metric 최고값, 동률 시 step 큰 쪽
-    winner = max(candidates, key=lambda c: (c[metric], c["step"]))
-
-    # 요약 테이블 출력
-    print(f"[select] metric = {metric}  (tie-breaker: larger step)")
-    print(f"[select] eval_dir={eval_dir}")
-    header = f"{'checkpoint':<20} {'step':>7} {metric:>20} {'avg_bleu':>10} {'rouge_l':>10} {'EM%':>6} {'eval_loss':>10}"
-    print(header)
-    print("-" * len(header))
-    if baseline is not None:
-        print(f"{'baseline (0-shot)':<20} {'-':>7} {baseline.get(metric, 0.0):>20.4f} "
-              f"{baseline.get('avg_bleu', 0.0):>10.4f} {baseline.get('avg_rouge_l', 0.0):>10.4f} "
-              f"{baseline.get('exact_match_rate', 0.0)*100:>6.2f} {'-':>10}")
-    for c in candidates:
-        mark = "  <-- winner" if c is winner else ""
-        el_str = f"{c['eval_loss']:.4f}" if c["eval_loss"] is not None else "-"
-        print(f"{c['checkpoint']:<20} {c['step']:>7} {c[metric]:>20.4f} "
-              f"{c['avg_bleu']:>10.4f} {c['avg_rouge_l']:>10.4f} "
-              f"{c['exact_match_rate']*100:>6.2f} {el_str:>10}{mark}")
-
-    # --hf-repo-template 가 주어지면 각 candidate 와 winner 에 hf_repo_id 주입.
-    if hf_repo_template:
-        for c in candidates:
-            if c["epoch"] is not None:
-                c["hf_repo_id"] = hf_repo_template.replace("{epoch}", str(c["epoch"]))
-        if winner["epoch"] is not None:
-            winner_repo_id = hf_repo_template.replace("{epoch}", str(winner["epoch"]))
-        else:
-            winner_repo_id = None
-    else:
-        winner_repo_id = None
-
-    # BEST_CHECKPOINT 기록
-    train_dir.mkdir(parents=True, exist_ok=True)
-    (train_dir / "BEST_CHECKPOINT").write_text(winner["checkpoint"] + "\n", encoding='utf-8')
-    summary = {
-        "selected": winner["checkpoint"],
-        "epoch": winner["epoch"],
-        "hf_repo_id": winner_repo_id,
-        "metric": metric,
-        "metric_value": winner[metric],
-        "baseline": baseline,
-        "candidates": candidates,
-    }
-    (train_dir / "BEST_CHECKPOINT.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
-    print(f"[select] winner = {winner['checkpoint']}  ({metric}={winner[metric]:.4f})")
-    if winner_repo_id:
-        print(f"[select] hf_repo_id = {winner_repo_id}")
-    print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT'}")
-    print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT.json'}")
-    return 0
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Stage 1 Hungarian/BLEU/ROUGE evaluator + winner selector")
+    parser = argparse.ArgumentParser(description="Stage 1 Hungarian/BLEU/ROUGE evaluator")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_score = sub.add_parser("score", help="Compute metrics for a single prediction jsonl")
@@ -420,18 +282,6 @@ def main():
     p_score.add_argument("--pred", required=True, help="Model prediction jsonl (generated_predictions.jsonl)")
     p_score.add_argument("--output", required=True, help="Output metrics.json path")
     p_score.set_defaults(func=_cmd_score)
-
-    p_sel = sub.add_parser("select", help="Select winner checkpoint by metric")
-    p_sel.add_argument("--eval-dir", required=True,
-                       help="Directory containing epoch-*/ or checkpoint-*/ hungarian_metrics.json (sibling base/ is read if present)")
-    p_sel.add_argument("--train-dir", required=True,
-                       help="Training output_dir where BEST_CHECKPOINT will be written")
-    p_sel.add_argument("--metric", default="avg_hungarian_f1",
-                       help="Metric key to maximize (default: avg_hungarian_f1)")
-    p_sel.add_argument("--hf-repo-template", default=None, dest="hf_repo_template",
-                       help="Optional HF repo id template with '{epoch}' placeholder. "
-                            "When provided, winner/candidate hf_repo_id is written to BEST_CHECKPOINT.json.")
-    p_sel.set_defaults(func=_cmd_select)
 
     args = parser.parse_args()
     return args.func(args)

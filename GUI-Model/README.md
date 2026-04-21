@@ -146,18 +146,43 @@ data/
     └── images/
 ```
 
-train/test split 생성:
+Stage 2 는 **앱 도메인 일반화** 평가를 위해 **in-domain / out-of-domain** test 로 분리한다. 흐름:
 
 ```bash
-python scripts/split_data.py --dataset MobiBench
-python scripts/split_data.py --dataset AndroidControl
+# 1) 에피소드 메타데이터 (primary_app) 추출 — split 의 입력.
+python scripts/extract_androidcontrol_metadata.py \
+    --output data/AndroidControl/episodes_meta.jsonl
+python scripts/extract_mobibench_metadata.py \
+    --output data/MobiBench/episodes_meta.jsonl
+
+# 2) Stage 1 random split + Stage 2 ID/OOD split 일괄 생성.
+python scripts/split_data.py --dataset AndroidControl                       # 기본: train 50K / test_id 3K / test_ood 3K
+python scripts/split_data.py --dataset MobiBench \
+    --stage2-train-size 2500 --stage2-test-id-size 150 --stage2-test-ood-size 150
 ```
 
-현재 코드 기준 분할 규칙:
+분할 규칙:
 
-- Stage 1: random split
-- Stage 2: action type 기준 stratified split
-- `AndroidControl` Stage 2: `split_data.py` 기본값으로 `30000`개 stratified subsample 후 split
+- **Stage 1**: random split (`--stage1-ratio`, 기본 0.95).
+- **Stage 2**: app-level **ID/OOD** split.
+  - 앱 집합을 셔플 → OOD 버킷이 `--stage2-test-ood-size` 행 수를 채울 때까지 먼저 할당, 나머지는 ID 버킷.
+  - ID 풀에서 `test_id_size` 행을 action-type stratified 로 샘플 → 나머지 + null-app 행을 합쳐 `train_size` 로 stratified subsample (largest-remainder).
+  - OOD 풀에서 `test_ood_size` 행을 action-type stratified 로 샘플.
+  - `primary_app` 은 AC 는 첫 `open_app` action 의 `app_name`, MB 는 `OpenApp` action 이 있으면 그 값, 없으면 task 문구의 `"X app"` 패턴 regex.
+
+산출물:
+
+```
+data/{AndroidControl,MobiBench}/
+├── episodes_meta.jsonl              # {episode_id, primary_app, goal, ...}
+├── gui-model_stage1_{train,test}.jsonl
+├── gui-model_stage2_train.jsonl
+├── gui-model_stage2_test_id.jsonl   # train 에 등장한 앱
+├── gui-model_stage2_test_ood.jsonl  # train 에 없는 앱
+└── gui-model_stage2_test.jsonl      # LEGACY — 새 파이프라인에서는 미사용
+```
+
+> **레거시 파일 안내**: 기존 `gui-model_stage2_test.jsonl` 은 더 이상 쓰이지 않는다. `_action_eval.py` 가 `_id.jsonl` + `_ood.jsonl` 로부터 `overall` 섹션을 합산하므로 남겨두어도 무해하지만, 디스크 절약이 필요하면 `rm` 해도 된다.
 
 ## 실행 방법
 
@@ -172,69 +197,70 @@ python scripts/split_data.py --dataset AndroidControl
 
 1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성 (Stage 1 full · lora 학습용 + Stage 2 base · world-model-full · world-model-lora 학습용 · merge 용). **Stage 1 eval YAML 은 더 이상 생성하지 않는다** (쉘 스크립트가 HF Hub merged 모델을 직접 sweep).
 2. Section 1-2: `dataset_info.json` 등록
-3. Section 3: Stage 1 학습 (노트북 셀은 default=full 기준. LoRA 는 아래 쉘 스크립트 사용)
+3. Section 3: Stage 1 학습 (노트북 셀은 default=full. LoRA 는 쉘 스크립트 `--stage1-mode lora`)
 4. Section 4: **Stage 1 merge (모든 epoch 을 각각 merge + HF Hub push)**
-5. Section 5: **Stage 1 평가 (HF Hub 에서 `EPOCHS` 리스트에 지정된 merged 모델 pull) 및 winner 선택**
-6. Section 6: Stage 2 학습 (world-model variant 는 상류 Stage 1 winner epoch 의 local merged 를 base 로 사용 — `BEST_CHECKPOINT.json.epoch` 자동 해석)
+5. Section 5: **Stage 1 평가 (HF Hub 에서 `--epochs` 지정 merged 모델 pull). winner 자동 선정 없음 — 사용자가 결과를 보고 Stage 2 에 사용할 epoch 을 수동 결정.**
+6. Section 6: Stage 2 학습 (world-model variant 는 `--stage1-epoch N` 으로 상류 Stage 1 epoch 의 local merged 를 base 로 사용)
 7. Section 7: **Stage 2 merge (variant × 모든 epoch 각각 merge + HF Hub push)**
-8. Section 8: **Stage 2 평가 (HF Hub pull sweep, `EPOCHS` 리스트 기반) 및 winner 선택**
+8. Section 8: **Stage 2 평가 (HF Hub pull sweep, ID+OOD 동시. `action_metrics.json` 에 overall/in_domain/out_of_domain 3 섹션)**
 
 ### 2. shell script 경로
 
 shell script 는 notebook 으로 한 번 생성된 **학습/merge YAML** 과 `LlamaFactory/data/dataset_info.json` 이 이미 있다는 전제에서 동작한다. **Stage 1 eval 은 YAML 을 사용하지 않고 쉘 스크립트가 직접 HF Hub merged 모델을 sweep 한다.**
 
-Stage 1 은 `--stage1-mode full|lora` 플래그로 finetuning 방식을 선택한다 (기본: `full`). Stage 2 스크립트도 같은 플래그를 받아 world-model variant 의 상류 Stage 1 소스를 결정한다.
+Stage 1 은 `--stage1-mode full|lora` (기본 `full`), Stage 2 는 `--stage2-mode full|lora` (기본 `lora`) 로 finetuning 방식을 선택한다. world-model variant 학습·머지·평가는 `--stage1-epoch N` 으로 사용할 Stage 1 epoch 을 직접 지정한다 (자동 winner 선정은 없다).
 
 ```bash
-# Stage 1 Full FT (default) — 표준 순서: train → merge → eval
+# Stage 1 Full FT — train → merge → eval
 bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset MB
-bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset MB                     # 모든 epoch push
-bash scripts/stage1_eval.sh  --model qwen3-vl-8b --dataset MB --epochs 1,2,3      # HF Hub sweep + winner
+bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset MB                                # 모든 epoch push
+bash scripts/stage1_eval.sh  --model qwen3-vl-8b --dataset MB \
+     --variants base,full_world_model --epochs 1,2,3                                         # HF Hub sweep
 
-# Stage 1 LoRA
+# Stage 1 LoRA (Gemma-4 예시)
 bash scripts/stage1_train.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
 bash scripts/stage1_merge.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
-bash scripts/stage1_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora --epochs 1,2,3
+bash scripts/stage1_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora \
+     --variants base,lora_world_model --epochs 1,2,3
 
-# Stage 2 — world-model variant 가 Stage 1 full winner 를 base 로 사용
-bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset MB
-bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB
-bash scripts/stage2_eval.sh  --model qwen3-vl-8b --dataset MB --epochs 1,2,3
+# Stage 2 — world-model variant 가 Stage 1 full epoch 3 을 base 로 사용, Stage 2 LoRA
+bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset MB \
+     --stage1-mode full --stage1-epoch 3 --stage2-mode lora
+bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB \
+     --stage1-mode full --stage1-epoch 3 --stage2-mode lora
+bash scripts/stage2_eval.sh  --model qwen3-vl-8b --dataset MB \
+     --stage1-mode full --stage1-epoch 3 --stage2-mode lora \
+     --variants base,lora_base,lora_world_model --epochs 1,2,3
 
-# Stage 2 — world-model variant 가 Stage 1 lora winner 를 base 로 사용
-bash scripts/stage2_train.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
-bash scripts/stage2_merge.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
-bash scripts/stage2_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora --epochs 1,2,3
+# Stage 2 Full FT
+bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset MB \
+     --stage1-mode full --stage1-epoch 3 --stage2-mode full
 ```
 
-> `--epochs` 생략 시 기본값 `1,2,3` 이 적용된다. 학습한 `num_train_epochs` 와 다른 값을 쓰려면 명시해야 한다 (예: `--epochs 3` 으로 최종 epoch 만 평가).
+> `--epochs` 생략 시 기본 `1,2,3` 이 적용된다.
+> `--variants` 생략 시 `stage1_eval.sh` 는 `base,full_world_model,lora_world_model`, `stage2_eval.sh` 는 `base,full_base,lora_base,full_world_model,lora_world_model` 전체를 돈다.
 
-> **재실행 시 skip**: `stage{1,2}_eval*.sh` 는 각 unit (baseline / epoch 별 sweep / winner select) 의 marker 파일이 이미 존재하면 해당 unit 을 재실행하지 않고 `[=] ... skip (already done): ...` 로그만 남긴다. Marker 는 Stage 1 은 `hungarian_metrics.json`, Stage 2 는 `action_metrics.json`, winner 는 `BEST_CHECKPOINT.json`. 강제 재평가는 해당 파일을 `rm` 한 뒤 재실행.
+> **재실행 시 skip**: `stage{1,2}_eval.sh` 는 각 unit 의 marker 파일 (`hungarian_metrics.json` / `action_metrics.json`) 이 이미 존재하면 건너뛰고 `[=] ... skip (already done): ...` 로그만 남긴다. 강제 재평가는 해당 파일을 `rm` 후 재실행.
 
-> **분할 스크립트**: 필요에 따라 baseline 만 / world-model sweep 만 분리 실행할 수 있다.
-> - `scripts/stage1_eval_base.sh`, `scripts/stage2_eval_base.sh` — Phase A (zero-shot baseline) 단독
-> - `scripts/stage1_eval_world_model.sh`, `scripts/stage2_eval_world_model.sh` — Phase B + C (HF Hub sweep + winner select) 단독
-> 플래그는 `stage{1,2}_eval.sh` 와 동일하며, skip 동작도 같다.
-
-지원 플래그:
+지원 플래그 (전체):
 
 - `--model MODEL`: 모델 short_name 또는 `all` (기본: `all`)
 - `--dataset DS`: `MB` | `AC` | `all` (기본: `all`)
-- `--stage1-mode MODE`: `full` | `lora` (기본: `full`)
-- `--epochs LIST`: 콤마로 구분된 epoch 정수 리스트 (기본: `1,2,3`). `stage{1,2}_eval.sh` 전용 — HF Hub merged repo sweep 대상. 다른 스크립트에서는 parse 만 되고 무시된다.
-- `-h`, `--help`: 도움말
+- `--stage1-mode MODE`: `full` | `lora` (기본: `full`) — Stage 1 학습/merge 방식 및 world-model 상류 소스
+- `--stage2-mode MODE`: `full` | `lora` (기본: `lora`) — Stage 2 학습/merge 방식 (stage2 스크립트 전용)
+- `--stage1-epoch N`: Stage 2 world-model variant 에서 참조할 상류 Stage 1 epoch (stage2 전용)
+- `--epochs LIST`: 콤마 구분 정수 (기본 `1,2,3`), `stage{1,2}_eval.sh` 의 HF Hub sweep 대상 stage2 epoch
+- `--variants LIST`: 콤마 구분 평가 변형 목록 (`stage{1,2}_eval.sh` 전용)
 
 주요 동작:
 
-표준 실행 순서는 **train → merge → eval** 다. merge 가 모든 epoch checkpoint 를 각각 local merge + HF Hub push 하고, eval 이 `--epochs` 로 지정된 epoch 리스트만큼 HF Hub 에서 merged 모델을 pull 해서 sweep + winner 선정한다. `HF_TOKEN` 은 merge/eval 모두에 필요하다 (private repo 포함).
-
-- `stage1_merge.sh` 는 `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/checkpoint-*/` 전수 loop 로 각 ckpt 의 `trainer_state.json` 에서 epoch 을 파싱해 `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/epoch-{E}/` 로 local merge + HF Hub 에 `SaFD-00/{short}-{slug}stage1-{full|lora}-world-model-epoch{E}` 로 push 한다. LF LoRA 모드는 임시 merge YAML 에 `adapter_name_or_path` + `finetuning_type: lora` 블록을 삽입.
-- `stage1_eval.sh` 는 (a) baseline zero-shot 과 (b) `--epochs` 리스트 기반 **HF Hub repo sweep** 을 수행한다 (`--model_name_or_path <HF repo id>`. merged 이므로 adapter 인자 불필요, 로컬 checkpoint 디렉토리도 조회하지 않는다).
-  - 결과: `outputs/{DS}/eval/{MODEL}/stage1_eval/{base, {full|lora}_world_model/epoch-{E}}/`
-  - `avg_hungarian_f1` 기준 winner 를 `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/BEST_CHECKPOINT[.json]` 에 기록 (JSON 에는 `epoch`, `hf_repo_id` 필드 포함).
-- `stage2_train.sh` 는 `{MODEL}_base.yaml` + `{MODEL}_world-model-{full|lora}.yaml` 두 variant 를 학습한다. world-model variant 는 Stage 1 `BEST_CHECKPOINT.json.epoch` 을 읽어 **로컬** `merged/{MODEL}_stage1_{MODE}/epoch-{Ewin}/` 을 base 로 사용 (YAML 의 `model_name_or_path` 를 런타임에 sed 로 치환).
-- `stage2_merge.sh` 는 variant × 전 epoch 를 각각 merge + HF Hub push 한다 (`SaFD-00/...stage2-{base|{MODE}-world-model}-epoch{E}`).
-- `stage2_eval.sh` 는 (a) baseline zero-shot 과 (b) variant × `--epochs` 리스트 기반 HF Hub repo sweep 을 수행 (로컬 adapter/merged 디렉토리 미참조). `step_accuracy` 기준 winner 를 각 adapter 디렉토리의 `BEST_CHECKPOINT[.json]` 에 기록 (Step Accuracy 정의: `ARCHITECTURE.md` §6).
+- `stage1_merge.sh` 는 모든 `checkpoint-*/` 를 돌면서 `trainer_state.json.epoch` 기반으로 `merged/{MODEL}_stage1_${MODE}/epoch-{E}/` 로 local merge + HF 에 `SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}` 푸시.
+- `stage1_eval.sh` 는 `--variants` + `--epochs` 로 지정된 HF repo 를 pull 해 `hungarian_metrics.json` 을 산출한다. 어떤 epoch 으로 Stage 2 를 할지는 사용자가 결과를 보고 직접 결정한다.
+- `stage2_train.sh` 는 `stage2_{full|lora}/{MODEL}_{base,world-model-{full,lora}}.yaml` 을 학습한다. world-model variant 는 `--stage1-epoch N` 으로 지정된 로컬 `merged/{MODEL}_stage1_${STAGE1_MODE}/epoch-${N}/` 를 base 로 사용 (YAML `model_name_or_path` 런타임 sed 치환).
+- `stage2_merge.sh` 는 각 epoch 를 merge + HF push:
+  - base variant: `SaFD-00/{short}-{slug}base-stage2-{MODE2}-epoch{E2}`
+  - world-model: `SaFD-00/{short}-{slug}world-model-stage1-{MODE1}-epoch{E1}-stage2-{MODE2}-epoch{E2}`
+- `stage2_eval.sh` 는 ID + OOD 테스트 파일 (`gui-model_stage2_test_{id,ood}.jsonl`) 을 **동시에** 추론하고 `_action_eval.py score` 가 `overall` / `in_domain` / `out_of_domain` 3 섹션을 한 `action_metrics.json` 에 기록한다. Step Accuracy 정의는 `ARCHITECTURE.md` §6 참고.
 
 ## 산출물
 
@@ -243,31 +269,43 @@ bash scripts/stage2_eval.sh  --model gemma-4-e2b --dataset MB --stage1-mode lora
 ```
 GUI-Model/outputs/{MB|AC}/
 ├── adapters/
-│   ├── {model_short_name}_stage1_full/                          # Stage 1 full FT 체크포인트 + BEST_CHECKPOINT[.json]
-│   ├── {model_short_name}_stage1_lora/                          # Stage 1 LoRA 체크포인트 + BEST_CHECKPOINT[.json]
-│   ├── {model_short_name}_stage2_lora_base/                     # Stage 2 LoRA (base) 체크포인트 + BEST_CHECKPOINT[.json]
-│   ├── {model_short_name}_stage2_lora_world_model_from_full/    # Stage 2 LoRA (상류=S1 full)
-│   └── {model_short_name}_stage2_lora_world_model_from_lora/    # Stage 2 LoRA (상류=S1 lora)
-├── eval/{model_short_name}/                                      # 중첩 유지 (epoch-{E} 서브폴더)
-│   ├── stage1_eval/{base, {full|lora}_world_model/epoch-{E}}/    # generated_predictions, hungarian_metrics
-│   └── stage2_eval/{base, lora_base/epoch-{E}, lora_world_model_from_{full|lora}/epoch-{E}}/
+│   ├── {model}_stage1_{full,lora}/                                       # Stage 1 체크포인트 (epoch 단위 저장)
+│   ├── {model}_stage2_{full,lora}_base/                                  # Stage 2 base (finetuning_type=full|lora)
+│   └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/          # Stage 2 world-model (Stage2 mode × Stage1 mode)
+├── eval/{model}/
+│   ├── stage1_eval/{base, {full,lora}_world_model/epoch-{E}}/            # generated_predictions, hungarian_metrics
+│   └── stage2_eval/{base,
+│                     {full,lora}_base/epoch-{E},
+│                     {full,lora}_world_model_from_{full,lora}_ep{E1}/epoch-{E2}}/
+│                                                                         # generated_predictions_{id,ood}, action_metrics (overall+id+ood)
 └── merged/
-    ├── {model_short_name}_stage1_full/epoch-{E}/                # Stage 1 full-FT 병합 (epoch 별)
-    ├── {model_short_name}_stage1_lora/epoch-{E}/                # Stage 1 LoRA 병합 (epoch 별)
-    ├── {model_short_name}_stage2_lora_base/epoch-{E}/           # Stage 2 LoRA (base) 병합 (epoch 별)
-    ├── {model_short_name}_stage2_lora_world_model_from_full/epoch-{E}/
-    └── {model_short_name}_stage2_lora_world_model_from_lora/epoch-{E}/
+    ├── {model}_stage1_{full,lora}/epoch-{E}/
+    ├── {model}_stage2_{full,lora}_base/epoch-{E}/
+    └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/epoch-{E}/
 ```
 
 HF Hub 레포지토리 네이밍 (epoch 별 개별 repo):
 
-- `SaFD-00/{short}-{slug}stage1-full-world-model-epoch{E}`
-- `SaFD-00/{short}-{slug}stage1-lora-world-model-epoch{E}`
-- `SaFD-00/{short}-{slug}stage2-base-epoch{E}`                   (Stage 1 무관)
-- `SaFD-00/{short}-{slug}stage2-full-world-model-epoch{E}`       (상류=S1 full)
-- `SaFD-00/{short}-{slug}stage2-lora-world-model-epoch{E}`       (상류=S1 lora)
+- `SaFD-00/{short}-{slug}world-model-stage1-{full,lora}-epoch{E}`                       (Stage 1)
+- `SaFD-00/{short}-{slug}base-stage2-{full,lora}-epoch{E2}`                             (Stage 2 base, Stage 1 무관)
+- `SaFD-00/{short}-{slug}world-model-stage1-{M1}-epoch{E1}-stage2-{M2}-epoch{E2}`       (Stage 2 world-model, M1/M2 ∈ {full,lora})
 
-repo id 조립은 `scripts/_common.sh::hf_repo_id_stage{1,2}` 에 단일화되어 있다. `{E}` 는 각 checkpoint 의 `trainer_state.json` 에서 `int(round(epoch))` 로 추출한다.
+repo id 조립은 `scripts/_common.sh::hf_repo_id_stage1` / `hf_repo_id_stage2_base` / `hf_repo_id_stage2_world_model` 에 단일화되어 있다. `{E}` 는 각 checkpoint 의 `trainer_state.json` 에서 `int(round(epoch))` 로 추출.
+
+### 데이터셋 split 재생성
+
+Stage 2 는 앱 도메인 일반화를 측정하기 위해 **in-domain / out-of-domain** 두 test 파일을 사용한다. 메타 추출 + split 을 한 번 실행하면 `gui-model_stage2_{train,test_id,test_ood}.jsonl` 이 생성된다.
+
+```bash
+# 1) 메타데이터 (앱 분류용) 생성 — primary_app 필드 포함
+python scripts/extract_androidcontrol_metadata.py --output data/AndroidControl/episodes_meta.jsonl
+python scripts/extract_mobibench_metadata.py     --output data/MobiBench/episodes_meta.jsonl
+
+# 2) Stage 1 random split + Stage 2 ID/OOD split
+python scripts/split_data.py --dataset AndroidControl   # 기본: train 50K / test_id 3K / test_ood 3K
+python scripts/split_data.py --dataset MobiBench \
+    --stage2-train-size 2500 --stage2-test-id-size 150 --stage2-test-ood-size 150
+```
 
 ## 모델 추가 방법
 
@@ -289,7 +327,7 @@ python -m unittest tests.test_action_eval -v
 pytest tests/test_action_eval.py -v
 ```
 
-현재 46 케이스 — `parse_action` / `evaluate_single` / `evaluate_predictions` 의 주요 분기와 unknown type 집계·`cond_*` n=0·`predict`/`output` 키 fallback 을 커버한다. 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6.
+현재 48 케이스 — `parse_action` / `evaluate_single` / `evaluate_predictions` 의 주요 분기, unknown type 집계, `cond_*` n=0, `predict`/`output` fallback, ID+OOD 통합 집계를 커버한다. 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6.
 
 ## 코드 읽기 시작점
 

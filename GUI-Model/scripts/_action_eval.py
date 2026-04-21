@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """
-Standalone Stage 2 Action Prediction evaluator + winner selector.
+Standalone Stage 2 Action Prediction evaluator.
 
 본 스크립트의 정본은 ``gui-model.ipynb`` Cell 139 이며 두 곳의 채점 함수는
 글자 단위로 동일하게 유지된다. 메트릭은 AndroidControl 데이터셋의 실제 스키마
 (``bounds`` 필드 영구 부재, element-index 기반 grounding) 에 맞춘
 **Step Accuracy (SA)** 단일 1차 지표를 사용한다.
 
-Subcommands
------------
-score   : 단일 prediction.jsonl 에 대한 Action 메트릭 → action_metrics.json 저장
-select  : lora 변형별 여러 checkpoint 결과를 비교해 winner 를 BEST_CHECKPOINT 파일에 기록
+Subcommand
+----------
+score   : prediction.jsonl 대해 Action 메트릭 → action_metrics.json 저장
+          ID/OOD 파일이 주어지면 overall/in_domain/out_of_domain 3-섹션 출력.
 
 Examples
 --------
+  # 1. 기본 (단일 pair) — overall 만 기록
   python scripts/_action_eval.py score \\
-      --test   data/AndroidControl/gui-model_stage2_test.jsonl \\
-      --pred   outputs/AC/eval/{MODEL}/stage2_eval/lora_world_model/checkpoint-1360/generated_predictions.jsonl \\
-      --output outputs/AC/eval/{MODEL}/stage2_eval/lora_world_model/checkpoint-1360/action_metrics.json
+      --test   data/AndroidControl/gui-model_stage2_test_id.jsonl \\
+      --pred   .../epoch-1/generated_predictions_id.jsonl \\
+      --output .../epoch-1/action_metrics.json
 
-  python scripts/_action_eval.py select \\
-      --eval-dir  outputs/AC/eval/{MODEL}/stage2_eval/lora_world_model \\
-      --train-dir outputs/AC/adapters/{MODEL}_stage2_lora_world_model \\
-      --metric    step_accuracy
+  # 2. ID + OOD 동시 입력 — overall/in_domain/out_of_domain 3 섹션
+  python scripts/_action_eval.py score \\
+      --test-id   data/AndroidControl/gui-model_stage2_test_id.jsonl \\
+      --pred-id   .../epoch-1/generated_predictions_id.jsonl \\
+      --test-ood  data/AndroidControl/gui-model_stage2_test_ood.jsonl \\
+      --pred-ood  .../epoch-1/generated_predictions_ood.jsonl \\
+      --output    .../epoch-1/action_metrics.json
 
 Step Accuracy 정의 (요약)
 -------------------------
@@ -39,11 +43,6 @@ SA = (1/N) · Σ correct_i,  correct_i = 1 iff (parse_ok ∧ type==gt ∧ field_
   input           norm(params.text) 일치 (gt.index=null 무시)
 
   norm(s) = str(s or '').strip().lower()
-
-Reference baselines (보고용)
-  - type random baseline: 1/7 ≈ 14.3%
-  - scroll majority baseline (down): 79.0%
-  - finish.status constant baseline: 100% (해석 무의미)
 """
 from __future__ import annotations
 
@@ -91,7 +90,6 @@ def _norm(s):
 
 
 # ── Step Accuracy 채점 ───────────────────────────────────────────────────
-# field_match(type) 가 정의된 type 만 step_correct 로 인정. 그 외 type 은 False.
 _FIELD_MATCH_TYPES = {
     'navigate_back', 'finish', 'click', 'long_click',
     'scroll', 'open_app', 'input',
@@ -117,7 +115,6 @@ def evaluate_single(gt_action, pred_action):
     if not result['type_correct']:
         return result
 
-    # field_match
     if gt_type in ('navigate_back', 'finish'):
         result['step_correct'] = True
         return result
@@ -150,30 +147,37 @@ def evaluate_single(gt_action, pred_action):
         )
         return result
 
-    # unknown type — type 만 일치해도 step 은 False (정책)
     return result
 
 
-def evaluate_predictions(test_path, pred_path):
-    with open(test_path, 'r') as f:
-        gt_entries = [json.loads(line) for line in f if line.strip()]
-    with open(pred_path, 'r') as f:
-        pred_entries = [json.loads(line) for line in f if line.strip()]
+def _load_jsonl(path):
+    with open(path, 'r') as f:
+        return [json.loads(line) for line in f if line.strip()]
 
+
+def evaluate_pairs(gt_entries, pred_entries):
+    """Compute metrics for a pre-loaded list of (gt, pred) pairs."""
     if len(gt_entries) != len(pred_entries):
-        print(f"[warn] length mismatch: gt={len(gt_entries)} pred={len(pred_entries)} "
-              f"→ truncating to {min(len(gt_entries), len(pred_entries))}", file=sys.stderr)
+        print(
+            f"[warn] length mismatch: gt={len(gt_entries)} pred={len(pred_entries)}"
+            f" → truncating to {min(len(gt_entries), len(pred_entries))}",
+            file=sys.stderr,
+        )
 
-    results = []
     per_type = defaultdict(lambda: {
         'count': 0, 'type_correct': 0, 'step_correct': 0,
     })
     cond = {
-        'index': {'n': 0, 'k': 0},   # click + long_click
-        'dir':   {'n': 0, 'k': 0},   # scroll
-        'app':   {'n': 0, 'k': 0},   # open_app
-        'text':  {'n': 0, 'k': 0},   # input
+        'index': {'n': 0, 'k': 0},
+        'dir':   {'n': 0, 'k': 0},
+        'app':   {'n': 0, 'k': 0},
+        'text':  {'n': 0, 'k': 0},
     }
+
+    total = 0
+    parsed = 0
+    type_correct = 0
+    step_correct = 0
 
     for gt_entry, pred_entry in zip(gt_entries, pred_entries):
         gt_action = json.loads(gt_entry['messages'][-1]['value'])
@@ -182,8 +186,11 @@ def evaluate_predictions(test_path, pred_path):
 
         r = evaluate_single(gt_action, pred_action)
         gt_type = str(gt_action.get('type', 'unknown')).lower()
-        r['gt_type'] = gt_type
-        results.append(r)
+
+        total += 1
+        parsed += int(r['parsed'])
+        type_correct += int(r['type_correct'])
+        step_correct += int(r['step_correct'])
 
         per_type[gt_type]['count'] += 1
         per_type[gt_type]['type_correct'] += int(r['type_correct'])
@@ -201,11 +208,6 @@ def evaluate_predictions(test_path, pred_path):
         if r['has_text_check']:
             cond['text']['n'] += 1
             cond['text']['k'] += int(r['step_correct'])
-
-    total = len(results)
-    parsed = sum(1 for r in results if r['parsed'])
-    type_correct = sum(int(r['type_correct']) for r in results)
-    step_correct = sum(int(r['step_correct']) for r in results)
 
     parse_rate = parsed / total if total else 0
     type_acc = type_correct / total if total else 0
@@ -239,144 +241,90 @@ def evaluate_predictions(test_path, pred_path):
     }
 
 
+def evaluate_predictions(test_path, pred_path):
+    """Backward-compatible file-based entry point."""
+    return evaluate_pairs(_load_jsonl(test_path), _load_jsonl(pred_path))
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
+def _print_metrics_row(label, metrics):
+    print(
+        f"[score:{label}] total={metrics['total']}  "
+        f"parse={metrics['parse_rate']:.2%}  "
+        f"type={metrics['type_accuracy']:.4f}  "
+        f"step={metrics['step_accuracy']:.4f}  "
+        f"macro={metrics['macro_step_accuracy']:.4f}  "
+        f"index={metrics['cond_index_acc']:.4f}  "
+        f"dir={metrics['cond_dir_acc']:.4f}  "
+        f"app={metrics['cond_app_acc']:.4f}  "
+        f"text={metrics['cond_text_acc']:.4f}"
+    )
+
+
 def _cmd_score(args):
-    metrics = evaluate_predictions(args.test, args.pred)
+    split_mode = bool(args.test_id or args.pred_id or args.test_ood or args.pred_ood)
+
+    if split_mode:
+        # Require both ID and OOD paths if any split flag is set.
+        missing = [
+            name for name, val in [
+                ("--test-id", args.test_id), ("--pred-id", args.pred_id),
+                ("--test-ood", args.test_ood), ("--pred-ood", args.pred_ood),
+            ] if not val
+        ]
+        if missing:
+            print(f"[score] ERROR: split mode needs {missing}", file=sys.stderr)
+            return 2
+
+        gt_id = _load_jsonl(args.test_id)
+        pr_id = _load_jsonl(args.pred_id)
+        gt_ood = _load_jsonl(args.test_ood)
+        pr_ood = _load_jsonl(args.pred_ood)
+
+        m_id = evaluate_pairs(gt_id, pr_id)
+        m_ood = evaluate_pairs(gt_ood, pr_ood)
+        m_overall = evaluate_pairs(gt_id + gt_ood, pr_id + pr_ood)
+
+        metrics = {
+            "overall": m_overall,
+            "in_domain": m_id,
+            "out_of_domain": m_ood,
+        }
+        _print_metrics_row("overall", m_overall)
+        _print_metrics_row("in_domain", m_id)
+        _print_metrics_row("out_of_domain", m_ood)
+    else:
+        if not (args.test and args.pred):
+            print("[score] ERROR: --test and --pred required in single-pair mode",
+                  file=sys.stderr)
+            return 2
+        metrics = evaluate_predictions(args.test, args.pred)
+        _print_metrics_row("all", metrics)
+
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, 'w', encoding='utf-8') as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
-    print(f"[score] pred={args.pred}")
-    print(f"[score] total={metrics['total']}  parse={metrics['parse_rate']:.2%}  "
-          f"type={metrics['type_accuracy']:.4f}  step={metrics['step_accuracy']:.4f}  "
-          f"macro={metrics['macro_step_accuracy']:.4f}  "
-          f"index={metrics['cond_index_acc']:.4f}  dir={metrics['cond_dir_acc']:.4f}  "
-          f"app={metrics['cond_app_acc']:.4f}  text={metrics['cond_text_acc']:.4f}")
     print(f"[score] saved: {args.output}")
     return 0
 
 
-def _ckpt_step(name: str) -> int:
-    try:
-        return int(name.split("-", 1)[1])
-    except (IndexError, ValueError):
-        return -1
-
-
-_SELECT_KEYS = (
-    "step_accuracy", "macro_step_accuracy", "type_accuracy", "parse_rate",
-    "cond_index_acc", "cond_dir_acc", "cond_app_acc", "cond_text_acc",
-)
-
-
-def _cmd_select(args):
-    eval_dir  = Path(args.eval_dir)
-    train_dir = Path(args.train_dir)
-    metric    = args.metric
-    hf_repo_template = getattr(args, "hf_repo_template", None)
-
-    # epoch-*/ 우선, 하위호환으로 checkpoint-*/ 지원.
-    matches = sorted(eval_dir.glob("epoch-*/action_metrics.json"),
-                     key=lambda p: _ckpt_step(p.parent.name))
-    if not matches:
-        matches = sorted(eval_dir.glob("checkpoint-*/action_metrics.json"),
-                         key=lambda p: _ckpt_step(p.parent.name))
-
-    candidates = []
-    for mpath in matches:
-        try:
-            with open(mpath, 'r', encoding='utf-8') as f:
-                m = json.load(f)
-        except Exception as e:
-            print(f"[select] WARN: skip {mpath} ({e})", file=sys.stderr)
-            continue
-        name = mpath.parent.name
-        epoch = _ckpt_step(name) if name.startswith("epoch-") else None
-        row = {
-            "checkpoint":   name,
-            "step":         _ckpt_step(name),
-            "epoch":        epoch,
-            "metrics_path": str(mpath),
-        }
-        for k in _SELECT_KEYS:
-            row[k] = m.get(k, 0.0)
-        row["total"] = m.get("total", 0)
-        candidates.append(row)
-
-    if not candidates:
-        print(f"[select] ERROR: no metrics under {eval_dir}/{{epoch,checkpoint}}-*/",
-              file=sys.stderr)
-        return 2
-
-    # winner: metric 최고값, 동률 시 step 큰 쪽
-    winner = max(candidates, key=lambda c: (c[metric], c["step"]))
-
-    # 요약 출력
-    print(f"[select] metric = {metric}  (tie-breaker: larger step)")
-    print(f"[select] eval_dir={eval_dir}")
-    header = (f"{'checkpoint':<20} {'step':>7} {'step_acc':>9} {'macro':>7} "
-              f"{'type':>7} {'index':>7} {'dir':>7} {'app':>7} {'text':>7} {'parse':>7}")
-    print(header)
-    print("-" * len(header))
-    for c in candidates:
-        mark = "  <-- winner" if c is winner else ""
-        print(f"{c['checkpoint']:<20} {c['step']:>7} "
-              f"{c['step_accuracy']:>9.4f} {c['macro_step_accuracy']:>7.4f} "
-              f"{c['type_accuracy']:>7.4f} {c['cond_index_acc']:>7.4f} "
-              f"{c['cond_dir_acc']:>7.4f} {c['cond_app_acc']:>7.4f} "
-              f"{c['cond_text_acc']:>7.4f} {c['parse_rate']:>7.2%}{mark}")
-
-    # --hf-repo-template 로 winner/candidate hf_repo_id 주입
-    if hf_repo_template:
-        for c in candidates:
-            if c["epoch"] is not None:
-                c["hf_repo_id"] = hf_repo_template.replace("{epoch}", str(c["epoch"]))
-        winner_repo_id = (hf_repo_template.replace("{epoch}", str(winner["epoch"]))
-                          if winner["epoch"] is not None else None)
-    else:
-        winner_repo_id = None
-
-    train_dir.mkdir(parents=True, exist_ok=True)
-    (train_dir / "BEST_CHECKPOINT").write_text(winner["checkpoint"] + "\n", encoding='utf-8')
-    summary = {
-        "selected":     winner["checkpoint"],
-        "epoch":        winner["epoch"],
-        "hf_repo_id":   winner_repo_id,
-        "metric":       metric,
-        "metric_value": winner[metric],
-        "candidates":   candidates,
-    }
-    (train_dir / "BEST_CHECKPOINT.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
-    print(f"[select] winner = {winner['checkpoint']}  ({metric}={winner[metric]:.4f})")
-    if winner_repo_id:
-        print(f"[select] hf_repo_id = {winner_repo_id}")
-    print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT'}")
-    print(f"[select] wrote: {train_dir / 'BEST_CHECKPOINT.json'}")
-    return 0
-
-
 def main():
-    p = argparse.ArgumentParser(description="Stage 2 Action Prediction evaluator + winner selector")
+    p = argparse.ArgumentParser(description="Stage 2 Action Prediction evaluator")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    p_s = sub.add_parser("score", help="Compute action metrics for a single prediction jsonl")
-    p_s.add_argument("--test", required=True)
-    p_s.add_argument("--pred", required=True)
+    p_s = sub.add_parser(
+        "score",
+        help="Compute action metrics. Single-pair (--test/--pred) or "
+             "ID/OOD split (--test-id/--pred-id/--test-ood/--pred-ood).",
+    )
+    p_s.add_argument("--test", default=None)
+    p_s.add_argument("--pred", default=None)
+    p_s.add_argument("--test-id", default=None, dest="test_id")
+    p_s.add_argument("--pred-id", default=None, dest="pred_id")
+    p_s.add_argument("--test-ood", default=None, dest="test_ood")
+    p_s.add_argument("--pred-ood", default=None, dest="pred_ood")
     p_s.add_argument("--output", required=True)
     p_s.set_defaults(func=_cmd_score)
-
-    p_l = sub.add_parser("select", help="Select winner checkpoint by metric")
-    p_l.add_argument("--eval-dir", required=True,
-                     help="Directory containing epoch-*/ or checkpoint-*/ action_metrics.json (variant-specific)")
-    p_l.add_argument("--train-dir", required=True,
-                     help="Training output_dir where BEST_CHECKPOINT will be written")
-    p_l.add_argument("--metric", default="step_accuracy",
-                     help=f"Metric key to maximize (default: step_accuracy). "
-                          f"Options: {', '.join(_SELECT_KEYS)}")
-    p_l.add_argument("--hf-repo-template", default=None, dest="hf_repo_template",
-                     help="Optional HF repo id template with '{epoch}' placeholder. "
-                          "When provided, winner/candidate hf_repo_id is written to BEST_CHECKPOINT.json.")
-    p_l.set_defaults(func=_cmd_select)
 
     args = p.parse_args()
     return args.func(args)
