@@ -39,6 +39,8 @@ __pycache__/
 
 # Environment
 .env
+**/.venv/
+**/uv.lock
 
 # Android / Gradle
 **/.gradle/
