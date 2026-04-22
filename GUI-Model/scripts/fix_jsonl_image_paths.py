@@ -14,10 +14,14 @@ AndroidControl:  myset/images/episode_{id}_step_{idx}.png (no padding)
 AndroidControl:  AndroidControl/images/episode_{id:06d}_step_{idx:04d}.png
               -> images/episode_{id:06d}_step_{idx:04d}.png
 
+MonkeyCollection: MonkeyCollection/images/...  또는 prefix 만 다른 변형
+              -> images/...
+
 Usage:
     python scripts/fix_jsonl_image_paths.py --dry-run
     python scripts/fix_jsonl_image_paths.py
     python scripts/fix_jsonl_image_paths.py --dataset MobiBench
+    python scripts/fix_jsonl_image_paths.py --dataset MonkeyCollection
 """
 
 import argparse
@@ -33,6 +37,8 @@ MB_PREFIXES = ("GUI-Model/images/", "MobiBench/images/")
 
 AC_PATTERN = re.compile(r"^myset/images/episode_(\d+)_step_(\d+)\.png$")
 AC_PREFIX = "AndroidControl/images/"
+
+MC_PREFIXES = ("MonkeyCollection/images/",)
 
 JSONL_FILES = [
     "gui-model_stage1.jsonl",
@@ -62,6 +68,15 @@ def convert_ac(path: str) -> tuple[str, str]:
         return path, "already"
     if path.startswith(AC_PREFIX):
         return RELATIVE_PREFIX + path[len(AC_PREFIX):], "converted"
+    return path, "unmatched"
+
+
+def convert_mc(path: str) -> tuple[str, str]:
+    if path.startswith(RELATIVE_PREFIX):
+        return path, "already"
+    for prefix in MC_PREFIXES:
+        if path.startswith(prefix):
+            return RELATIVE_PREFIX + path[len(prefix):], "converted"
     return path, "unmatched"
 
 
@@ -104,7 +119,11 @@ def process_file(jsonl_path: Path, converter, dry_run: bool) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", choices=["MobiBench", "AndroidControl", "all"], default="all")
+    ap.add_argument(
+        "--dataset",
+        choices=["MobiBench", "AndroidControl", "MonkeyCollection", "all"],
+        default="all",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -113,6 +132,8 @@ def main():
         targets.append(("MobiBench", convert_mb))
     if args.dataset in ("AndroidControl", "all"):
         targets.append(("AndroidControl", convert_ac))
+    if args.dataset in ("MonkeyCollection", "all"):
+        targets.append(("MonkeyCollection", convert_mc))
 
     mode = "DRY-RUN" if args.dry_run else "WRITE"
     print(f"[{mode}] data dir: {REPO_DATA_DIR}")

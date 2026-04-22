@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Train / Test split builder for GUI-Model datasets.
 
+학습 대상 DS 는 {AC (AndroidControl), MC (MonkeyCollection)} 만 지원한다.
+MobiBench(MB) 는 평가 전용 벤치마크이므로 split 하지 않는다 —
+``data/MobiBench/gui-model_stage{1,2}.jsonl`` 두 단일 파일이 eval 입력.
+
 Stage 1 (World Modeling):  random split over ``gui-model_stage1.jsonl``.
 Stage 2 (Action Prediction): app-level in-domain / out-of-domain split over
     ``gui-model_stage2.jsonl`` using ``episodes_meta.jsonl`` (primary_app).
+    MC 는 Stage 2 데이터가 없으므로 자동 skip (``--skip-stage2`` 기본 적용).
 
 Usage
 -----
-  # Stage 1 + Stage 2 (defaults: train=50000, test_id=3000, test_ood=3000 for AC)
+  # AC: Stage 1 + Stage 2 (defaults: train=50000, test_id=3000, test_ood=3000)
   python scripts/split_data.py --dataset AndroidControl
 
-  # MB: give dataset-scale sizes
-  python scripts/split_data.py --dataset MobiBench \\
-      --stage2-train-size 2500 --stage2-test-id-size 150 --stage2-test-ood-size 150
+  # MC: Stage 1 random split 만 수행 (Stage 2 없음)
+  python scripts/split_data.py --dataset MonkeyCollection
 
   # Skip Stage 1 / Stage 2 selectively
   python scripts/split_data.py --dataset AndroidControl --skip-stage1
@@ -32,9 +36,12 @@ from pathlib import Path
 DATASET_DIRS = {
     "AndroidControl": "AndroidControl",
     "AC": "AndroidControl",
-    "MobiBench": "MobiBench",
-    "MB": "MobiBench",
+    "MonkeyCollection": "MonkeyCollection",
+    "MC": "MonkeyCollection",
 }
+
+# Stage 2 분할을 지원하지 않는 데이터셋 (Stage 1 전용).
+_STAGE1_ONLY = {"MonkeyCollection", "MC"}
 
 EPISODE_RE = re.compile(r"episode_(\d+)")
 
@@ -295,6 +302,10 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    if args.dataset in _STAGE1_ONLY and not args.skip_stage2:
+        print(f"[info] {args.dataset} 은 Stage 1 전용입니다. Stage 2 는 자동 skip.")
+        args.skip_stage2 = True
 
     ds_dir_name = DATASET_DIRS[args.dataset]
     if args.data_dir:

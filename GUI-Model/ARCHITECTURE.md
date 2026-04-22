@@ -44,8 +44,8 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
 
 `gui-model.ipynb` 는 아래 순서를 기준으로 작성되어 있다.
 
-1. Section 0: 환경 설정, 모델/데이터셋 config 정의, Stage 1 학습 YAML (full · lora 양쪽) / Stage 2 학습 YAML (full · lora 양쪽 × base · world-model-full · world-model-lora) 생성. **Stage {1,2} merge YAML 은 더 이상 노트북에서 사전 생성하지 않는다** — `scripts/stage{1,2}_merge.sh` 가 runtime 에 임시 YAML 을 만든다.
-2. Section 1-2: `LlamaFactory/data/dataset_info.json` 등록 (Stage 2 는 `..._stage2_test_id`, `..._stage2_test_ood` 두 entry)
+1. Section 0: 환경 설정, 모델/데이터셋 config 정의, Stage 1 학습 YAML (full · lora 양쪽) / Stage 2 학습 YAML (full · lora 양쪽 × base · world-model-full · world-model-lora) 생성. 학습 DS 는 `_DATASET_CONFIG` 의 AC + MC 이며, Stage 2 YAML 은 `_STAGE1_ONLY` guard 로 MC 를 skip 한다. **Stage {1,2} merge YAML 은 더 이상 노트북에서 사전 생성하지 않는다** — `scripts/stage{1,2}_merge.sh` 가 runtime 에 임시 YAML 을 만든다.
+2. Section 1-2: `LlamaFactory/data/dataset_info.json` 등록. AC/MC 는 `*_stage1_train/test`, AC 는 추가로 `*_stage2_train/test_id/test_ood`. MobiBench 는 단일 파일 `GUI-Model-MB_stage1` / `GUI-Model-MB_stage2` 를 `_EVAL_ONLY_BENCHMARKS` 루프가 별도 등록.
 3. Section 3: Stage 1 fine-tuning (`--stage1-mode full|lora`)
 4. Section 4: **Stage 1 merge (모든 epoch 각각 merge + HF Hub push)**
 5. Section 5: **Stage 1 평가 — HF Hub epoch 별 merged 모델 sweep. Hungarian F1 metric 산출만 하고, 어떤 epoch 을 Stage 2 에 쓸지는 사용자가 결과를 보고 `--stage1-epoch` 로 지정 (자동 winner 선정 없음).**
@@ -78,11 +78,11 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
 
 하이퍼파라미터는 **3 단 구조**로 해석된다 (notebook Cell 6):
 
-1. `_DATASET_CONFIG[ds].stage{1,2}` — 데이터셋 공통 baseline.
-2. `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` — **AC 전용** 모델 크기 공유값 (2B / 3-4B / 7-8B). MB 에는 적용되지 않는다.
+1. `_DATASET_CONFIG[ds].stage{1,2}` — 데이터셋 공통 baseline (학습 대상 DS: AC, MC).
+2. `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` — **AC 전용** 모델 크기 공유값 (2B / 3-4B / 7-8B). MC 에는 적용되지 않는다.
 3. `_MODEL_CONFIG[model].hparam_overrides` — 계열 delta (LLaVA → `weight_decay=0.0`, Gemma-4 → `optim=adamw_torch_fused, seed=3407`).
 
-AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MB 는 ① → ③ 만 적용된다. 각 모델은 `_MODEL_CONFIG[model]["size"]` (`"2B" | "3-4B" | "7-8B"`) 필드로 tier 를 지정한다.
+AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 만 적용된다 (tier 미적용). 각 모델은 `_MODEL_CONFIG[model]["size"]` (`"2B" | "3-4B" | "7-8B"`) 필드로 tier 를 지정한다. MobiBench 는 평가 전용 벤치마크이므로 학습 하이퍼파라미터 해석에서 제외된다.
 
 #### AC 크기 tier 값 (`_SIZE_CONFIG_AC`)
 
@@ -139,7 +139,7 @@ gradient_accumulation_steps = GLOBAL_BATCH_SIZE / (per_device * NPROC_PER_NODE)
 
 ```
 data/
-├── MobiBench/
+├── AndroidControl/                   # 학습 + 평가 (Stage 1 + Stage 2)
 │   ├── gui-model_stage1.jsonl
 │   ├── gui-model_stage1_train.jsonl
 │   ├── gui-model_stage1_test.jsonl
@@ -149,34 +149,42 @@ data/
 │   ├── gui-model_stage2_test_ood.jsonl     # out-of-domain (train 에 없는 앱)
 │   ├── episodes_meta.jsonl                 # primary_app 라벨 (split_data.py 의 입력)
 │   └── images/
-└── AndroidControl/
-    └── ... (동일 구조, episodes_meta 는 TFRecord 에서 추출)
+├── MonkeyCollection/                  # Stage 1 전용 학습 + 평가
+│   ├── gui-model_stage1.jsonl              # 약 100K
+│   ├── gui-model_stage1_train.jsonl        # split_data.py --dataset MC (95%)
+│   ├── gui-model_stage1_test.jsonl         # (5%)
+│   └── images/
+└── MobiBench/                         # 평가 전용 벤치마크 (단일 파일)
+    ├── gui-model_stage1.jsonl               # stage1_eval.sh --eval-datasets MB
+    ├── gui-model_stage2.jsonl               # stage2_eval.sh --eval-datasets MB (single-pair overall)
+    └── images/
 ```
 
-- Stage 1 은 random split 이다.
-- Stage 2 는 **app-level in-domain / out-of-domain split**. 앱 집합을 ID/OOD 로 나눈 뒤 각 풀에서 action type stratified 샘플링 (largest-remainder). train 은 `null` primary_app 에피소드까지 흡수해 regular 크기 유지.
-- 메타 추출: `scripts/extract_androidcontrol_metadata.py` (TFRecord → `primary_app`), `scripts/extract_mobibench_metadata.py` (첫 OpenApp action + task 문구 regex fallback).
-- [`scripts/split_data.py`](./scripts/split_data.py) 가 Stage 1 random split + Stage 2 ID/OOD split 을 모두 담당한다. 기본 크기: AC train 50K / test_id 3K / test_ood 3K. MB 는 규모에 맞춰 `--stage2-train-size` 등 플래그로 축소.
+- Stage 1 (AC, MC) 은 random split 이다. MC 는 `_STAGE1_ONLY` 로 Stage 2 자동 skip.
+- Stage 2 (AC only) 는 **app-level in-domain / out-of-domain split**. 앱 집합을 ID/OOD 로 나눈 뒤 각 풀에서 action type stratified 샘플링 (largest-remainder). train 은 `null` primary_app 에피소드까지 흡수해 regular 크기 유지.
+- 메타 추출: `scripts/extract_androidcontrol_metadata.py` (TFRecord → `primary_app`). MC 는 Stage 2 가 없어 메타 추출 불필요. MB 는 평가 전용이라 split 자체가 없음.
+- [`scripts/split_data.py`](./scripts/split_data.py) 가 Stage 1 random split + Stage 2 ID/OOD split 을 담당한다. 기본 크기: AC train 50K / test_id 3K / test_ood 3K. MC 는 Stage 1 random split 만.
+- MB 는 `_EVAL_ONLY_BENCHMARKS` 메커니즘으로 notebook dataset_info 등록 셀이 `GUI-Model-MB_stage{1,2}` 단일 파일 entry 를 별도 추가한다.
 
-#### `episodes_meta.jsonl` 스키마
+#### `episodes_meta.jsonl` 스키마 (AC only)
 
 ```jsonl
 {"episode_id": 0, "goal": "...", "primary_app": "Zoho Meeting", "actions": ["...", ...], "step_instructions": [...], ...}
-{"episode_id": "000001", "goal": "...", "primary_app": "Audio Recorder", "n_steps": 3}
 ```
 
 - AC: `episode_id` 는 **int** (0, 1, 2, ...). 원본 이미지 경로는 zero-padded string (`episode_006881_step_0001.png`). `split_data.py::_norm_ep` 가 `str(int(...))` 로 정규화해 매칭한다.
-- MB: `episode_id` 는 **string** (`"000001"`). 이미지 경로에서 추출된 키와 같은 형식.
-- `primary_app` 은 `None` 일 수 있고 (AC: open_app 없음, MB: task 패턴 매칭 실패), 이 경우 해당 에피소드는 train 풀에만 합류하고 test 분할에서 제외된다 (`--stage2-exclude-null-app` 으로 완전 제외 가능).
+- `primary_app` 은 `None` 일 수 있고 (open_app action 없음), 이 경우 해당 에피소드는 train 풀에만 합류하고 test 분할에서 제외된다 (`--stage2-exclude-null-app` 으로 완전 제외 가능).
+- MC 는 Stage 2 가 없어 episodes_meta 를 필요로 하지 않는다. MB 는 평가 전용이라 split 자체가 없으므로 episodes_meta 가 없다.
 
 ### 데이터셋 이름 규약
 
-| 용도 | MobiBench | AndroidControl |
-|------|-----------|----------------|
-| `data/` 아래 실제 디렉토리 | `MobiBench` | `AndroidControl` |
-| shell script 단축 코드 | `MB` | `AC` |
-| LLaMA-Factory dataset prefix | `GUI-Model-MB` | `GUI-Model-AC` |
-| `outputs/` 하위 최상위 디렉토리 | `MB` | `AC` |
+| 용도 | AndroidControl | MonkeyCollection | MobiBench (eval-only) |
+|------|----------------|-------------------|------------------------|
+| `data/` 아래 실제 디렉토리 | `AndroidControl` | `MonkeyCollection` | `MobiBench` |
+| shell script 단축 코드 | `AC` | `MC` | `MB` (eval 전용) |
+| LLaMA-Factory dataset prefix | `GUI-Model-AC` | `GUI-Model-MC` | `GUI-Model-MB` (stage{1,2} 단일) |
+| `outputs/` 하위 최상위 디렉토리 | `AC` | `MC` | — (평가 결과는 TRAIN_DS/on-MB/) |
+| Stage 2 지원 | ✓ | ✗ (`_STAGE1_ONLY`) | ✓ (single-pair overall) |
 
 ### LLaMA-Factory 등록
 
@@ -237,46 +245,60 @@ Stage 2 스크립트는 `--stage2-mode {full|lora}` (기본 lora) 로 학습 방
     - world-model: `hf_repo_id_stage2_world_model(MODEL, DS, STAGE1_MODE, STAGE1_EPOCH, STAGE2_MODE, E2)` → `...world-model-stage1-{M1}-epoch{E1}-stage2-{M2}-epoch{E2}`
 - [`scripts/stage2_eval.sh`](./scripts/stage2_eval.sh)
   - `--variants` 로 `base`, `{full|lora}_base`, `{full|lora}_world_model` 중 선택 평가. world-model variant 는 `--stage1-epoch` 로 HF 레포 계보 번호를 주입한다.
-  - **ID + OOD 동시 추론**: 매 epoch 당 `vllm_infer.py` 를 `gui-model_stage2_test_id.jsonl` / `gui-model_stage2_test_ood.jsonl` 두 번 호출해 `generated_predictions_{id,ood}.jsonl` 생성 → `_action_eval.py score --test-id ... --pred-id ... --test-ood ... --pred-ood ... --output action_metrics.json` 가 **overall / in_domain / out_of_domain** 3 섹션을 한 파일에 저장.
-  - 결과 경로: `outputs/{DS}/eval/{MODEL}/stage2_eval/{variant}[_from_{M1}_ep{E1}]/epoch-{E2}/`
-  - **재실행 시 skip**: marker `action_metrics.json` 존재 unit 은 variant 별로 독립 skip.
+  - `--train-dataset AC` (현재 유일한 학습 DS. MC 는 Stage 2 데이터 없어 거절) + `--eval-datasets LIST` (AC, MB). EVAL_DS 별 분기:
+    - **EVAL_DS=AC**: ID + OOD 두 test 파일을 함께 추론해 `_action_eval.py score --test-id ... --pred-id ... --test-ood ... --pred-ood ...` 가 **overall / in_domain / out_of_domain** 3-섹션 기록.
+    - **EVAL_DS=MB**: 단일 파일 `gui-model_stage2.jsonl` 1 회 추론 후 `_action_eval.py score --test ... --pred ...` single-pair 모드 → `overall` 1-섹션만 기록.
+  - 결과 경로: `outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant}[_from_{M1}_ep{E1}]/epoch-{E2}/on-{EVAL_DS}/`
+  - **재실행 시 skip**: marker `action_metrics.json` 존재 unit 은 variant × EVAL_DS 조합 별로 독립 skip.
 
 ### Shell script CLI
 
 ```bash
-bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset MB                        # full (default)
-bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset MB                        # 전 epoch push
-bash scripts/stage1_eval.sh  --model qwen3-vl-8b --dataset MB --epochs 1,2,3
-bash scripts/stage1_train.sh --model gemma-4-e2b --dataset MB --stage1-mode lora
-bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset MB \
+# 학습/merge — --dataset 는 {AC|MC|all}. MB 는 평가 전용이라 거절.
+bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset AC                        # full (default)
+bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset AC                        # 전 epoch push
+bash scripts/stage1_train.sh --model gemma-4-e2b --dataset MC --stage1-mode lora
+bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
      --stage1-mode full --stage1-epoch 3 --stage2-mode lora
-bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset MB \
+bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset AC \
      --stage1-mode full --stage1-epoch 3 --stage2-mode lora
-bash scripts/stage2_eval.sh  --model qwen3-vl-8b --dataset MB \
+
+# 평가 — --train-dataset 로 HF repo 를, --eval-datasets 로 test 셋을 지정 (교차 평가).
+bash scripts/stage1_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,MC,MB \
+     --epochs 1,2,3
+bash scripts/stage2_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,MB \
      --stage1-mode full --stage1-epoch 3 --stage2-mode lora \
      --variants base,lora_base,lora_world_model --epochs 1,2,3
 ```
 
 플래그:
+
+**학습/merge (`stage{1,2}_{train,merge}.sh`)**:
+- `--dataset DS`: `AC|MC|all` (기본 all=AC,MC). **MB 는 거절됨**.
 - `--stage1-mode {full|lora}` (기본 full)
 - `--stage2-mode {full|lora}` (기본 lora, stage2 스크립트 전용)
 - `--stage1-epoch N` (stage2 world-model variant 에서 상류 epoch 지정)
-- `--epochs LIST` (콤마 구분, 기본 `1,2,3`, `stage{1,2}_eval.sh` 전용)
-- `--variants LIST` (`stage{1,2}_eval.sh` 전용)
+
+**평가 (`stage{1,2}_eval.sh`)**:
+- `--train-dataset {AC|MC}` (필수) — HF repo 를 식별할 학습 DS. Stage 2 eval 은 AC 만.
+- `--eval-datasets LIST` (기본: `--train-dataset` 단일값. 허용: `AC,MC,MB`) — test JSONL 을 로드할 DS.
+- `--epochs LIST` (콤마 구분, 기본 `1,2,3`)
+- `--variants LIST`
 
 ## 5. 실행 데이터 흐름
 
 ```
-raw JSONL + screenshots
-  -> extract_{ac,mb}_metadata.py      (primary_app 라벨)
-  -> split_data.py                    (Stage1 random + Stage2 ID/OOD)
-  -> dataset_info.json registration   (..._stage2_test_{id,ood})
-  -> [per model] Stage 1 train  (mode1 = full | lora)
+raw JSONL + screenshots  (AC: train+eval, MC: Stage1 전용, MB: eval-only 단일 파일)
+  -> extract_androidcontrol_metadata.py  (AC 만 — primary_app 라벨)
+  -> split_data.py                    (AC: Stage1 random + Stage2 ID/OOD | MC: Stage1 random only)
+  -> dataset_info.json registration   (AC/MC: train+test | MB: eval-only 단일 entry)
+  -> [per model] Stage 1 train  (mode1 = full | lora, 학습 DS ∈ {AC, MC})
        → adapters/{M}_stage1_{mode1}/checkpoint-*/
   -> [per model] Stage 1 merge (모든 epoch 각각)
        → merged/{M}_stage1_{mode1}/epoch-{E1}/   +   HF Hub ...world-model-stage1-{mode1}-epoch{E1}
-  -> [per model] Stage 1 eval (HF Hub sweep, metric only)
-       → eval/{M}/stage1_eval/{mode1}_world_model/epoch-{E1}/hungarian_metrics.json
+  -> [per model] Stage 1 eval (HF Hub sweep × cross-dataset)
+       → eval/{TRAIN_DS}/{M}/stage1_eval/{mode1}_world_model/epoch-{E1}/on-{EVAL_DS}/hungarian_metrics.json
+       (EVAL_DS ∈ {AC, MC, MB} — MB 는 단일 파일 stage1.jsonl, AC/MC 는 *_test.jsonl)
        (user picks an epoch E1 → passes as --stage1-epoch to Stage 2)
   -> [per model] Stage 2 train  (mode2 = full | lora,  variant ∈ {base, world-model-{mode1}})
        world-model base = merged/{M}_stage1_{mode1}/epoch-{E1}/   (local, from --stage1-epoch)
@@ -286,9 +308,10 @@ raw JSONL + screenshots
        + HF Hub:
           base       : ...base-stage2-{mode2}-epoch{E2}
           world-model: ...world-model-stage1-{mode1}-epoch{E1}-stage2-{mode2}-epoch{E2}
-  -> [per model] Stage 2 eval (HF Hub sweep × ID+OOD)
-       → eval/{M}/stage2_eval/.../epoch-{E2}/action_metrics.json
-          { overall, in_domain, out_of_domain }
+  -> [per model] Stage 2 eval (HF Hub sweep × cross-dataset)
+       → eval/{TRAIN_DS}/{M}/stage2_eval/.../epoch-{E2}/on-{EVAL_DS}/action_metrics.json
+          EVAL_DS=AC: { overall, in_domain, out_of_domain }  (test_id + test_ood)
+          EVAL_DS=MB: { overall }                             (gui-model_stage2.jsonl single-pair)
 ```
 
 ### 산출물 위치
@@ -327,7 +350,7 @@ GUI-Model/outputs/{DS}/
 | Stage 2 base      | `SaFD-00/{short}-{slug}base-stage2-{M2}-epoch{E2}`  (`M2` ∈ {full, lora}) |
 | Stage 2 world     | `SaFD-00/{short}-{slug}world-model-stage1-{M1}-epoch{E1}-stage2-{M2}-epoch{E2}` |
 
-`{slug}` 는 `mb-` (MobiBench) 또는 `ac-` (AndroidControl). `{E}` 는 각 `checkpoint-*/trainer_state.json` 의 `epoch` 을 `int(round(...))` 로 추출한 값. 조립은 `scripts/_common.sh::hf_repo_id_stage1` / `hf_repo_id_stage2_base` / `hf_repo_id_stage2_world_model` 에 중앙화.
+`{slug}` 는 `ac-` (AndroidControl) 또는 `mc-` (MonkeyCollection). MB slug `mb-` 는 MB 를 학습 대상으로 쓰지 않는 현재 파이프라인에서 dormant 이다 (새로 push 되지 않음). `{E}` 는 각 `checkpoint-*/trainer_state.json` 의 `epoch` 을 `int(round(...))` 로 추출한 값. 조립은 `scripts/_common.sh::hf_repo_id_stage1` / `hf_repo_id_stage2_base` / `hf_repo_id_stage2_world_model` 에 중앙화.
 
 ## 6. 메트릭
 
