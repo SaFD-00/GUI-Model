@@ -76,9 +76,53 @@ scripts/_common.sh::MODEL_BACKEND[model_short] → llamafactory | unsloth
 
 ### 하이퍼파라미터
 
-모든 모델은 동일한 데이터셋별 하이퍼파라미터를 사용한다. 하이퍼파라미터는 `_DATASET_CONFIG` 에서 관리된다.
+하이퍼파라미터는 **3 단 구조**로 해석된다 (notebook Cell 6):
 
-`gradient_accumulation_steps` 는 `_DATASET_CONFIG` 상수가 아니라 notebook Cell 6 에서 런타임 계산된다. 불변식:
+1. `_DATASET_CONFIG[ds].stage{1,2}` — 데이터셋 공통 baseline.
+2. `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` — **AC 전용** 모델 크기 공유값 (2B / 3-4B / 7-8B). MB 에는 적용되지 않는다.
+3. `_MODEL_CONFIG[model].hparam_overrides` — 계열 delta (LLaVA → `weight_decay=0.0`, Gemma-4 → `optim=adamw_torch_fused, seed=3407`).
+
+AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MB 는 ① → ③ 만 적용된다. 각 모델은 `_MODEL_CONFIG[model]["size"]` (`"2B" | "3-4B" | "7-8B"`) 필드로 tier 를 지정한다.
+
+#### AC 크기 tier 값 (`_SIZE_CONFIG_AC`)
+
+**Stage 1 (full FT)** — dataset baseline 대비 다른 필드만:
+
+| 구간 | lr | warmup_ratio | max_grad_norm |
+|---|---|---|---|
+| 2B | 1.5e-5 | 0.08 | 0.5 |
+| 3-4B | 1.2e-5 | 0.06 | 0.5 |
+| 7-8B | (baseline 유지: 1.0e-5 / 0.03 / 1.0) | | |
+
+**Stage 1 LoRA** — `stage1_full` 위에 덮어쓰기:
+
+| 구간 | lr | LoRA r / α | dropout |
+|---|---|---|---|
+| 2B | 1.5e-4 | 8 / 16 | 0.05 |
+| 3-4B | 1.2e-4 | 12 / 24 | 0.05 |
+| 7-8B | 1.0e-4 | 16 / 32 | 0.05 |
+
+**Stage 2 (LoRA)** — dataset baseline 대비 다른 필드만:
+
+| 구간 | lr | LoRA r / α | dropout | warmup_ratio |
+|---|---|---|---|---|
+| 2B | 6.0e-5 | 16 / 32 | 0.05 | 0.05 |
+| 3-4B | 5.0e-5 | 24 / 48 | 0.05 | 0.04 |
+| 7-8B | 4.0e-5 | (baseline: 32 / 64) | 0.05 | (baseline: 0.03) |
+
+설계 근거: `outputs/AC/eval/qwen{2.5-vl-7b,3-vl-8b}/stage2_eval` 실측에서 lr 5e-5 가 7-8B 상단 경계 (7B e3 retrograde, 8B cond_text 퇴화), dropout 0.10 이 저빈도 action type 을 불안정하게 만듦. 2B / 3-4B 는 Stage 1 크기 규칙을 Stage 2 에 이식한 외삽.
+
+#### 계열 delta (`_MODEL_CONFIG[model].hparam_overrides`)
+
+| 계열 | stage1 / stage2 에 추가 |
+|---|---|
+| LLaVA (3 모델, 7-8B) | `weight_decay: 0.0` |
+| Gemma-4 (2 모델, 2B / 3-4B) | `optim: "adamw_torch_fused", seed: 3407` |
+| Qwen 계열 (7 모델) | (empty — 전부 tier 값 그대로) |
+
+#### `gradient_accumulation_steps`
+
+`_DATASET_CONFIG` 상수가 아니라 notebook Cell 6 에서 런타임 계산된다. 불변식:
 
 ```
 global_batch = per_device_train_batch_size * gradient_accumulation_steps * NPROC_PER_NODE

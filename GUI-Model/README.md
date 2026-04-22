@@ -194,6 +194,10 @@ data/{AndroidControl,MobiBench}/
 > 프레임워크별 `per_device_train_batch_size` (LF=2, Unsloth=1) 로부터 `gradient_accumulation_steps`
 > 를 역계산해 `GLOBAL_BATCH_SIZE=64` 를 유지한다. GPU 수가 바뀌면 `.env` 의 `NPROC_PER_NODE`
 > 만 수정하고 노트북 Cell 6 과 YAML 생성 셀(9/11/15/17/61) 을 다시 실행하면 된다.
+>
+> **AC 하이퍼파라미터는 모델 크기 3 단(2B / 3-4B / 7-8B) 으로 공유**된다 (`_SIZE_CONFIG_AC`).
+> 상세 tier 표와 계열 delta 규칙은 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2 "하이퍼파라미터" 참조.
+> MB 는 tier 미적용 — dataset baseline + per-model override 구조 그대로.
 
 1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성 (Stage 1 full · lora 학습용 + Stage 2 base · world-model-full · world-model-lora 학습용 · merge 용). **Stage 1 eval YAML 은 더 이상 생성하지 않는다** (쉘 스크립트가 HF Hub merged 모델을 직접 sweep).
 2. Section 1-2: `dataset_info.json` 등록
