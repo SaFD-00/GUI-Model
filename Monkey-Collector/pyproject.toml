@@ -13,6 +13,8 @@ dependencies = [
     "openai>=1.0",
     "python-dotenv>=1.0",
     "pyvis>=0.3",
+    "requests>=2.32",
+    "gplaydl>=2.0",
 ]
 
 [tool.setuptools.packages.find]
