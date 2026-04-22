@@ -153,6 +153,40 @@ Server -> App (newline-delimited JSON):
 
 `CollectionServer` 는 signal queue 를 사용해 최신 signal 기준으로 collection loop 를 진행한다.
 
+### Action Space
+
+[`server/domain/actions.py`](./server/domain/actions.py) 에 정의된 6종 action 을 [`server/pipeline/explorer.py`](./server/pipeline/explorer.py) 의 `SmartExplorer` 가 가중치 기반으로 선택한다.
+
+| action_type  | 파라미터                                | 설명                            |
+| ------------ | --------------------------------------- | ------------------------------- |
+| `tap`        | `x, y, element_index`                   | 좌표 또는 UI 요소 탭            |
+| `swipe`      | `x1, y1, x2, y2, duration_ms=300`       | 스와이프 제스처                 |
+| `input_text` | `text, x, y, element_index`             | 포커스 후 텍스트 입력           |
+| `long_press` | `x, y, duration_ms=1000, element_index` | 롱프레스                        |
+| `press_back` | —                                       | 안드로이드 Back                 |
+| `press_home` | —                                       | 안드로이드 Home                 |
+
+기본 가중치 (`DEFAULT_WEIGHTS`):
+
+| action       | weight |
+| ------------ | -----: |
+| `tap`        |   0.40 |
+| `press_back` |   0.20 |
+| `swipe`      |   0.20 |
+| `input_text` |   0.10 |
+| `long_press` |   0.10 |
+| `press_home` |   0.00 |
+
+상황별 가중치 보정:
+
+- 첫 화면에서는 `press_back = 0` (앱 종료 방지)
+- editable 요소가 있으면 `input_text ≥ 0.25` 로 부스트
+- clickable 이 없으면 `tap = 0.05`
+- scrollable 이 없으면 `swipe = 0.05`
+- 모든 가중치 합이 0 이면 PressBack 으로 fallback (첫 화면이면 random tap)
+
+실행은 `SmartExplorer.execute_action` 이 `AdbClient` ([`server/infra/device/adb.py`](./server/infra/device/adb.py)) 메서드로 위임.
+
 ## 4. 세션 관리와 복구
 
 ### 세션 라이프사이클

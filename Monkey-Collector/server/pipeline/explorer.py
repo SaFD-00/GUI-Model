@@ -4,7 +4,7 @@ Unlike random monkey (adb shell monkey), SmartExplorer:
 1. Parses XML to identify interactable elements
 2. Detects EditText fields and fills them with text
 3. Detects app exit and automatically returns
-4. Uses weighted action selection (tap 60%, back 10%, etc.)
+4. Uses weighted action selection (tap 40%, back 20%, swipe 20%, etc.)
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ from server.pipeline.text_generator import TextGenerator
 
 # Default action weights
 DEFAULT_WEIGHTS: dict[str, float] = {
-    "tap": 0.60,
-    "press_back": 0.10,
-    "swipe": 0.10,
+    "tap": 0.40,
+    "press_back": 0.20,
+    "swipe": 0.20,
     "input_text": 0.10,
-    "long_press": 0.05,
+    "long_press": 0.10,
     "press_home": 0.00,
 }
 
@@ -120,7 +120,7 @@ class SmartExplorer:
 
         # If no scrollable elements, reduce swipe weight
         if not scrollable:
-            weights["swipe"] = 0.02
+            weights["swipe"] = 0.05
 
         # Normalize weights
         total = sum(weights.values())
