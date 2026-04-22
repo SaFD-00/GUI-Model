@@ -1,11 +1,11 @@
 # GUI-Model
 
-모바일 GUI World Modeling 이 Action Prediction 성능에 미치는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 현재 코드 기준으로는 notebook 이 전체 실행의 기준이고, `scripts/` 가 반복 실행용 자동화 레이어이며, 실제 학습/평가 엔진은 **모델별 백엔드(LlamaFactory 또는 Unsloth)** 가 담당한다.
+모바일 GUI World Modeling 이 Action Prediction 성능에 미치는 영향을 검증하는 2-stage fine-tuning 파이프라인이다. 현재 코드 기준으로는 notebook 이 전체 실행의 기준이고, `scripts/` 가 반복 실행용 자동화 레이어이며, 실제 학습/평가 엔진은 **백엔드별로 분리된 conda env + 노트북 한 쌍** 이 담당한다.
 
-- 대부분의 모델(Qwen, LLaVA 계열) → 저장소 내부 [`LlamaFactory/`](./LlamaFactory) 사용
-- Gemma-4 계열(E2B/E4B) → 저장소 내부 [`unsloth/`](./unsloth) (https://github.com/unslothai/unsloth) 사용
+- [`gui-model-llamafactory.ipynb`](./gui-model-llamafactory.ipynb) + conda env `gui-model-llamafactory` — Qwen2/2.5/3-VL, LLaVA 계열 10개 모델. 저장소 내부 [`LlamaFactory/`](./LlamaFactory) 사용.
+- [`gui-model-unsloth.ipynb`](./gui-model-unsloth.ipynb) + conda env `gui-model-unsloth` — Gemma-4 계열(E2B/E4B) 2개 모델. 저장소 내부 [`unsloth/`](./unsloth) (https://github.com/unslothai/unsloth) 사용.
 
-Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분기되므로, 사용자 인터페이스(`--model MODEL --dataset DS`)는 기존과 동일하다.
+두 env 는 서로 다른 패키지 셋(`transformers` transitive 상한, deepspeed 유무 등)을 끌어오기 위해 완전히 독립적으로 구성된다. shell 스크립트(`scripts/*.sh`)는 `MODEL_BACKEND` 매핑을 그대로 유지해 **해당 env 안의 모델** 만 호출되도록 하며, 사용자 인터페이스(`--model MODEL --dataset DS`)는 기존과 동일하다.
 
 ## 개요
 
@@ -16,7 +16,7 @@ Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분
   - `stage2`: base model 에서 바로 Stage 2 LoRA
   - `stage1+stage2`: Stage 1 merged model 위에서 Stage 2 LoRA
 
-실제 파이프라인 로직은 [`gui-model.ipynb`](./gui-model.ipynb), [`scripts/`](./scripts), [`LlamaFactory/`](./LlamaFactory) 조합으로 구성된다. [`gui_model/`](./gui_model) 패키지는 배포용 스텁만 포함한다.
+실제 파이프라인 로직은 [`gui-model-llamafactory.ipynb`](./gui-model-llamafactory.ipynb) · [`gui-model-unsloth.ipynb`](./gui-model-unsloth.ipynb), [`scripts/`](./scripts), [`LlamaFactory/`](./LlamaFactory), [`unsloth/`](./unsloth) 조합으로 구성된다. [`gui_model/`](./gui_model) 패키지는 배포용 스텁만 포함한다.
 
 ## 지원 모델
 
@@ -29,8 +29,8 @@ Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분
 | 5 | Qwen/Qwen3-VL-2B-Instruct | qwen3-vl-2b | qwen3_vl_nothink | llamafactory |
 | 6 | Qwen/Qwen3-VL-4B-Instruct | qwen3-vl-4b | qwen3_vl_nothink | llamafactory |
 | 7 | Qwen/Qwen3-VL-8B-Instruct | qwen3-vl-8b | qwen3_vl_nothink | llamafactory |
-| 8 | unsloth/gemma-4-E2B-it | gemma-4-e2b | gemma4 | **unsloth** |
-| 9 | unsloth/gemma-4-E4B-it | gemma-4-e4b | gemma4 | **unsloth** |
+| 8 | google/gemma-4-E2B-it | gemma-4-e2b | gemma4 | **unsloth** |
+| 9 | google/gemma-4-E4B-it | gemma-4-e4b | gemma4 | **unsloth** |
 | 10 | llava-hf/llava-v1.6-mistral-7b-hf | llava-v1.6-mistral-7b | llava_next | llamafactory |
 | 11 | llava-hf/llava-v1.6-vicuna-7b-hf | llava-v1.6-vicuna-7b | llava_next | llamafactory |
 | 12 | llava-hf/llama3-llava-next-8b-hf | llama3-llava-next-8b | llava_next | llamafactory |
@@ -39,23 +39,25 @@ Backend 는 `scripts/_common.sh` 의 `MODEL_BACKEND` 매핑에 따라 자동 분
 
 ```
 GUI-Model/
-├── gui-model.ipynb
+├── gui-model-llamafactory.ipynb  # env: gui-model-llamafactory (Qwen, LLaVA)
+├── gui-model-unsloth.ipynb       # env: gui-model-unsloth (Gemma-4)
 ├── scripts/
 │   ├── _common.sh                # 공통 path/모델 레지스트리/backend 매핑
 │   ├── stage{1,2}_{train,eval,merge}.sh
-│   ├── _unsloth_train.py         # Unsloth 학습 entrypoint (Gemma-4)
+│   ├── _unsloth_train.py         # Unsloth 학습 entrypoint (Gemma-4, gui-model-unsloth env)
 │   ├── _unsloth_merge.py         # Unsloth merge entrypoint
 │   ├── _hungarian_eval.py        # Stage 1 metric
 │   ├── _action_eval.py           # Stage 2 metric
 │   └── split_data.py
 ├── data/
-├── LlamaFactory/                 # backend=llamafactory (clone)
-│   ├── examples/custom/          # LlamaFactory YAML (노트북이 생성)
+├── LlamaFactory/                 # backend=llamafactory (clone, gui-model-llamafactory env)
+│   ├── examples/custom/          # LlamaFactory YAML (llamafactory 노트북이 생성)
 │   └── scripts/vllm_infer.py     # 모든 backend 공통 추론 도구
-├── unsloth/                      # backend=unsloth (clone)
-│   └── configs/GUI-Model-{MB,AC}/stage{1,2}_*/...   # Unsloth YAML
+├── unsloth/                      # backend=unsloth (clone, gui-model-unsloth env)
+│   └── configs/GUI-Model-{MB,AC}/stage{1,2}_*/...   # Unsloth YAML (unsloth 노트북이 생성)
 ├── gui_model/                    # 배포용 스텁
-├── setup.py
+├── pyproject.toml                # core deps + [project.optional-dependencies] llamafactory / unsloth
+├── setup.py                      # local subproject file:// direct refs (backend 별 extras)
 ├── .env.example                  # HF_TOKEN, NPROC_PER_NODE
 ├── README.md
 ├── ARCHITECTURE.md
@@ -64,62 +66,72 @@ GUI-Model/
 
 ## 환경 설치
 
-단일 진입점. `setup.py` 의 `install_requires` 가 `./LlamaFactory` 와 `./unsloth[huggingface,triton]` 을 PEP 508 `file://` direct reference 로 연쇄 설치하고, `accelerate`/`vllm`/`deepspeed`/metrics 패키지를 함께 해결한다. `.env` 로딩용 `python-dotenv` 도 `INSTALL_REQUIRES` 에 포함되어 `pip install -e .` 한 번으로 함께 설치된다. **`transformers==5.5.4` 는 최상위(`pyproject.toml` `[project].dependencies` 와 `setup.py` `INSTALL_REQUIRES`)에서 고정**한다.
+백엔드별로 완전히 분리된 두 conda env 를 쓴다. `pyproject.toml` 의 공통 deps 위에 `setup.py::extras_require` 가 local 서브프로젝트(`./LlamaFactory`, `./unsloth[huggingface,triton]`) 를 PEP 508 `file://` direct reference 로 끌어오고, 백엔드별 deps (`transformers` 버전, deepspeed · bitsandbytes · vllm 등) 는 각 extras (`llamafactory` / `unsloth`) 에 나뉘어 설치된다. **`transformers` 는 LlamaFactory 쪽에서 `==5.5.4` 로 고정**, **Unsloth 쪽은 `>=5.5.4`** 로 상한을 풀어 `google/gemma-4-E2B-it` / `google/gemma-4-E4B-it` 의 최신 Gemma-4 loader 가 확보되도록 한다.
+
+### gui-model-llamafactory (Qwen2/2.5/3-VL · LLaVA)
 
 ```bash
-conda activate gui-model
+conda create -n gui-model-llamafactory python=3.12 -y
+conda activate gui-model-llamafactory
 cd /path/to/GUI-Model
-PIP_USER=0 pip install --no-user -e .
+PIP_USER=0 pip install --no-user -e '.[llamafactory]'
 ```
 
-`PIP_USER=0` / `--no-user` 는 root 유저 + `PYTHONUSERBASE` 조합에서 pip 가 deps 를 user-site(예: `/root/.local/workspace/python-packages`) 로 흘려 conda env `bin/` 에 `accelerate` 같은 CLI entry point 가 만들어지지 않는 사고를 막는다.
+이 env 에서 사용할 노트북은 [`gui-model-llamafactory.ipynb`](./gui-model-llamafactory.ipynb) 이다. deepspeed 가 기본 포함되며, `llamafactory-cli train` / `llamafactory-cli export` 가 엔진이다.
 
-### 전제
+### gui-model-unsloth (Gemma-4 계열)
 
+```bash
+conda create -n gui-model-unsloth python=3.12 -y
+conda activate gui-model-unsloth
+cd /path/to/GUI-Model
+PIP_USER=0 pip install --no-user -e '.[unsloth]'
+```
+
+이 env 에서 사용할 노트북은 [`gui-model-unsloth.ipynb`](./gui-model-unsloth.ipynb) 이다. **이 env 에는 deepspeed 가 아예 설치되지 않는다** — FastModel 의 메모리 최적화 / gradient checkpointing 이 deepspeed ZeRO 와 충돌하고, `accelerate launch` 가 deepspeed plugin 을 자동 활성화하면 첫 step 에서 실패하기 때문이다. 따라서 예전 버전의 `pip uninstall -y deepspeed` 토글 단계는 더 이상 필요하지 않다. 또한 학습 대상인 `google/gemma-4-E2B-it` · `google/gemma-4-E4B-it` 는 LlamaFactory env 의 `transformers==5.5.4` 고정보다 **최신 transformers** 를 요구하므로 이 env 의 `transformers` pin 은 상한을 풀어 최신 버전을 허용한다 (아래 "PIP_USER 플래그 / 전제" 참조).
+
+### PIP_USER 플래그 / 전제
+
+- `PIP_USER=0` / `--no-user` 는 root 유저 + `PYTHONUSERBASE` 조합에서 pip 가 deps 를 user-site(예: `/root/.local/workspace/python-packages`) 로 흘려 conda env `bin/` 에 `accelerate` 같은 CLI entry point 가 만들어지지 않는 사고를 막는다.
 - Python 3.10 이상, 3.13 미만
 - bash 4+ (`scripts/_common.sh` 기준)
-- **`transformers==5.5.4`** (최상위 pin). 서브프로젝트(`unsloth/` `<=5.5.0`, `LlamaFactory/` `<=5.2.0`) 의 transitive 상한과 충돌해 pip resolver 가 실패하면 다음 절차로 회피한다:
+- **transformers 버전은 env 별로 다르다** — LlamaFactory extras 는 `transformers==5.5.4` 로 고정 (Qwen / LLaVA 검증값), Unsloth extras 는 `transformers>=5.5.4` 로 상한이 열려 있다. Unsloth env 의 학습 대상은 `google/gemma-4-E2B-it` / `google/gemma-4-E4B-it` 이며, 이들 모델의 modeling 코드가 최신 transformers 의 Gemma-4 loader 를 요구하므로 pip resolver 가 최신 호환 버전을 설치하도록 두어야 한다. 서브프로젝트(`unsloth/` `<=5.5.0`, `LlamaFactory/` `<=5.2.0`) transitive 상한과 충돌해 pip resolver 가 실패하면 다음 절차로 회피한다 (env 별로):
 
   ```bash
+  # gui-model-llamafactory env — 5.5.4 로 고정
   pip install --upgrade transformers==5.5.4
-  # 또는 서브프로젝트만 deps 무시 재설치
-  pip install -e ./unsloth[huggingface,triton] --no-deps
   pip install -e ./LlamaFactory --no-deps
-  ```
-- merge/export 단계에서는 `HF_TOKEN` (HF Hub push 용), `pyyaml`
-- `./LlamaFactory`, `./unsloth` 는 vendored non-editable 로 설치된다. 서브프로젝트 소스를 수정하며 쓰고 싶으면 아래로 덮어쓴다:
 
-  ```bash
-  pip install -e ./LlamaFactory --no-deps
+  # gui-model-unsloth env — google/gemma-4 지원 최신으로
+  pip install --upgrade transformers
   pip install -e './unsloth[huggingface,triton]' --no-deps
   ```
-
-### Unsloth 학습 시 deepspeed 제거
-
-Unsloth (Gemma-4 e2b/e4b) 백엔드는 deepspeed 와 호환되지 않는다 (FastModel 의 메모리 최적화 / gradient checkpointing 이 deepspeed ZeRO 와 충돌하고, env 에 deepspeed 가 남아 있으면 `accelerate launch` 가 deepspeed plugin 을 자동 활성화해 첫 step 에서 실패할 수 있다). 노트북 [`gui-model.ipynb`](./gui-model.ipynb) 의 Cell 5 (`%%bash` + `pip uninstall -y deepspeed`) 가 학습 직전 deepspeed 를 env 에서 제거한다. LlamaFactory 백엔드 모델 학습으로 돌아갈 때는 다음 중 하나로 deepspeed 를 복원한다:
-
-```bash
-pip install -e .   # setup.py 의 deepspeed>=0.10.0,<=0.18.4 재설치
-# 또는
-pip install 'deepspeed>=0.10.0,<=0.18.4'
-```
+- merge/export 단계에서는 `HF_TOKEN` (HF Hub push 용). `.env` 는 두 env 에서 공유해도 무방하다 (HF_TOKEN / NPROC_PER_NODE 만 정의).
 
 ### PATH / user-site 정책
 
 `scripts/_common.sh` 는 conda env 가 활성화돼 있을 때 `$CONDA_PREFIX/bin` 을 PATH 최상단에 고정한다. user-site (`PYTHONUSERBASE/.../bin`) 에 낡은 `accelerate` CLI 가 남아 있어도 env 소속 CLI 가 먼저 잡히도록 보장하기 위함이며, user-site 자체는 유지한다 (일부 deps 가 거기 설치된 상태인 환경을 고려).
 
-conda env 미활성 상태에서 `scripts/*.sh` 를 실행하면 스크립트가 바로 중단된다. 반드시 `conda activate gui-model` 먼저.
+conda env 미활성 상태에서 `scripts/*.sh` 를 실행하면 스크립트가 바로 중단된다. 모델에 맞는 env 를 반드시 먼저 activate:
+
+```bash
+conda activate gui-model-llamafactory   # qwen*, llava*
+conda activate gui-model-unsloth        # gemma-4-*
+```
+
+`scripts/_common.sh::MODEL_BACKEND` 매핑은 그대로 유지되므로, 엉뚱한 env 에서 해당 백엔드의 CLI/모듈이 없는 모델을 `--model` 로 지정하면 shell 단계에서 `ImportError` / `command not found` 로 빨리 중단된다.
 
 ### 깨진 env 복구
 
-user-site 에 손상된 패키지가 섞여 `pip install -e .` 가 "already satisfied" 로 넘어가거나 CLI shebang 이 base env python 을 가리키는 상태라면:
+user-site 에 손상된 패키지가 섞여 `pip install -e '.[<extra>]'` 가 "already satisfied" 로 넘어가거나 CLI shebang 이 base env python 을 가리키는 상태라면:
 
 ```bash
 # 문제 패키지만 env 에 강제 재설치 (예: accelerate)
 PIP_USER=0 pip install --no-user --force-reinstall --no-deps "accelerate>=1.3.0,<=1.11.0"
 
-# 또는 전체 재해석
-PIP_USER=0 pip install --no-user --force-reinstall --no-deps -e .
+# 또는 전체 재해석 (activate 된 env 에 맞는 extras 로)
+PIP_USER=0 pip install --no-user --force-reinstall --no-deps -e '.[llamafactory]'
+PIP_USER=0 pip install --no-user --force-reinstall --no-deps -e '.[unsloth]'
 ```
 
 검증:
@@ -189,12 +201,19 @@ data/{AndroidControl,MonkeyCollection}/
 
 ### 1. notebook 경로
 
-[`gui-model.ipynb`](./gui-model.ipynb) 의 섹션 순서대로 실행한다.
+학습할 모델의 백엔드에 맞는 노트북 하나를 선택해 **해당 env 에서** 섹션 순서대로 실행한다.
 
-> **Global batch size 자동 계산**: Section 0 (Cell 6) 이 `.env` 의 `NPROC_PER_NODE` 와
+| 모델 계열 | conda env | notebook |
+|----------|-----------|----------|
+| Qwen2-VL, Qwen2.5-VL, Qwen3-VL, LLaVA-v1.6-mistral-7b, LLaVA-v1.6-vicuna-7b, Llama3-LLaVA-next-8b | `gui-model-llamafactory` | [`gui-model-llamafactory.ipynb`](./gui-model-llamafactory.ipynb) |
+| Gemma-4-E2B, Gemma-4-E4B | `gui-model-unsloth` | [`gui-model-unsloth.ipynb`](./gui-model-unsloth.ipynb) |
+
+두 노트북은 섹션 번호와 공통 유틸리티(데이터 준비, shell 기반 평가) 가 동일한 형태를 갖도록 쪼개졌으므로 각자 단독 실행이 가능하다.
+
+> **Global batch size 자동 계산**: Section 0 의 CONFIGS 셀이 `.env` 의 `NPROC_PER_NODE` 와
 > 프레임워크별 `per_device_train_batch_size` (LF=2, Unsloth=1) 로부터 `gradient_accumulation_steps`
 > 를 역계산해 `GLOBAL_BATCH_SIZE=64` 를 유지한다. GPU 수가 바뀌면 `.env` 의 `NPROC_PER_NODE`
-> 만 수정하고 노트북 Cell 6 과 YAML 생성 셀(9/11/15/17/61) 을 다시 실행하면 된다.
+> 만 수정하고 Section 0 의 CONFIGS 셀과 Section 0 YAML 생성 셀을 다시 실행하면 된다.
 >
 > **AC 하이퍼파라미터는 모델 크기 3 단(2B / 3-4B / 7-8B) 으로 공유**된다 (`_SIZE_CONFIG_AC`).
 > 상세 tier 표와 계열 delta 규칙은 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2 "하이퍼파라미터" 참조.
@@ -325,10 +344,12 @@ python scripts/split_data.py --dataset MonkeyCollection
 
 새 모델 추가 시 아래를 동기화해야 한다:
 
-1. `gui-model.ipynb` Cell 3 의 `_MODEL_CONFIG` 딕셔너리에 모델 항목 추가 (`backend` 필드 포함)
+1. 백엔드 결정 후 **해당 노트북** 의 Section 0 `_MODEL_CONFIG` 딕셔너리에 모델 항목 추가 (`backend` 필드 포함).
+   - `backend=llamafactory` → [`gui-model-llamafactory.ipynb`](./gui-model-llamafactory.ipynb)
+   - `backend=unsloth` → [`gui-model-unsloth.ipynb`](./gui-model-unsloth.ipynb)
 2. `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 에 동일 항목 추가
 3. backend 가 기본값(`llamafactory`)이 아니면 `_common.sh` 의 `MODEL_BACKEND` 매핑에 등록
-4. `backend=unsloth` 일 경우 `unsloth/configs/GUI-Model-{AC,MC}/stage{1,2}_*/...` YAML 은 notebook 의 "Unsloth Stage {1,2} YAML 일괄 생성" 셀에서 자동 생성된다 (Gemma-4 e2b/e4b 적용). 동일 모델이 LF `examples/custom/GUI-Model-{AC,MC}/stage{1,2}_*/` 아래에는 생성되지 않는다 (LF 생성 셀들이 `backend == "unsloth"` 을 스킵함). MC 는 Stage 1 전용이므로 `stage2_*/` YAML 은 MC 에 대해 생성되지 않는다 (`_STAGE1_ONLY` guard).
+4. 해당 노트북의 Section 0 "Stage {1,2} YAML 일괄 생성" 셀이 재실행되면 YAML (`LlamaFactory/examples/custom/...` 또는 `unsloth/configs/...`) 이 자동 생성된다. MC 는 Stage 1 전용이므로 `stage2_*/` YAML 은 MC 에 대해 생성되지 않는다 (`_STAGE1_ONLY` guard).
 
 ## 테스트 실행
 
@@ -345,7 +366,7 @@ pytest tests/test_action_eval.py -v
 
 ## 코드 읽기 시작점
 
-- [`gui-model.ipynb`](./gui-model.ipynb): 전체 파이프라인 기준
+- [`gui-model-llamafactory.ipynb`](./gui-model-llamafactory.ipynb) · [`gui-model-unsloth.ipynb`](./gui-model-unsloth.ipynb): 백엔드별 전체 파이프라인 기준
 - [`scripts/_common.sh`](./scripts/_common.sh): path, dataset, model, logging 규약
 - [`scripts/split_data.py`](./scripts/split_data.py): split 규칙
 - [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py): Stage 1 metric

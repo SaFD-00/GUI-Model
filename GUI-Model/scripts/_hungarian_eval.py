@@ -2,8 +2,9 @@
 """
 Standalone Hungarian/BLEU/ROUGE evaluator for Stage 1 World-Modeling predictions.
 
-Ported from gui-model.ipynb Cell 55+56. Used by scripts/stage1_eval.sh
-and can be re-run from notebook Cell 56 with identical results.
+Ported from the Stage 1 evaluation section of the project notebooks
+(gui-model-llamafactory.ipynb / gui-model-unsloth.ipynb, Section 5).
+Used by scripts/stage1_eval.sh.
 
 Subcommand
 ----------

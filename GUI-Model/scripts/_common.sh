@@ -11,12 +11,14 @@ set -euo pipefail
 # 다만 /root/.local/workspace/python-packages/bin 의 낡은 accelerate CLI 는
 # shebang 이 base env python 을 가리킬 때가 있어 `No module named 'torch'` 를
 # 유발한다. conda env 가 활성화되어 있다면 해당 env 의 bin 을 PATH 맨 앞에 고정해
-# env 소속 CLI (/root/anaconda3/envs/gui-model/bin/accelerate 등) 가 먼저
-# 잡히도록 강제한다.
+# env 소속 CLI (/root/anaconda3/envs/gui-model-{llamafactory,unsloth}/bin/accelerate 등) 가
+# 먼저 잡히도록 강제한다.
 if [[ -n "${CONDA_PREFIX:-}" ]]; then
   export PATH="$CONDA_PREFIX/bin:$PATH"
 else
-  echo "[!] conda env 가 활성화되어 있지 않습니다. 'conda activate gui-model' 후 다시 실행하세요." >&2
+  echo "[!] conda env 가 활성화되어 있지 않습니다. 모델 backend 에 맞춰 다음 중 하나를 먼저 실행하세요:" >&2
+  echo "      conda activate gui-model-llamafactory   # qwen*, llava*" >&2
+  echo "      conda activate gui-model-unsloth        # gemma-4-*" >&2
   exit 1
 fi
 
@@ -74,8 +76,8 @@ declare -A MODEL_ID=(
   [qwen3-vl-2b]="Qwen/Qwen3-VL-2B-Instruct"
   [qwen3-vl-4b]="Qwen/Qwen3-VL-4B-Instruct"
   [qwen3-vl-8b]="Qwen/Qwen3-VL-8B-Instruct"
-  [gemma-4-e2b]="unsloth/gemma-4-E2B-it"
-  [gemma-4-e4b]="unsloth/gemma-4-E4B-it"
+  [gemma-4-e2b]="google/gemma-4-E2B-it"
+  [gemma-4-e4b]="google/gemma-4-E4B-it"
   [llava-v1.6-mistral-7b]="llava-hf/llava-v1.6-mistral-7b-hf"
   [llava-v1.6-vicuna-7b]="llava-hf/llava-v1.6-vicuna-7b-hf"
   [llama3-llava-next-8b]="llava-hf/llama3-llava-next-8b-hf"

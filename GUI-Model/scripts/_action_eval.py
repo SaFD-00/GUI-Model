@@ -2,8 +2,9 @@
 """
 Standalone Stage 2 Action Prediction evaluator.
 
-본 스크립트의 정본은 ``gui-model.ipynb`` Cell 139 이며 두 곳의 채점 함수는
-글자 단위로 동일하게 유지된다. 메트릭은 AndroidControl 데이터셋의 실제 스키마
+본 스크립트는 Stage 2 Action Prediction 채점의 **정본** 이며, 두 노트북
+(``gui-model-llamafactory.ipynb`` / ``gui-model-unsloth.ipynb``) Section 8 의 정본
+셀이 이 파일과 글자 단위로 동일하게 유지된다. 메트릭은 AndroidControl 데이터셋의 실제 스키마
 (``bounds`` 필드 영구 부재, element-index 기반 grounding) 에 맞춘
 **Step Accuracy (SA)** 단일 1차 지표를 사용한다.
 

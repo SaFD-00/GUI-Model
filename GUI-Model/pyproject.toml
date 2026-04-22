@@ -7,15 +7,56 @@ name = "gui-model"
 version = "0.1.0"
 description = "Training and evaluation pipeline for GUI world modeling and action prediction."
 requires-python = ">=3.10,<3.13"
-# 최상위에서 transformers 버전을 고정한다 (최신 5.5.4).
-# - LlamaFactory/unsloth 서브프로젝트의 transitive 상한(<=5.2.0 / <=5.5.0)을
-#   의도적으로 덮어쓰므로 pip resolver 가 dependency conflict 를 보고할 수 있다.
-#   그 경우 README "환경 설치" 섹션의 회피 절차로 처리한다:
-#     pip install --upgrade transformers==5.5.4
-#     # 또는
-#     pip install -e ./unsloth[huggingface,triton] --no-deps
-#     pip install -e ./LlamaFactory --no-deps
-# - 서브프로젝트(`unsloth/`, `LlamaFactory/`) 의 pyproject.toml 은 수정하지 않는다.
+# 공통 deps — 두 백엔드 (llamafactory / unsloth) 가 모두 필요로 하는 것만.
+# transformers / 서브프로젝트 / deepspeed / vllm / bitsandbytes 는 백엔드별 extras 에서 선언한다.
+# 설치는 env 별로:
+#     conda activate gui-model-llamafactory
+#     pip install -e '.[llamafactory]'
+#   또는
+#     conda activate gui-model-unsloth
+#     pip install -e '.[unsloth]'
+# transformers 버전은 env 별로 다르게 잡는다:
+#   - llamafactory extras: `transformers==5.5.4` (Qwen / LLaVA 에서 검증된 고정값)
+#   - unsloth extras    : `transformers>=5.5.4`  (학습 대상 google/gemma-4-E2B-it /
+#                          google/gemma-4-E4B-it 가 최신 Gemma-4 loader 를 요구)
+# 서브프로젝트 transitive 상한(LF <=5.2.0 / Unsloth <=5.5.0) 과 충돌 시
+# `pip install -e ./LlamaFactory --no-deps` / `pip install -e ./unsloth[huggingface,triton] --no-deps`
+# 로 회피한다. 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다.
 dependencies = [
+  "python-dotenv",
+  "pyyaml",
+  "pillow",
+  "pyarrow",
+  "sentencepiece",
+  "tiktoken",
+  "beautifulsoup4",
+  "munkres",
+  "rouge",
+  "lxml",
+  "nltk",
+  "jieba",
+  "rouge-chinese",
+  "huggingface_hub>=0.34.0",
+  "accelerate>=1.3.0,<=1.11.0",
+]
+
+# [project.optional-dependencies] 의 local subproject (`./LlamaFactory`, `./unsloth`) 는
+# PEP 508 `file://` 절대 경로가 필요하므로 setup.py 에서 동적으로 채운다.
+# 여기선 그 외 deps 만 선언해 pyproject 의 선언적 성격을 유지한다.
+#
+# transformers 버전 차이:
+#   - llamafactory: `==5.5.4` 로 고정 (Qwen / LLaVA 계열에서 검증된 버전)
+#   - unsloth    : `>=5.5.4` 로 상한 해제 — 학습 대상 google/gemma-4-E2B-it /
+#                  google/gemma-4-E4B-it 가 최신 transformers 의 Gemma-4 loader 를
+#                  요구하므로 pip resolver 가 newest 로 올라갈 수 있어야 한다.
+[project.optional-dependencies]
+llamafactory = [
   "transformers==5.5.4",
+  "deepspeed>=0.10.0,<=0.18.4",
+  "vllm>=0.4.3,<=0.11.0",
+]
+unsloth = [
+  "transformers>=5.5.4",
+  "bitsandbytes>=0.45.5",
+  "vllm>=0.4.3,<=0.11.0",
 ]
