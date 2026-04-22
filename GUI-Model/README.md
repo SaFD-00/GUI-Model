@@ -164,7 +164,9 @@ data/
 AC 는 Stage 2 에서 **앱 도메인 일반화** 평가를 위해 **in-domain / out-of-domain** test 로 분리한다. MC 는 Stage 2 데이터가 없으므로 Stage 1 random split 만 수행한다. MB 는 split 하지 않는다.
 
 ```bash
-# 1) AC: 에피소드 메타데이터 (primary_app) 추출 — Stage 2 ID/OOD split 의 입력.
+# 1) AC: 에피소드 메타데이터 (primary_app = 전경 앱 package_name) 추출 — Stage 2 ID/OOD split 의 입력.
+#    AndroidAccessibilityForest proto 를 디코드해 각 step 의 foreground application
+#    window 를 집계 → 가장 자주 등장한 비-system package 를 episode 의 primary_app 으로 기록.
 python scripts/extract_androidcontrol_metadata.py \
     --output data/AndroidControl/episodes_meta.jsonl
 
@@ -184,7 +186,7 @@ python scripts/split_data.py --dataset MonkeyCollection
   - 앱 집합을 셔플 → OOD 버킷이 `--stage2-test-ood-size` 행 수를 채울 때까지 먼저 할당, 나머지는 ID 버킷.
   - ID 풀에서 `test_id_size` 행을 action-type stratified 로 샘플 → 나머지 + null-app 행을 합쳐 `train_size` 로 stratified subsample (largest-remainder).
   - OOD 풀에서 `test_ood_size` 행을 action-type stratified 로 샘플.
-  - `primary_app` 은 첫 `open_app` action 의 `app_name` (AC 메타 추출기가 생성).
+  - `primary_app` 은 각 step 의 `accessibility_trees` (AndroidAccessibilityForest proto) 에서 전경 application window 의 `package_name` 을 집계해 다수결로 뽑은 값. 에피소드가 `open_app` 으로 시작하지 않아도 채워지며, 값은 앱 라벨이 아닌 package 식별자 (예: `com.ajnsnewmedia.kitchenstories`).
 - **MB**: split 없음. `gui-model_stage1.jsonl` 과 `gui-model_stage2.jsonl` 각각이 평가 세트 전체. `_action_eval.py` 는 single-pair overall 모드로 채점.
 
 산출물 (학습 DS):
@@ -330,7 +332,7 @@ repo id 조립은 `scripts/_common.sh::hf_repo_id_stage1` / `hf_repo_id_stage2_b
 AC Stage 2 는 앱 도메인 일반화를 측정하기 위해 **in-domain / out-of-domain** 두 test 파일을 사용한다. MC 는 Stage 2 가 없어 Stage 1 random split 만 수행된다. MB 는 평가 전용 벤치마크이므로 split 대상이 아니다.
 
 ```bash
-# 1) AC: 메타데이터 (앱 분류용) 생성 — primary_app 필드 포함
+# 1) AC: 메타데이터 (앱 분류용) 생성 — primary_app = 전경 앱 package_name (accessibility_trees proto 기반)
 python scripts/extract_androidcontrol_metadata.py --output data/AndroidControl/episodes_meta.jsonl
 
 # 2) AC: Stage 1 random split + Stage 2 ID/OOD split

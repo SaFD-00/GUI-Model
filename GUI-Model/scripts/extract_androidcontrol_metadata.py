@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
 Extract AndroidControl per-episode metadata (goal, step_instructions, actions,
-app-level fields, ...) from GCS TFRecord files into a single JSONL, so it can be
+primary_app, ...) from GCS TFRecord files into a single JSONL, so it can be
 joined with gui-model_stage{1,2}.jsonl by episode_id.
 
-Screenshots are already extracted by extract_androidcontrol_images.py and are
-skipped here.
+``primary_app`` is recovered from the ``accessibility_trees`` proto
+(``AndroidAccessibilityForest``): for each step we pick the foreground
+``TYPE_APPLICATION`` window, read its root node's ``package_name``, and keep
+the most frequent non-system package across the episode. This covers
+episodes that do not begin with an ``open_app`` action, which the earlier
+"first open_app.app_name" heuristic left as ``null``. The resulting value is
+a package identifier (e.g. ``com.ajnsnewmedia.kitchenstories``), not an app
+label.
+
+Screenshots are extracted separately by extract_androidcontrol_images.py.
 
 Usage:
     python scripts/extract_androidcontrol_metadata.py \
@@ -24,6 +32,9 @@ import sys
 import tempfile
 import time
 import urllib.error
+from collections import Counter
+
+from android_env.proto.a11y import android_accessibility_forest_pb2
 
 from extract_androidcontrol_images import (
     GCS_BUCKET,
@@ -34,12 +45,31 @@ from extract_androidcontrol_images import (
     parse_example,
 )
 
-# Per-step binary/huge features we never want to emit (screenshots: PNG data;
-# accessibility_trees: serialized proto that's useless as utf-8 text).
+# Per-step binary/huge features we never want to emit to JSONL. Screenshots are
+# PNG bytes; accessibility_trees is a serialized proto that we parse out-of-band
+# to derive ``primary_app`` (see ``extract_primary_app_from_trees``).
 SKIP_FEATURES = {"screenshots", "accessibility_trees"}
 
 # Drop any single bytes entry larger than this (defense in depth for stray blobs).
 MAX_BYTES_PER_ENTRY = 64 * 1024
+
+# AccessibilityWindowInfo.TYPE_APPLICATION — matches both the Android SDK
+# (https://developer.android.com/reference/android/view/accessibility/AccessibilityWindowInfo)
+# and android_env's WindowType enum.
+WINDOW_TYPE_APPLICATION = 1
+
+# Launcher / system-chrome packages that can appear as the foreground
+# application window but do not represent the episode's task app.
+SYSTEM_PACKAGES = {
+    "com.android.systemui",
+    "com.android.launcher",
+    "com.android.launcher3",
+    "com.google.android.apps.nexuslauncher",
+    "com.sec.android.app.launcher",
+    "com.miui.home",
+    "com.oppo.launcher",
+    "com.huawei.android.launcher",
+}
 
 
 def feature_to_jsonable(feat: tuple[str, list]) -> object | None:
@@ -57,29 +87,83 @@ def feature_to_jsonable(feat: tuple[str, list]) -> object | None:
     return None
 
 
-def extract_primary_app(actions_field: object) -> str | None:
-    """Return the app_name of the first ``open_app`` action in ``actions_field``.
+def _root_package(window) -> str | None:
+    """Return the first non-empty ``package_name`` among the window's nodes.
 
-    Used downstream to assign each episode a single "primary app" label for
-    in-domain / out-of-domain split construction. Returns ``None`` when the
-    episode has no ``open_app`` action or the field is missing/malformed.
+    Every node inside a single ``TYPE_APPLICATION`` window carries the same
+    owning ``package_name``, so taking the first non-empty value is equivalent
+    to reading the root node's package.
     """
-    if actions_field is None:
-        return None
-    items = actions_field if isinstance(actions_field, list) else [actions_field]
-    for raw in items:
-        if not isinstance(raw, str):
+    for node in window.tree.nodes:
+        pkg = (getattr(node, "package_name", "") or "").strip()
+        if pkg:
+            return pkg
+    return None
+
+
+def _foreground_package(forest, *, allow_system: bool) -> str | None:
+    """Pick the foreground ``TYPE_APPLICATION`` window's root ``package_name``.
+
+    Preference order:
+      1. ``is_active == True`` application window.
+      2. Application window with the greatest ``layer`` (top of the z-order).
+
+    When ``allow_system`` is ``False``, packages in ``SYSTEM_PACKAGES`` are
+    skipped so the caller can prefer real task apps over the launcher.
+    """
+    app_windows = [w for w in forest.windows if w.window_type == WINDOW_TYPE_APPLICATION]
+
+    for w in app_windows:
+        if getattr(w, "is_active", False):
+            pkg = _root_package(w)
+            if pkg and (allow_system or pkg not in SYSTEM_PACKAGES):
+                return pkg
+
+    for w in sorted(app_windows, key=lambda x: getattr(x, "layer", 0), reverse=True):
+        pkg = _root_package(w)
+        if pkg and (allow_system or pkg not in SYSTEM_PACKAGES):
+            return pkg
+
+    return None
+
+
+def extract_primary_app_from_trees(a11y_bytes_list: list[bytes]) -> str | None:
+    """Majority-vote the episode's primary app across per-step forests.
+
+    Step 0 often captures the launcher before the first action runs, so a
+    single-step read routinely picks ``com.google.android.apps.nexuslauncher``
+    instead of the task app. We aggregate non-system foreground packages
+    across every step and return the most common one. If every step only ever
+    surfaces a system/launcher window, we fall back to the most common
+    including system packages.
+    """
+    forests = []
+    for raw in a11y_bytes_list:
+        if not raw:
             continue
         try:
-            a = json.loads(raw)
+            forest = android_accessibility_forest_pb2.AndroidAccessibilityForest()
+            forest.ParseFromString(raw)
         except Exception:
             continue
-        if not isinstance(a, dict):
-            continue
-        if str(a.get("action_type", "")).lower() == "open_app":
-            name = a.get("app_name")
-            if isinstance(name, str) and name.strip():
-                return name.strip()
+        forests.append(forest)
+
+    non_system = Counter()
+    for forest in forests:
+        pkg = _foreground_package(forest, allow_system=False)
+        if pkg:
+            non_system[pkg] += 1
+    if non_system:
+        return non_system.most_common(1)[0][0]
+
+    any_pkg = Counter()
+    for forest in forests:
+        pkg = _foreground_package(forest, allow_system=True)
+        if pkg:
+            any_pkg[pkg] += 1
+    if any_pkg:
+        return any_pkg.most_common(1)[0][0]
+
     return None
 
 
@@ -155,6 +239,12 @@ def main() -> None:
                         total_errors += 1
                         continue
 
+                    a11y_feat = features.get("accessibility_trees")
+                    if a11y_feat and a11y_feat[0] == "bytes_list":
+                        a11y_bytes_list = a11y_feat[1]
+                    else:
+                        a11y_bytes_list = []
+
                     record: dict[str, object] = {}
                     for name, feat in features.items():
                         if name in SKIP_FEATURES:
@@ -164,7 +254,7 @@ def main() -> None:
                             record[name] = val
                         seen_keys.add(name)
 
-                    record["primary_app"] = extract_primary_app(record.get("actions"))
+                    record["primary_app"] = extract_primary_app_from_trees(a11y_bytes_list)
 
                     fout.write(json.dumps(record, ensure_ascii=False))
                     fout.write("\n")
@@ -174,6 +264,7 @@ def main() -> None:
                     if args.verbose:
                         print(
                             f"  episode {record.get('episode_id')}: "
+                            f"primary_app={record['primary_app']!r} "
                             f"keys={sorted(record.keys())}"
                         )
 

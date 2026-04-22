@@ -163,7 +163,7 @@ data/
 │   ├── gui-model_stage2_train.jsonl
 │   ├── gui-model_stage2_test_id.jsonl      # in-domain (train 에 등장한 앱)
 │   ├── gui-model_stage2_test_ood.jsonl     # out-of-domain (train 에 없는 앱)
-│   ├── episodes_meta.jsonl                 # primary_app 라벨 (split_data.py 의 입력)
+│   ├── episodes_meta.jsonl                 # primary_app = 전경 앱 package_name (split_data.py 의 입력)
 │   └── images/
 ├── MonkeyCollection/                  # Stage 1 전용 학습 + 평가
 │   ├── gui-model_stage1.jsonl              # 약 100K
@@ -177,19 +177,21 @@ data/
 ```
 
 - Stage 1 (AC, MC) 은 random split 이다. MC 는 `_STAGE1_ONLY` 로 Stage 2 자동 skip.
-- Stage 2 (AC only) 는 **app-level in-domain / out-of-domain split**. 앱 집합을 ID/OOD 로 나눈 뒤 각 풀에서 action type stratified 샘플링 (largest-remainder). train 은 `null` primary_app 에피소드까지 흡수해 regular 크기 유지.
-- 메타 추출: `scripts/extract_androidcontrol_metadata.py` (TFRecord → `primary_app`). MC 는 Stage 2 가 없어 메타 추출 불필요. MB 는 평가 전용이라 split 자체가 없음.
+- Stage 2 (AC only) 는 **app-level in-domain / out-of-domain split**. 앱 집합(=package 식별자 집합) 을 ID/OOD 로 나눈 뒤 각 풀에서 action type stratified 샘플링 (largest-remainder). train 은 `null` primary_app 에피소드까지 흡수해 regular 크기 유지.
+- 메타 추출: `scripts/extract_androidcontrol_metadata.py` (TFRecord → `primary_app` = 전경 application window 의 `package_name`, AndroidAccessibilityForest proto 를 디코드해 각 step 을 집계 후 다수결). `pip install android-env` 필요. MC 는 Stage 2 가 없어 메타 추출 불필요. MB 는 평가 전용이라 split 자체가 없음.
 - [`scripts/split_data.py`](./scripts/split_data.py) 가 Stage 1 random split + Stage 2 ID/OOD split 을 담당한다. 기본 크기: AC train 50K / test_id 3K / test_ood 3K. MC 는 Stage 1 random split 만.
 - MB 는 `_EVAL_ONLY_BENCHMARKS` 메커니즘으로 notebook dataset_info 등록 셀이 `GUI-Model-MB_stage{1,2}` 단일 파일 entry 를 별도 추가한다.
 
 #### `episodes_meta.jsonl` 스키마 (AC only)
 
 ```jsonl
-{"episode_id": 0, "goal": "...", "primary_app": "Zoho Meeting", "actions": ["...", ...], "step_instructions": [...], ...}
+{"episode_id": 0, "goal": "...", "primary_app": "com.zoho.meeting", "actions": ["...", ...], "step_instructions": [...], ...}
 ```
 
 - AC: `episode_id` 는 **int** (0, 1, 2, ...). 원본 이미지 경로는 zero-padded string (`episode_006881_step_0001.png`). `split_data.py::_norm_ep` 가 `str(int(...))` 로 정규화해 매칭한다.
-- `primary_app` 은 `None` 일 수 있고 (open_app action 없음), 이 경우 해당 에피소드는 train 풀에만 합류하고 test 분할에서 제외된다 (`--stage2-exclude-null-app` 으로 완전 제외 가능).
+- `primary_app` 은 각 step 의 `accessibility_trees` (`AndroidAccessibilityForest` proto) 에서 전경 `TYPE_APPLICATION` window 의 root `package_name` 을 뽑아 에피소드 전체에서 다수결로 정한 값. 앱 라벨이 아닌 **package 식별자** (예: `com.zoho.meeting`, `com.ajnsnewmedia.kitchenstories`). 첫 액션이 `open_app` 이 아니어도 채워진다.
+- 시스템/런처 package (`com.google.android.apps.nexuslauncher`, `com.android.launcher3`, `com.android.systemui` 등) 는 다수결에서 제외되지만, 모든 step 이 그 범주에만 머무른 에피소드에서는 fallback 으로 포함될 수 있다.
+- 전경 window 를 뽑지 못한 드문 경우 `primary_app` 은 `None` 이며, 해당 에피소드는 train 풀에만 합류하고 test 분할에서 제외된다 (`--stage2-exclude-null-app` 으로 완전 제외 가능).
 - MC 는 Stage 2 가 없어 episodes_meta 를 필요로 하지 않는다. MB 는 평가 전용이라 split 자체가 없으므로 episodes_meta 가 없다.
 
 ### 데이터셋 이름 규약
@@ -305,7 +307,7 @@ bash scripts/stage2_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datas
 
 ```
 raw JSONL + screenshots  (AC: train+eval, MC: Stage1 전용, MB: eval-only 단일 파일)
-  -> extract_androidcontrol_metadata.py  (AC 만 — primary_app 라벨)
+  -> extract_androidcontrol_metadata.py  (AC 만 — primary_app = 전경 앱 package_name, accessibility_trees proto 기반)
   -> split_data.py                    (AC: Stage1 random + Stage2 ID/OOD | MC: Stage1 random only)
   -> dataset_info.json registration   (AC/MC: train+test | MB: eval-only 단일 entry)
   -> [per model] Stage 1 train  (mode1 = full | lora, 학습 DS ∈ {AC, MC})

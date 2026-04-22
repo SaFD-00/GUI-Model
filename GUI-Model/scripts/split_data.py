@@ -8,6 +8,10 @@ MobiBench(MB) 는 평가 전용 벤치마크이므로 split 하지 않는다 —
 Stage 1 (World Modeling):  random split over ``gui-model_stage1.jsonl``.
 Stage 2 (Action Prediction): app-level in-domain / out-of-domain split over
     ``gui-model_stage2.jsonl`` using ``episodes_meta.jsonl`` (primary_app).
+    ``primary_app`` 값은 앱 라벨이 아닌 package 식별자 (예:
+    ``com.ajnsnewmedia.kitchenstories``) 이다 — ``scripts/extract_androidcontrol_metadata.py``
+    가 AndroidAccessibilityForest proto 에서 전경 application window 의
+    ``package_name`` 을 집계해 생성한다.
     MC 는 Stage 2 데이터가 없으므로 자동 skip (``--skip-stage2`` 기본 적용).
 
 Usage
