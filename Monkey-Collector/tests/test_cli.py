@@ -1,5 +1,6 @@
 """Tests for server.cli — CLI argument parsing."""
 
+import argparse
 from unittest.mock import patch
 
 import pytest
@@ -51,6 +52,28 @@ class TestRunArgsParsing:
             assert args.new_session is True
             assert args.force is True
             assert args.input_mode == "random"
+
+    def test_device_default_none(self):
+        from server.cli import main
+
+        with patch(
+            "sys.argv", ["monkey-collect", "run", "--apps", "all"]
+        ), patch("server.cli.cmd_run") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.device is None
+
+    def test_device_flag(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "run",
+            "--apps", "all",
+            "--device", "emulator-5554",
+        ]), patch("server.cli.cmd_run") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.device == "emulator-5554"
 
 
 class TestConvertArgsParsing:
@@ -146,6 +169,52 @@ class TestSyncInstalledArgsParsing:
             main()
             args = mock_cmd.call_args[0][0]
             assert args.apps_csv == "/tmp/apps.csv"
+
+    def test_device_default_none(self):
+        from server.cli import main
+
+        with patch(
+            "sys.argv", ["monkey-collect", "sync-installed"]
+        ), patch("server.cli.cmd_sync_installed") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.device is None
+
+    def test_device_flag(self):
+        from server.cli import main
+
+        with patch("sys.argv", [
+            "monkey-collect", "sync-installed",
+            "--device", "emulator-5556",
+        ]), patch("server.cli.cmd_sync_installed") as mock_cmd:
+            main()
+            args = mock_cmd.call_args[0][0]
+            assert args.device == "emulator-5556"
+
+
+class TestResolveDeviceSerial:
+    """_resolve_device_serial: --device wins, ANDROID_SERIAL fallback, else None."""
+
+    def test_explicit_device_wins(self, monkeypatch):
+        from server.cli import _resolve_device_serial
+
+        monkeypatch.setenv("ANDROID_SERIAL", "env-device")
+        args = argparse.Namespace(device="emulator-5554")
+        assert _resolve_device_serial(args) == "emulator-5554"
+
+    def test_env_fallback(self, monkeypatch):
+        from server.cli import _resolve_device_serial
+
+        monkeypatch.setenv("ANDROID_SERIAL", "emulator-9999")
+        args = argparse.Namespace(device=None)
+        assert _resolve_device_serial(args) == "emulator-9999"
+
+    def test_none_when_neither(self, monkeypatch):
+        from server.cli import _resolve_device_serial
+
+        monkeypatch.delenv("ANDROID_SERIAL", raising=False)
+        args = argparse.Namespace(device=None)
+        assert _resolve_device_serial(args) is None
 
 
 class TestResetArgsParsing:

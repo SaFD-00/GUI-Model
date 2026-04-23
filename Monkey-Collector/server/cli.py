@@ -1,13 +1,35 @@
 """CLI entrypoint for monkey-collector."""
 
 import argparse
+import os
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from loguru import logger
 
 
+def _resolve_device_serial(args: argparse.Namespace) -> str | None:
+    """Resolve the ADB device serial from --device or ANDROID_SERIAL env var."""
+    explicit = getattr(args, "device", None)
+    if explicit:
+        logger.info(f"[device] using --device {explicit}")
+        return explicit
+    env = os.environ.get("ANDROID_SERIAL")
+    if env:
+        logger.info(f"[device] using ANDROID_SERIAL={env}")
+        return env
+    return None
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Run server-driven data collection across one or more installed apps."""
+    log_dir = Path(__file__).resolve().parents[1] / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    logger.add(str(log_path), level="DEBUG", enqueue=True)
+    logger.info(f"[run] log file: {log_path}")
+
     from server.domain.activity_coverage import ActivityCoverageTracker
     from server.domain.cost_tracker import CostTracker
     from server.infra.device.adb import AdbClient
@@ -28,7 +50,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         return
     logger.info(f"Run queue ({len(packages)} app(s)): {packages}")
 
-    adb = AdbClient()
+    adb = AdbClient(device_serial=_resolve_device_serial(args))
     activity_tracker = ActivityCoverageTracker()
     cost_tracker = CostTracker()
     text_gen = create_text_generator(
@@ -220,7 +242,7 @@ def cmd_sync_installed(args: argparse.Namespace) -> None:
     """Refresh the installed column of apps.csv from the connected device."""
     from server.pipeline.installed_sync import sync
 
-    sync(csv_path=args.apps_csv)
+    sync(csv_path=args.apps_csv, device=_resolve_device_serial(args))
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
@@ -358,6 +380,16 @@ def main() -> None:
             "complete (completed_at set). Default: skip completed apps."
         ),
     )
+    p.add_argument(
+        "--device",
+        default=None,
+        metavar="SERIAL",
+        help=(
+            "ADB device serial (e.g. emulator-5554). Required when more "
+            "than one device is attached. Falls back to ANDROID_SERIAL "
+            "env var, then to adb's default device."
+        ),
+    )
 
     # reset (delete collected data)
     p = sub.add_parser(
@@ -395,6 +427,16 @@ def main() -> None:
         help="Update apps.csv 'installed' column from the connected device",
     )
     p.add_argument("--apps-csv", default="apps.csv", help="Path to apps.csv")
+    p.add_argument(
+        "--device",
+        default=None,
+        metavar="SERIAL",
+        help=(
+            "ADB device serial (e.g. emulator-5554). Required when more "
+            "than one device is attached. Falls back to ANDROID_SERIAL "
+            "env var, then to adb's default device."
+        ),
+    )
 
     # convert
     p = sub.add_parser("convert", help="Convert session to JSONL")

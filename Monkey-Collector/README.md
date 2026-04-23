@@ -46,7 +46,7 @@ cp .env.example .env
 
 - Python 3.10+
 - ADB 가 PATH 에 있거나 `ANDROID_HOME` 이 설정되어 있어야 한다
-- 디바이스 한 대가 `adb devices` 에 연결되어 있어야 한다 (USB 또는 단일 에뮬레이터)
+- `adb devices` 에 디바이스가 한 대면 자동 선택, 두 대 이상이면 `--device <serial>` 또는 `ANDROID_SERIAL` 환경변수로 대상을 지정한다
 
 ### Android app
 
@@ -91,6 +91,9 @@ monkey-collect run --apps com.google.android.deskclock --new-session
 
 # 입력 텍스트를 hardcoded 로 (API 비용 없음)
 monkey-collect run --apps all --input-mode random
+
+# 여러 에뮬레이터가 붙어 있을 때 대상 디바이스 지정
+monkey-collect run --apps all --device emulator-5554
 ```
 
 동작:
@@ -121,6 +124,7 @@ monkey-collect run --apps com.google.android.deskclock --steps 50
 - `--input-mode`: `api` 또는 `random`
 - `--new-session`: 해당 패키지의 기존 세션을 삭제하고 새로 시작
 - `--force`: `completed_at` 이 채워진 앱도 다시 수집 (기본은 완료 앱 skip)
+- `--device`: ADB 디바이스 serial (예: `emulator-5554`). 다수의 디바이스가 연결되어 있을 때 필수. 생략 시 `ANDROID_SERIAL` 환경변수를 사용
 
 ### `sync-installed`
 
@@ -134,6 +138,7 @@ monkey-collect sync-installed --apps-csv custom_apps.csv
 주요 옵션:
 
 - `--apps-csv`: 갱신할 apps.csv 경로 (기본 `apps.csv`)
+- `--device`: ADB 디바이스 serial. 다수의 디바이스가 연결되어 있을 때 필수. 생략 시 `ANDROID_SERIAL` 환경변수를 사용
 
 ### `reset`
 
