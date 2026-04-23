@@ -79,17 +79,25 @@ LLAMAFACTORY = [
 #   modeling 코드는 transformers 의 최신 Gemma-4 loader 에 의존한다. pip resolver 가
 #   최신 호환 버전을 뽑도록 상한을 풀어 둔다 (LlamaFactory 쪽은 `==5.5.4` 유지).
 # - 서브프로젝트를 `--no-deps` 로 설치하므로 런타임에 필요한 서브프로젝트 deps
-#   (peft / trl / datasets / unsloth_zoo) 를 여기서 재선언한다. Stage 1 LoRA merge
+#   (peft / trl / datasets) 를 여기서 재선언한다. Stage 1 LoRA merge
 #   (`_unsloth_merge.py::merge_lora`) 는 `from unsloth import FastModel` 와
-#   `from peft import PeftModel` 를 사용하므로 peft/unsloth_zoo 는 필수.
+#   `from peft import PeftModel` 를 사용하므로 peft 는 필수.
+# - unsloth_zoo 는 `transformers<=5.5.0` 를 고정하여 우리의 `transformers>=5.5.4`
+#   와 disjoint (pip ResolutionImpossible). env 에는 transformers 5.6.0 이 이미
+#   설치되어 있고 런타임에서 Gemma-4 loader 가 정상 동작하므로 `--no-deps` 로
+#   별도 설치한다. extras 에는 포함하지 않는다:
+#     pip install --no-user --no-deps 'unsloth_zoo>=2026.4.8'
+# - vllm 은 `--no-deps` 로 0.11.0 이 미리 설치되어 있어야 한다. extras 에 포함하면
+#   peft / torchao 의 torch pin 과 vllm wheel 의 torch pin 이 맞물려 pip resolver 가
+#   vllm 을 0.5.1 소스까지 backtrack → `CUDA_HOME is not set` 빌드 실패를 일으킨다.
+#   학습/평가 runtime 이 요구하는 vllm 은 env 에 이미 존재하므로 별도 관리한다:
+#     pip install --no-user --no-deps 'vllm==0.11.0'
 UNSLOTH = [
     "transformers>=5.5.4",
     "bitsandbytes>=0.45.5",
-    "vllm>=0.4.3,<=0.11.0",
     "peft>=0.18.0",
     "trl>=0.18.2,!=0.19.0,<=0.24.0",
     "datasets>=3.4.1,!=4.0.*,!=4.1.0,<4.4.0",
-    "unsloth_zoo>=2026.4.8",
 ]
 
 EXTRAS = {
