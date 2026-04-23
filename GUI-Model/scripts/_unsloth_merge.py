@@ -128,32 +128,36 @@ def merge_full(args: argparse.Namespace) -> None:
 
 
 def merge_lora(args: argparse.Namespace) -> None:
-    """LoRA adapter + base model → merged_16bit safetensors."""
-    if not args.base_model:
-        raise SystemExit("--base-model is required for --mode lora")
+    """LoRA adapter + base model → merged_16bit safetensors.
 
+    Unsloth 가 학습 시 base model 에 Gemma4ClippableLinear 같은 커스텀 레이어를
+    patch 한다. 이 레이어는 peft(>=0.19) 의 generic LoRA injector 가 recognize
+    하지 못해 `PeftModel.from_pretrained(base, adapter)` 호출 시
+    ``ValueError: Target module ... is not supported`` 로 실패한다.
+
+    대신 Unsloth 의 공식 재로드 경로 — adapter 디렉토리를
+    ``FastModel.from_pretrained(model_name=<adapter_dir>)`` 에 직접 주는 방식 — 을
+    사용한다. Unsloth 가 ``adapter_config.json`` 을 읽어 base model 을 resolve
+    하고, peft 에 Gemma-4 monkey-patch 를 적용한 뒤 adapter 를 load 한다.
+    이후 ``save_pretrained_merged`` 로 merged_16bit safetensors 를 내보낸다.
+    """
     from unsloth import FastModel
 
     model, tokenizer = FastModel.from_pretrained(
-        model_name=args.base_model,
+        model_name=str(args.checkpoint),
         load_in_4bit=False,
         dtype=None,  # auto
     )
 
-    from peft import PeftModel
-
-    model = PeftModel.from_pretrained(model, str(args.checkpoint))
-
     dst = args.export_dir.resolve()
     dst.mkdir(parents=True, exist_ok=True)
 
-    # Unsloth helper: merge + save fp16 safetensors compatible with HF/vLLM
     model.save_pretrained_merged(
         str(dst),
         tokenizer,
         save_method="merged_16bit",
     )
-    print(f"[+] Stage 2 merged model saved: {dst}", file=sys.stderr)
+    print(f"[+] LoRA merged model saved: {dst}", file=sys.stderr)
 
 
 def main() -> None:
