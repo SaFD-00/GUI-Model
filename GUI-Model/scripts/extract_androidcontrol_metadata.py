@@ -50,6 +50,20 @@ from extract_androidcontrol_images import (
 # to derive ``primary_app`` (see ``extract_primary_app_from_trees``).
 SKIP_FEATURES = {"screenshots", "accessibility_trees"}
 
+# Canonical JSON key order for each emitted episode. TFRecord feature iteration
+# order is not stable across files, so without this pass the output had keys
+# interleaved differently on every line. Keys not listed here are appended at
+# the end in their original order.
+CANONICAL_KEY_ORDER = (
+    "episode_id",
+    "goal",
+    "primary_app",
+    "screenshot_widths",
+    "screenshot_heights",
+    "step_instructions",
+    "actions",
+)
+
 # Drop any single bytes entry larger than this (defense in depth for stray blobs).
 MAX_BYTES_PER_ENTRY = 64 * 1024
 
@@ -204,90 +218,99 @@ def main() -> None:
     print(f"Found {len(obj_names)} TFRecord files\n")
 
     t_start = time.time()
-    total_episodes = 0
     total_errors = 0
     seen_keys: set[str] = set()
+    records: list[dict[str, object]] = []
     done = False
 
-    with open(args.output, "w", encoding="utf-8") as fout:
-        for file_idx, obj_name in enumerate(obj_names):
-            if done:
-                break
+    for file_idx, obj_name in enumerate(obj_names):
+        if done:
+            break
 
-            file_name = os.path.basename(obj_name)
-            print(f"[{file_idx + 1}/{len(obj_names)}] Downloading {file_name} ...")
+        file_name = os.path.basename(obj_name)
+        print(f"[{file_idx + 1}/{len(obj_names)}] Downloading {file_name} ...")
 
-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".tfrecord.gz")
-            os.close(tmp_fd)
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".tfrecord.gz")
+        os.close(tmp_fd)
 
-            try:
-                gcs_download_to_file(GCS_BUCKET, obj_name, tmp_path)
-                size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
-                print(f"  Downloaded {size_mb:.1f} MB, parsing...")
+        try:
+            gcs_download_to_file(GCS_BUCKET, obj_name, tmp_path)
+            size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
+            print(f"  Downloaded {size_mb:.1f} MB, parsing...")
 
-                file_episodes = 0
-                for record_data in iter_tfrecord_gzip(tmp_path):
-                    try:
-                        features = parse_example(record_data)
-                    except Exception as e:
-                        total_errors += 1
-                        if args.verbose:
-                            print(f"  [WARN] parse failed: {e}")
-                        continue
-
-                    if "episode_id" not in features:
-                        total_errors += 1
-                        continue
-
-                    a11y_feat = features.get("accessibility_trees")
-                    if a11y_feat and a11y_feat[0] == "bytes_list":
-                        a11y_bytes_list = a11y_feat[1]
-                    else:
-                        a11y_bytes_list = []
-
-                    record: dict[str, object] = {}
-                    for name, feat in features.items():
-                        if name in SKIP_FEATURES:
-                            continue
-                        val = feature_to_jsonable(feat)
-                        if val is not None:
-                            record[name] = val
-                        seen_keys.add(name)
-
-                    record["primary_app"] = extract_primary_app_from_trees(a11y_bytes_list)
-
-                    fout.write(json.dumps(record, ensure_ascii=False))
-                    fout.write("\n")
-                    file_episodes += 1
-                    total_episodes += 1
-
+            file_episodes = 0
+            for record_data in iter_tfrecord_gzip(tmp_path):
+                try:
+                    features = parse_example(record_data)
+                except Exception as e:
+                    total_errors += 1
                     if args.verbose:
-                        print(
-                            f"  episode {record.get('episode_id')}: "
-                            f"primary_app={record['primary_app']!r} "
-                            f"keys={sorted(record.keys())}"
-                        )
+                        print(f"  [WARN] parse failed: {e}")
+                    continue
 
-                    if args.max_episodes > 0 and total_episodes >= args.max_episodes:
-                        done = True
-                        break
+                if "episode_id" not in features:
+                    total_errors += 1
+                    continue
 
-                elapsed = time.time() - t_start
-                print(
-                    f"  -> {file_episodes} episodes "
-                    f"(cumulative: {total_episodes} episodes, {elapsed:.0f}s)\n"
-                )
-            except urllib.error.URLError as e:
-                print(f"  [ERROR] Download failed: {e}")
-                total_errors += 1
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+                a11y_feat = features.get("accessibility_trees")
+                if a11y_feat and a11y_feat[0] == "bytes_list":
+                    a11y_bytes_list = a11y_feat[1]
+                else:
+                    a11y_bytes_list = []
+
+                record: dict[str, object] = {}
+                for name, feat in features.items():
+                    if name in SKIP_FEATURES:
+                        continue
+                    val = feature_to_jsonable(feat)
+                    if val is not None:
+                        record[name] = val
+                    seen_keys.add(name)
+
+                record["primary_app"] = extract_primary_app_from_trees(a11y_bytes_list)
+
+                records.append(record)
+                file_episodes += 1
+
+                if args.verbose:
+                    print(
+                        f"  episode {record.get('episode_id')}: "
+                        f"primary_app={record['primary_app']!r} "
+                        f"keys={sorted(record.keys())}"
+                    )
+
+                if args.max_episodes > 0 and len(records) >= args.max_episodes:
+                    done = True
+                    break
+
+            elapsed = time.time() - t_start
+            print(
+                f"  -> {file_episodes} episodes "
+                f"(cumulative: {len(records)} episodes, {elapsed:.0f}s)\n"
+            )
+        except urllib.error.URLError as e:
+            print(f"  [ERROR] Download failed: {e}")
+            total_errors += 1
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    # Sort by episode_id so line order is deterministic across runs, and emit
+    # each record with a canonical key order so every line has the same shape.
+    records.sort(key=lambda r: r["episode_id"])
+    with open(args.output, "w", encoding="utf-8") as fout:
+        for record in records:
+            ordered = {k: record[k] for k in CANONICAL_KEY_ORDER if k in record}
+            for k, v in record.items():
+                if k not in ordered:
+                    ordered[k] = v
+            fout.write(json.dumps(ordered, ensure_ascii=False))
+            fout.write("\n")
 
     elapsed = time.time() - t_start
     print("=" * 60)
     print(f"Done! {elapsed:.1f}s elapsed")
-    print(f"Episodes written:  {total_episodes}")
+    print(f"Episodes written:  {len(records)}")
     print(f"Errors:            {total_errors}")
     print(f"Feature keys seen: {sorted(seen_keys)}")
 
