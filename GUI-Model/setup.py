@@ -1,28 +1,21 @@
-import os
-
 from setuptools import setup
 
 
-HERE = os.path.abspath(os.path.dirname(__file__))
-LLAMAFACTORY_DIR = os.path.join(HERE, "LlamaFactory")
-UNSLOTH_DIR = os.path.join(HERE, "unsloth")
-
-
-# 설치는 백엔드별로 분리된 conda env 에서 한 벌만 한다.
+# 설치는 백엔드별로 분리된 conda env 에서 두 단계로 한다.
+# 서브프로젝트 (`./LlamaFactory`, `./unsloth`) 의 transitive 상한
+# (LF `transformers<=5.2.0` / Unsloth `transformers<=5.5.0`) 이 우리 extras 의
+# `transformers==5.5.4` / `>=5.5.4` 와 충돌하므로 pip resolver 한 번으로는 해결되지 않는다.
+# 따라서 서브프로젝트는 `--no-deps` 로 먼저 editable 설치한 뒤, 루트 extras 를 올린다.
 #
 #   conda activate gui-model-llamafactory
+#   PIP_USER=0 pip install --no-user -e ./LlamaFactory --no-deps
 #   PIP_USER=0 pip install --no-user -e '.[llamafactory]'
 #
 #   conda activate gui-model-unsloth
+#   PIP_USER=0 pip install --no-user -e './unsloth[huggingface,triton]' --no-deps
 #   PIP_USER=0 pip install --no-user -e '.[unsloth]'
 #
-# 각 extras 가 서브프로젝트를 PEP 508 `file://` direct reference 로 끌고 들어와
-# editable-install 저장소와 함께 연쇄 설치된다:
-#   - llamafactory: ./LlamaFactory
-#   - unsloth[huggingface,triton]: ./unsloth
-# 서브프로젝트 소스를 수정하며 쓰려면 해당 env 에서:
-#   pip install -e ./LlamaFactory --no-deps
-#   pip install -e './unsloth[huggingface,triton]' --no-deps
+# 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다 — 업스트림 sync 를 깨뜨린다.
 #
 # PIP_USER=0 / --no-user 는 root + PYTHONUSERBASE 조합에서 pip 가 deps 를
 # user-site (/root/.local/workspace/python-packages) 로 흘려 env/bin 에 CLI
@@ -50,26 +43,53 @@ COMMON = [
 ]
 
 # LlamaFactory 전용 (Qwen2/2.5/3-VL, LLaVA 계열).
+# `llamafactory` 서브프로젝트 자체는 미리 `pip install -e ./LlamaFactory --no-deps` 로
+# 설치한다 — 여기서 `file://` ref 로 끌어오면 서브프로젝트의 transitive 상한이 pip resolver
+# 에 노출돼 `transformers==5.5.4` 와 충돌한다.
 LLAMAFACTORY = [
     # 최상위 pin. LlamaFactory 서브프로젝트의 transitive 상한(<=5.2.0) 을 덮어쓴다.
     "transformers==5.5.4",
-    f"llamafactory @ file://{LLAMAFACTORY_DIR}",
     "deepspeed>=0.10.0,<=0.18.4",
-    "vllm>=0.4.3,<=0.11.0",
+    # transformers 5.5.x 의 새 `rope_parameters.rope_type` 필드와 레거시 `type=mrope` 가
+    # 동시 존재하는 config 를 vllm<=0.11.0 의 pydantic validator 가 거부하므로 상한 해제.
+    "vllm>=0.11.0",
+    # LlamaFactory scripts/vllm_infer.py 가 비디오 처리용으로 `import av`, CLI 진입점으로 `import fire`,
+    # HF 데이터셋 로더로 `from datasets import load_dataset` 를 한다.
+    "av",
+    "fire",
+    "datasets",
+    # LlamaFactory 서브프로젝트를 `--no-deps` 로 설치하므로 런타임 import 체인에서
+    # 필요한 서브프로젝트 deps 를 여기서 재선언한다 (GUI/API 용 gradio/fastapi 등은 생략).
+    "peft>=0.18.0,<=0.18.1",
+    "trl>=0.18.0,<=0.24.0",
+    "torchdata>=0.10.0,<=0.11.0",
+    "einops",
+    "modelscope",
+    "hf-transfer",
+    "omegaconf",
 ]
 
 # Unsloth 전용 (google/gemma-4-E2B-it, google/gemma-4-E4B-it).
+# `unsloth[huggingface,triton]` 서브프로젝트는 `pip install -e './unsloth[huggingface,triton]' --no-deps`
+# 로 미리 설치한다 (LlamaFactory 와 동일한 이유).
 # - deepspeed 는 넣지 않는다 — FastModel 의 gradient checkpointing / 메모리 최적화가
 #   deepspeed ZeRO 와 충돌하고, env 에 deepspeed 가 있으면 `accelerate launch` 가
 #   deepspeed plugin 을 자동 활성화해 첫 step 에서 실패한다.
 # - transformers 는 `>=5.5.4` 로 상한 없이 놓는다 — Gemma-4 (E2B / E4B) 를 구동하는
 #   modeling 코드는 transformers 의 최신 Gemma-4 loader 에 의존한다. pip resolver 가
 #   최신 호환 버전을 뽑도록 상한을 풀어 둔다 (LlamaFactory 쪽은 `==5.5.4` 유지).
+# - 서브프로젝트를 `--no-deps` 로 설치하므로 런타임에 필요한 서브프로젝트 deps
+#   (peft / trl / datasets / unsloth_zoo) 를 여기서 재선언한다. Stage 1 LoRA merge
+#   (`_unsloth_merge.py::merge_lora`) 는 `from unsloth import FastModel` 와
+#   `from peft import PeftModel` 를 사용하므로 peft/unsloth_zoo 는 필수.
 UNSLOTH = [
     "transformers>=5.5.4",
-    f"unsloth[huggingface,triton] @ file://{UNSLOTH_DIR}",
     "bitsandbytes>=0.45.5",
     "vllm>=0.4.3,<=0.11.0",
+    "peft>=0.18.0",
+    "trl>=0.18.2,!=0.19.0,<=0.24.0",
+    "datasets>=3.4.1,!=4.0.*,!=4.1.0,<4.4.0",
+    "unsloth_zoo>=2026.4.8",
 ]
 
 EXTRAS = {
