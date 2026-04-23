@@ -584,6 +584,53 @@ resolve_stage1_variants() {
   done
 }
 
+# --- Inference 커맨드 조립 (backend 분기) ------------------------------------
+# stage{1,2}_eval.sh 의 base / world_model variant 블록이 generated_predictions.jsonl
+# 을 만드는 핵심 커맨드. backend 에 따라 다른 runner 를 호출하지만 호출부의
+# dispatch 로직을 중복시키지 않기 위해 여기에 모은다.
+#
+# usage:
+#   build_infer_cmd <model_short> <model_path_or_hub_id> <lf_dataset_name> \
+#                   <test_jsonl> <template> <save_rel> <matrix_rel>
+#   → INFER_CMD 전역 변수에 커맨드 문자열을 할당.
+#   호출부는 `bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_REL' && $INFER_CMD && ..."`
+#   형태로 체이닝한다. 경로는 cwd=$LF_ROOT 기준 상대 (save_rel/matrix_rel) 와
+#   절대 (test_jsonl) 가 섞여 있으며 기존 스크립트 관행을 그대로 유지.
+#
+# backend=="unsloth"  → scripts/_unsloth_infer.py (vllm 우회)
+# backend=="llamafactory" (기본) → scripts/vllm_infer.py (기존 경로)
+build_infer_cmd() {
+  local model_short="$1" model_path="$2" ds_name="$3" \
+        test_jsonl="$4" template="$5" save_rel="$6" matrix_rel="$7"
+  local backend
+  backend=$(get_backend "$model_short")
+  if [[ "$backend" == "unsloth" ]]; then
+    INFER_CMD="python '$BASE_DIR/scripts/_unsloth_infer.py' \
+        --model_name_or_path '$model_path' \
+        --test '$test_jsonl' \
+        --image_dir '$BASE_DIR/data' \
+        --save_name        '$save_rel' \
+        --matrix_save_name '$matrix_rel' \
+        --image_max_pixels 4233600"
+  else
+    local enable_thinking_flag=""
+    if [[ "$template" == qwen3_vl* ]]; then
+      enable_thinking_flag="--enable_thinking False"
+    fi
+    INFER_CMD="python scripts/vllm_infer.py \
+        --model_name_or_path '$model_path' \
+        --dataset '$ds_name' \
+        --dataset_dir '$LF_ROOT/data' \
+        --template $template \
+        --cutoff_len 8192 \
+        --image_max_pixels 4233600 \
+        $enable_thinking_flag \
+        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+        --save_name        '$save_rel' \
+        --matrix_save_name '$matrix_rel'"
+  fi
+}
+
 resolve_stage2_variants() {
   if [[ "${#VARIANTS[@]}" -eq 0 ]]; then
     VARIANTS=("${STAGE2_ALL_VARIANTS[@]}")

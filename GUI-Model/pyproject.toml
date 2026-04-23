@@ -14,6 +14,7 @@ requires-python = ">=3.10,<3.13"
 #     pip install -e '.[llamafactory]'
 #   또는
 #     conda activate gui-model-unsloth
+#     pip install -e ./LlamaFactory --no-deps   # stage{1,2}_eval.sh 가 LlamaFactory vllm_infer.py 를 호출
 #     pip install -e '.[unsloth]'
 # transformers 버전은 env 별로 다르게 잡는다:
 #   - llamafactory extras: `transformers==5.5.4` (Qwen / LLaVA 에서 검증된 고정값)

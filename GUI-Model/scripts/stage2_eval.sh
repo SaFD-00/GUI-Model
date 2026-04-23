@@ -55,16 +55,6 @@ run_variant_epoch_eval_on() {
     return 0
   fi
 
-  local vllm_common=(
-    --template "$template"
-    --cutoff_len 8192
-    --image_max_pixels 4233600
-  )
-  if [[ "$template" == qwen3_vl* ]]; then
-    vllm_common+=(--enable_thinking False)
-  fi
-  local vllm_config='{"gpu_memory_utilization": 0.80}'
-
   local datadir="${DS_DATADIR[$eval_ds]}"
   local eval_prefix="${DS_PREFIX[$eval_ds]}"
 
@@ -76,16 +66,14 @@ run_variant_epoch_eval_on() {
       exit 1
     fi
 
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test" \
+      "$test_jsonl" "$template" \
+      "$out_rel/generated_predictions.jsonl" \
+      "$out_rel/predict_results.json"
+
     run_logged "$tag" \
       bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
-        python scripts/vllm_infer.py \
-          --model_name_or_path '$hub_id' \
-          --dataset '$ds_test' \
-          --dataset_dir '$LF_ROOT/data' \
-          ${vllm_common[*]} \
-          --vllm_config '${vllm_config}' \
-          --save_name        '$out_rel/generated_predictions.jsonl' \
-          --matrix_save_name '$out_rel/predict_results.json' && \
+        $INFER_CMD && \
         python '$BASE_DIR/scripts/_action_eval.py' score \
           --test   '$test_jsonl' \
           --pred   '$out_dir/generated_predictions.jsonl' \
@@ -102,24 +90,21 @@ run_variant_epoch_eval_on() {
     local ds_test_id="${eval_prefix}_stage2_test_id"
     local ds_test_ood="${eval_prefix}_stage2_test_ood"
 
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test_id" \
+      "$test_id" "$template" \
+      "$out_rel/generated_predictions_id.jsonl" \
+      "$out_rel/predict_results_id.json"
+    local infer_id="$INFER_CMD"
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test_ood" \
+      "$test_ood" "$template" \
+      "$out_rel/generated_predictions_ood.jsonl" \
+      "$out_rel/predict_results_ood.json"
+    local infer_ood="$INFER_CMD"
+
     run_logged "$tag" \
       bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
-        python scripts/vllm_infer.py \
-          --model_name_or_path '$hub_id' \
-          --dataset '$ds_test_id' \
-          --dataset_dir '$LF_ROOT/data' \
-          ${vllm_common[*]} \
-          --vllm_config '${vllm_config}' \
-          --save_name        '$out_rel/generated_predictions_id.jsonl' \
-          --matrix_save_name '$out_rel/predict_results_id.json' && \
-        python scripts/vllm_infer.py \
-          --model_name_or_path '$hub_id' \
-          --dataset '$ds_test_ood' \
-          --dataset_dir '$LF_ROOT/data' \
-          ${vllm_common[*]} \
-          --vllm_config '${vllm_config}' \
-          --save_name        '$out_rel/generated_predictions_ood.jsonl' \
-          --matrix_save_name '$out_rel/predict_results_ood.json' && \
+        $infer_id && \
+        $infer_ood && \
         python '$BASE_DIR/scripts/_action_eval.py' score \
           --test-id  '$test_id' \
           --pred-id  '$out_dir/generated_predictions_id.jsonl' \

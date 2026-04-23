@@ -50,17 +50,6 @@ for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
   TEMPLATE="${MODEL_TEMPLATE[$MODEL_SHORT]}"
 
-  VLLM_COMMON_ARGS=(
-    --template "$TEMPLATE"
-    --cutoff_len 8192
-    --image_max_pixels 4233600
-  )
-  if [[ "$TEMPLATE" == qwen3_vl* ]]; then
-    VLLM_COMMON_ARGS+=(--enable_thinking False)
-  fi
-
-  VLLM_CONFIG='{"gpu_memory_utilization": 0.80}'
-
   EVAL_DIR_REL="../outputs/${TRAIN_DS}/eval/${MODEL_SHORT}/stage1_eval"
 
   for EVAL_DS in "${EVAL_DATASETS[@]}"; do
@@ -79,16 +68,14 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${TRAIN_DS}_base_on-${EVAL_DS}"
           if skip_if_done "$TAG" "$OUT_DIR/hungarian_metrics.json"; then continue; fi
 
+          build_infer_cmd "$MODEL_SHORT" "$BASE_MODEL" "$EVAL_DATASET_NAME" \
+            "$EVAL_TEST_JSONL" "$TEMPLATE" \
+            "$OUT_REL/generated_predictions.jsonl" \
+            "$OUT_REL/predict_results.json"
+
           run_logged "$TAG" \
             bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_REL' && \
-              python scripts/vllm_infer.py \
-                --model_name_or_path '$BASE_MODEL' \
-                --dataset '$EVAL_DATASET_NAME' \
-                --dataset_dir '$LF_ROOT/data' \
-                ${VLLM_COMMON_ARGS[*]} \
-                --vllm_config '${VLLM_CONFIG}' \
-                --save_name        '$OUT_REL/generated_predictions.jsonl' \
-                --matrix_save_name '$OUT_REL/predict_results.json' && \
+              $INFER_CMD && \
               python '$BASE_DIR/scripts/_hungarian_eval.py' score \
                 --test   '$EVAL_TEST_JSONL' \
                 --pred   '$OUT_DIR/generated_predictions.jsonl' \
@@ -105,16 +92,14 @@ for MODEL_SHORT in "${MODELS[@]}"; do
             TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${TRAIN_DS}_${VARIANT}_epoch${EPOCH}_on-${EVAL_DS}"
             if skip_if_done "$TAG" "$OUT_DIR/hungarian_metrics.json"; then continue; fi
 
+            build_infer_cmd "$MODEL_SHORT" "$HUB_ID" "$EVAL_DATASET_NAME" \
+              "$EVAL_TEST_JSONL" "$TEMPLATE" \
+              "$OUT_REL/generated_predictions.jsonl" \
+              "$OUT_REL/predict_results.json"
+
             run_logged "$TAG" \
               bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_REL' && \
-                python scripts/vllm_infer.py \
-                  --model_name_or_path '$HUB_ID' \
-                  --dataset '$EVAL_DATASET_NAME' \
-                  --dataset_dir '$LF_ROOT/data' \
-                  ${VLLM_COMMON_ARGS[*]} \
-                  --vllm_config '${VLLM_CONFIG}' \
-                  --save_name        '$OUT_REL/generated_predictions.jsonl' \
-                  --matrix_save_name '$OUT_REL/predict_results.json' && \
+                $INFER_CMD && \
                 python '$BASE_DIR/scripts/_hungarian_eval.py' score \
                   --test   '$EVAL_TEST_JSONL' \
                   --pred   '$OUT_DIR/generated_predictions.jsonl' \

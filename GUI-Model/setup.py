@@ -13,6 +13,10 @@ from setuptools import setup
 #
 #   conda activate gui-model-unsloth
 #   PIP_USER=0 pip install --no-user -e './unsloth[huggingface,triton]' --no-deps
+#   # stage{1,2}_eval.sh 는 unsloth env 에서도 LlamaFactory `scripts/vllm_infer.py`
+#   # 를 호출한다 (`from llamafactory.data import ...`). 평가 runtime 을 위해
+#   # LlamaFactory 서브프로젝트도 `--no-deps` 로 editable 설치한다.
+#   PIP_USER=0 pip install --no-user -e ./LlamaFactory --no-deps
 #   PIP_USER=0 pip install --no-user -e '.[unsloth]'
 #
 # 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다 — 업스트림 sync 를 깨뜨린다.
@@ -98,6 +102,19 @@ UNSLOTH = [
     "peft>=0.18.0",
     "trl>=0.18.2,!=0.19.0,<=0.24.0",
     "datasets>=3.4.1,!=4.0.*,!=4.1.0,<4.4.0",
+    # 평가 런타임 — stage{1,2}_eval.sh 가 unsloth env 에서도 LlamaFactory
+    # `scripts/vllm_infer.py` 를 호출한다. 해당 스크립트는 비디오 처리용
+    # `import av`, CLI 진입점 `import fire` 를 import 하고,
+    # `from llamafactory.data import ...` 를 통해 LlamaFactory 서브프로젝트
+    # 런타임을 불러온다. LlamaFactory 는 `--no-deps` 로 설치되므로 해당 런타임이
+    # 요구하는 서브프로젝트 deps 를 여기서 재선언한다 (LLAMAFACTORY extras 와 동일 규약).
+    "av",
+    "fire",
+    "einops",
+    "modelscope",
+    "hf-transfer",
+    "omegaconf",
+    "torchdata>=0.10.0,<=0.11.0",
 ]
 
 EXTRAS = {
