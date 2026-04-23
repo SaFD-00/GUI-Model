@@ -52,6 +52,54 @@ for _ds_dir in "$BASE_DIR"/data/*/; do
 done
 unset _ds_dir _ds_name _link
 
+# --- eval-only benchmark dataset_info entries (idempotent) --------------------
+# MobiBench 는 평가 전용 단일 파일 (ID/OOD split 없음). notebook Cell 13/16 이
+# 같은 엔트리를 기록하지만, notebook 을 돌리지 않은 fresh clone 에서도 eval
+# 파이프라인이 성립하도록 여기서 보장한다. 이미 존재하면 no-op.
+ensure_eval_only_dataset_info() {
+  local di="$LF_ROOT/data/dataset_info.json"
+  [ -f "$di" ] || return 0
+  python3 - "$di" <<'PY'
+import json, sys
+from collections import OrderedDict
+p = sys.argv[1]
+with open(p) as f:
+    d = json.load(f, object_pairs_hook=OrderedDict)
+tags = OrderedDict([
+    ("role_tag", "from"), ("content_tag", "value"),
+    ("user_tag", "human"), ("assistant_tag", "gpt"),
+    ("system_tag", "system"),
+])
+def entry(stage):
+    return OrderedDict([
+        ("file_name", f"../../data/MobiBench/gui-model_stage{stage}.jsonl"),
+        ("formatting", "sharegpt"),
+        ("columns", OrderedDict([("messages","messages"),("images","images")])),
+        ("tags", tags),
+    ])
+changed = False
+for stage, anchor in ((1, "GUI-Model-MB_stage1_train"), (2, "GUI-Model-MB_stage2_train")):
+    key = f"GUI-Model-MB_stage{stage}"
+    if key in d:
+        continue
+    new_d = OrderedDict()
+    inserted = False
+    for k, v in d.items():
+        if k == anchor and not inserted:
+            new_d[key] = entry(stage); inserted = True
+        new_d[k] = v
+    if not inserted:
+        new_d[key] = entry(stage)
+    d = new_d
+    changed = True
+if changed:
+    with open(p, 'w') as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+PY
+}
+ensure_eval_only_dataset_info
+
 # --- .env (HF_TOKEN 등) -------------------------------------------------------
 if [ -f "$BASE_DIR/.env" ]; then
   set -a

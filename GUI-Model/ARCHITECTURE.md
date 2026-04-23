@@ -61,7 +61,7 @@ shell 자동화 레이어의 `scripts/_common.sh::MODEL_BACKEND` 매핑과 `stag
 두 노트북은 섹션 번호/구조를 동일하게 유지해 서로 1:1 대응된다. 아래 순서를 각자 독립적으로 실행한다.
 
 1. Section 0: 환경 설정, 모델/데이터셋 config 정의, 해당 백엔드의 Stage 1 학습 YAML (full · lora 양쪽) / Stage 2 학습 YAML (full · lora 양쪽 × base · world-model-full · world-model-lora) 생성. 학습 DS 는 `_DATASET_CONFIG` 의 AC + MC 이며, Stage 2 YAML 은 `_STAGE1_ONLY` guard 로 MC 를 skip 한다. **Stage {1,2} merge YAML 은 더 이상 노트북에서 사전 생성하지 않는다** — `scripts/stage{1,2}_merge.sh` 가 runtime 에 임시 YAML 을 만든다.
-2. Section 1-2: 데이터 준비. LlamaFactory 노트북은 `LlamaFactory/data/dataset_info.json` 을 갱신(AC/MC 는 `*_stage1_train/test`, AC 는 추가로 `*_stage2_train/test_id/test_ood`, MobiBench 는 `_EVAL_ONLY_BENCHMARKS` 루프가 단일 파일 entry 등록) — **Unsloth 노트북에는 이 등록 셀이 없다** (Unsloth 는 JSONL 직접 로드).
+2. Section 1-2: 데이터 준비. LlamaFactory 노트북은 `LlamaFactory/data/dataset_info.json` 을 갱신(AC/MC 는 `*_stage1_train/test`, AC 는 추가로 `*_stage2_train/test_id/test_ood`, MobiBench 는 `_EVAL_ONLY_BENCHMARKS` 루프가 단일 파일 entry 등록) — **Unsloth 노트북에는 이 등록 셀이 없다** (Unsloth 는 JSONL 직접 로드). MB 단일 엔트리는 `scripts/_common.sh::ensure_eval_only_dataset_info()` 가 eval script source 시점에 idempotent 하게도 보장하므로, notebook 없이 `stage{1,2}_eval.sh --eval-datasets MB` 를 바로 돌릴 수 있다.
 3. Section 3: Stage 1 fine-tuning (`--stage1-mode full|lora`)
 4. Section 4: **Stage 1 merge (모든 epoch 각각 merge + HF Hub push)**
 5. Section 5: **Stage 1 평가 — HF Hub epoch 별 merged 모델 sweep. Hungarian F1 metric 산출만 하고, 어떤 epoch 을 Stage 2 에 쓸지는 사용자가 결과를 보고 `--stage1-epoch` 로 지정 (자동 winner 선정 없음).**
@@ -180,7 +180,7 @@ data/
 - Stage 2 (AC only) 는 **app-level in-domain / out-of-domain split**. 앱 집합(=package 식별자 집합) 을 ID/OOD 로 나눈 뒤 각 풀에서 action type stratified 샘플링 (largest-remainder). train 은 `null` primary_app 에피소드까지 흡수해 regular 크기 유지.
 - 메타 추출: `scripts/extract_androidcontrol_metadata.py` (TFRecord → `primary_app` = 전경 application window 의 `package_name`, AndroidAccessibilityForest proto 를 디코드해 각 step 을 집계 후 다수결). `pip install android-env` 필요. MC 는 Stage 2 가 없어 메타 추출 불필요. MB 는 평가 전용이라 split 자체가 없음.
 - [`scripts/split_data.py`](./scripts/split_data.py) 가 Stage 1 random split + Stage 2 ID/OOD split 을 담당한다. 기본 크기: AC train 50K / test_id 3K / test_ood 3K. MC 는 Stage 1 random split 만.
-- MB 는 `_EVAL_ONLY_BENCHMARKS` 메커니즘으로 notebook dataset_info 등록 셀이 `GUI-Model-MB_stage{1,2}` 단일 파일 entry 를 별도 추가한다.
+- MB 는 `_EVAL_ONLY_BENCHMARKS` 메커니즘으로 `GUI-Model-MB_stage{1,2}` 단일 파일 entry 를 `dataset_info.json` 에 추가한다. 등록 경로는 두 곳이 idempotent 하게 일치한다: (a) `gui-model-llamafactory.ipynb` Section 1-2 의 notebook 루프 (사람이 전체 파이프라인을 돌릴 때), (b) `scripts/_common.sh::ensure_eval_only_dataset_info()` (stage{1,2}_eval.sh 진입 시 자동 실행 — notebook 을 한 번도 돌리지 않은 환경에서도 MB 평가가 성립).
 
 #### `episodes_meta.jsonl` 스키마 (AC only)
 
@@ -207,8 +207,9 @@ data/
 ### LLaMA-Factory 등록
 
 - `gui-model-llamafactory.ipynb` 의 Section 1-2 가 `LlamaFactory/data/dataset_info.json` 를 갱신한다. Unsloth 노트북에는 이 셀이 없다 (Unsloth 는 JSONL 직접 로드).
+- MobiBench 단일 파일 평가 엔트리 (`GUI-Model-MB_stage{1,2}`) 는 `scripts/_common.sh::ensure_eval_only_dataset_info()` 가 source 시 idempotent 하게도 보장한다 — notebook 을 돌리지 않아도 `stage{1,2}_eval.sh --eval-datasets MB` 가 성립.
 - JSONL 파일 경로는 `../../data/{DATASET_NAME}/...` 형태의 상대 경로로 등록된다.
-- JSONL 내부 `images` 값은 `{DATASET_NAME}/images/...` 형태의 상대 경로를 유지한다.
+- JSONL 내부 `images` 값은 `{DATASET_NAME}/images/...` 형태의 상대 경로를 유지한다. 이 prefix 가 벗겨져 있다면 [`scripts/fix_jsonl_image_paths.py`](./scripts/fix_jsonl_image_paths.py) 가 `images/...` → `{DATASET_NAME}/images/...` 로 복구한다 (idempotent, `--dry-run` 지원).
 - `vllm_infer.py` 호출 시 `--dataset_dir`에 **절대 경로** (`$LF_ROOT/data`)를 전달해야 한다. 상대 경로(`"data"`)를 사용하면 HF datasets 캐시가 다른 cwd 에서 생성된 미해석 이미지 경로를 재사용하여 `FileNotFoundError`가 발생할 수 있다.
 
 ## 4. 파이프라인 컴포넌트
@@ -309,7 +310,7 @@ bash scripts/stage2_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datas
 raw JSONL + screenshots  (AC: train+eval, MC: Stage1 전용, MB: eval-only 단일 파일)
   -> extract_androidcontrol_metadata.py  (AC 만 — primary_app = 전경 앱 package_name, accessibility_trees proto 기반)
   -> split_data.py                    (AC: Stage1 random + Stage2 ID/OOD | MC: Stage1 random only)
-  -> dataset_info.json registration   (AC/MC: train+test | MB: eval-only 단일 entry)
+  -> dataset_info.json registration   (AC/MC: train+test [notebook Section 1-2] | MB: eval-only 단일 entry [notebook + _common.sh::ensure_eval_only_dataset_info, idempotent])
   -> [per model] Stage 1 train  (mode1 = full | lora, 학습 DS ∈ {AC, MC})
        → adapters/{M}_stage1_{mode1}/checkpoint-*/
   -> [per model] Stage 1 merge (모든 epoch 각각)

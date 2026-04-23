@@ -234,6 +234,8 @@ data/{AndroidControl,MonkeyCollection}/
 
 shell script 는 notebook 으로 한 번 생성된 **학습/merge YAML** 과 `LlamaFactory/data/dataset_info.json` 이 이미 있다는 전제에서 동작한다. **Stage 1 eval 은 YAML 을 사용하지 않고 쉘 스크립트가 직접 HF Hub merged 모델을 sweep 한다.**
 
+> **MobiBench 평가 엔트리 자동 보장**: `scripts/_common.sh::ensure_eval_only_dataset_info()` 가 stage{1,2}_eval.sh 진입 시 `GUI-Model-MB_stage{1,2}` 단일 파일 엔트리를 `dataset_info.json` 에 idempotent 하게 추가한다. notebook Section 1-2 를 돌리지 않은 fresh clone 에서도 `--eval-datasets MB` 가 바로 동작한다.
+
 Stage 1 은 `--stage1-mode full|lora` (기본 `full`), Stage 2 는 `--stage2-mode full|lora` (기본 `lora`) 로 finetuning 방식을 선택한다. world-model variant 학습·머지·평가는 `--stage1-epoch N` 으로 사용할 Stage 1 epoch 을 직접 지정한다 (자동 winner 선정은 없다).
 
 ```bash

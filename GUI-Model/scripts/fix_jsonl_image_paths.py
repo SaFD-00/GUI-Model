@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
 """
-One-off migration: normalize JSONL `images` field paths to JSONL-relative form.
+Repair JSONL `images` field paths so that every entry carries the
+`{dataset_name}/images/...` prefix expected by the eval runtime.
 
-MobiBench:       GUI-Model/images/episode_{id:06d}_step_{idx:04d}.png
-              -> images/episode_{id:06d}_step_{idx:04d}.png
+Runtime contract (see scripts/_common.sh):
+    - `LlamaFactory/data/{dataset}` is a symlink to `data/{dataset}`
+    - vllm_infer.py is invoked with `--dataset_dir $LF_ROOT/data` (absolute)
+    - Image paths must therefore resolve as `$LF_ROOT/data/{dataset}/images/...`
+    - i.e. JSONL `images` fields must already include the dataset prefix
 
-MobiBench:       MobiBench/images/episode_{id:06d}_step_{idx:04d}.png
-              -> images/episode_{id:06d}_step_{idx:04d}.png
+Conversions performed:
+    MobiBench:        images/episode_XXXXXX_step_XXXX.png
+                   -> MobiBench/images/episode_XXXXXX_step_XXXX.png
+    MobiBench:        GUI-Model/images/...   (legacy)
+                   -> MobiBench/images/...
 
-AndroidControl:  myset/images/episode_{id}_step_{idx}.png (no padding)
-              -> images/episode_{id:06d}_step_{idx:04d}.png
+    AndroidControl:   images/episode_XXXXXX_step_XXXX.png
+                   -> AndroidControl/images/episode_XXXXXX_step_XXXX.png
+    AndroidControl:   myset/images/episode_{id}_step_{idx}.png  (legacy, no pad)
+                   -> AndroidControl/images/episode_{id:06d}_step_{idx:04d}.png
 
-AndroidControl:  AndroidControl/images/episode_{id:06d}_step_{idx:04d}.png
-              -> images/episode_{id:06d}_step_{idx:04d}.png
+    MonkeyCollection: images/...
+                   -> MonkeyCollection/images/...
 
-MonkeyCollection: MonkeyCollection/images/...  또는 prefix 만 다른 변형
-              -> images/...
+Entries that already start with the dataset prefix are left untouched.
 
 Usage:
     python scripts/fix_jsonl_image_paths.py --dry-run
     python scripts/fix_jsonl_image_paths.py
     python scripts/fix_jsonl_image_paths.py --dataset MobiBench
-    python scripts/fix_jsonl_image_paths.py --dataset MonkeyCollection
+    python scripts/fix_jsonl_image_paths.py --dataset AndroidControl
 """
 
 import argparse
@@ -32,13 +40,15 @@ from pathlib import Path
 
 REPO_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-RELATIVE_PREFIX = "images/"
-MB_PREFIXES = ("GUI-Model/images/", "MobiBench/images/")
+BARE_PREFIX = "images/"
 
-AC_PATTERN = re.compile(r"^myset/images/episode_(\d+)_step_(\d+)\.png$")
-AC_PREFIX = "AndroidControl/images/"
+MB_CANONICAL = "MobiBench/images/"
+MB_LEGACY_PREFIXES = ("GUI-Model/images/",)
 
-MC_PREFIXES = ("MonkeyCollection/images/",)
+AC_CANONICAL = "AndroidControl/images/"
+AC_LEGACY_PATTERN = re.compile(r"^myset/images/episode_(\d+)_step_(\d+)\.png$")
+
+MC_CANONICAL = "MonkeyCollection/images/"
 
 JSONL_FILES = [
     "gui-model_stage1.jsonl",
@@ -47,36 +57,39 @@ JSONL_FILES = [
     "gui-model_stage2.jsonl",
     "gui-model_stage2_train.jsonl",
     "gui-model_stage2_test.jsonl",
+    "gui-model_stage2_test_id.jsonl",
+    "gui-model_stage2_test_ood.jsonl",
 ]
 
 
 def convert_mb(path: str) -> tuple[str, str]:
-    if path.startswith(RELATIVE_PREFIX):
+    if path.startswith(MB_CANONICAL):
         return path, "already"
-    for prefix in MB_PREFIXES:
-        if path.startswith(prefix):
-            return RELATIVE_PREFIX + path[len(prefix):], "converted"
+    if path.startswith(BARE_PREFIX):
+        return MB_CANONICAL + path[len(BARE_PREFIX):], "converted"
+    for legacy in MB_LEGACY_PREFIXES:
+        if path.startswith(legacy):
+            return MB_CANONICAL + path[len(legacy):], "converted"
     return path, "unmatched"
 
 
 def convert_ac(path: str) -> tuple[str, str]:
-    m = AC_PATTERN.match(path)
+    if path.startswith(AC_CANONICAL):
+        return path, "already"
+    m = AC_LEGACY_PATTERN.match(path)
     if m:
         eid, sidx = int(m.group(1)), int(m.group(2))
-        return f"{RELATIVE_PREFIX}episode_{eid:06d}_step_{sidx:04d}.png", "converted"
-    if path.startswith(RELATIVE_PREFIX):
-        return path, "already"
-    if path.startswith(AC_PREFIX):
-        return RELATIVE_PREFIX + path[len(AC_PREFIX):], "converted"
+        return f"{AC_CANONICAL}episode_{eid:06d}_step_{sidx:04d}.png", "converted"
+    if path.startswith(BARE_PREFIX):
+        return AC_CANONICAL + path[len(BARE_PREFIX):], "converted"
     return path, "unmatched"
 
 
 def convert_mc(path: str) -> tuple[str, str]:
-    if path.startswith(RELATIVE_PREFIX):
+    if path.startswith(MC_CANONICAL):
         return path, "already"
-    for prefix in MC_PREFIXES:
-        if path.startswith(prefix):
-            return RELATIVE_PREFIX + path[len(prefix):], "converted"
+    if path.startswith(BARE_PREFIX):
+        return MC_CANONICAL + path[len(BARE_PREFIX):], "converted"
     return path, "unmatched"
 
 
@@ -151,7 +164,6 @@ def main():
         for fname in JSONL_FILES:
             fpath = ds_dir / fname
             if not fpath.is_file():
-                print(f"  [SKIP] {fname} (not found)")
                 continue
 
             result = process_file(fpath, converter, args.dry_run)
