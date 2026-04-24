@@ -46,7 +46,7 @@ cp .env.example .env
 
 - Python 3.10+
 - ADB 가 PATH 에 있거나 `ANDROID_HOME` 이 설정되어 있어야 한다
-- `adb devices` 에 한 대의 디바이스만 연결되어 있어야 한다 (여러 디바이스 연결 시 동작 보장 안 됨)
+- **`ImplicitWorldModel` 이름의 AVD 가 실행 중이어야 한다** (`emulator -avd ImplicitWorldModel`). `AdbClient` 가 `adb devices` 에서 해당 AVD 의 emulator serial 을 자동 탐색해 모든 ADB 명령에 `-s <serial>` 로 고정한다. 다른 AVD 나 실기기가 함께 붙어 있어도 무방하며, AVD 가 없으면 `AdbClient()` 생성 시 즉시 `RuntimeError` 로 실패한다.
 
 ### Android app
 

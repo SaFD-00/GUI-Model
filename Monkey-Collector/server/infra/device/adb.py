@@ -8,6 +8,12 @@ import time
 
 from loguru import logger
 
+# Monkey-Collector is locked to this AVD. `AdbClient` resolves its emulator
+# serial at construction time and prefixes every adb invocation with
+# `-s <serial>`, so other emulators or real devices attached at the same
+# time are ignored.
+REQUIRED_AVD_NAME = "ImplicitWorldModel"
+
 # Characters that need escaping for adb shell input text
 _SPECIAL_CHARS = re.compile(r'([\\\"\'`\s&|;<>()$!~{}*?#])')
 
@@ -36,15 +42,66 @@ def _escape_text_for_adb(text: str) -> str:
     return text
 
 
+def _list_emulator_serials(adb_path: str) -> list[str]:
+    """Return serials of online emulators (e.g. ``['emulator-5554']``)."""
+    result = subprocess.run(
+        [adb_path, "devices"], capture_output=True, text=True, timeout=10
+    )
+    serials: list[str] = []
+    for line in result.stdout.splitlines()[1:]:  # skip "List of devices attached"
+        parts = line.strip().split()
+        if len(parts) >= 2 and parts[1] == "device" and parts[0].startswith("emulator-"):
+            serials.append(parts[0])
+    return serials
+
+
+def _resolve_avd_serial(adb_path: str, avd_name: str) -> str:
+    """Return the emulator serial whose AVD name matches *avd_name*.
+
+    Queries each online emulator with ``adb -s <serial> emu avd name`` and
+    returns the first match. Raises ``RuntimeError`` with a user-friendly
+    message if no match is found.
+    """
+    serials = _list_emulator_serials(adb_path)
+    for serial in serials:
+        result = subprocess.run(
+            [adb_path, "-s", serial, "emu", "avd", "name"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # `emu avd name` prints the AVD name on the first line, then "OK".
+        first_line = (result.stdout or "").strip().splitlines()[0:1]
+        name = first_line[0].strip() if first_line else ""
+        if name == avd_name:
+            return serial
+    raise RuntimeError(
+        f"AVD '{avd_name}' is not running. "
+        f"Start it with: emulator -avd {avd_name}\n"
+        f"Currently online emulators: {serials or 'none'}"
+    )
+
+
 class AdbClient:
-    """Wrapper for ADB shell commands."""
+    """Wrapper for ADB shell commands, locked to a single AVD.
+
+    On construction, resolves the emulator serial of ``REQUIRED_AVD_NAME``
+    (``ImplicitWorldModel``) and prefixes every adb invocation with
+    ``-s <serial>``. If the AVD is not currently running, construction
+    fails with a ``RuntimeError``.
+    """
 
     def __init__(self):
         self._adb = _find_adb()
+        self._serial = _resolve_avd_serial(self._adb, REQUIRED_AVD_NAME)
+        logger.info(
+            f"AdbClient bound to AVD '{REQUIRED_AVD_NAME}' (serial={self._serial})"
+        )
+
+    def _cmd_prefix(self) -> list[str]:
+        return [self._adb, "-s", self._serial]
 
     def shell(self, command: str, timeout: int | None = None) -> str:
         """Run an ADB shell command and return stdout."""
-        cmd = [self._adb, "shell", command]
+        cmd = self._cmd_prefix() + ["shell", command]
         logger.debug(f"ADB: {' '.join(cmd)}")
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout
@@ -121,7 +178,7 @@ class AdbClient:
 
     def install(self, apk_path: str) -> str:
         """Install an APK."""
-        cmd = [self._adb, "install", "-r", apk_path]
+        cmd = self._cmd_prefix() + ["install", "-r", apk_path]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         return result.stdout.strip()
 

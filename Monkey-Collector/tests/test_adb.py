@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from server.infra.device.adb import AdbClient, _escape_text_for_adb, _find_adb
+from server.infra.device.adb import (
+    AdbClient,
+    _escape_text_for_adb,
+    _find_adb,
+    _resolve_avd_serial,
+)
 
 
 class TestEscapeText:
@@ -50,7 +55,13 @@ def mock_subprocess():
 
 @pytest.fixture
 def adb_client(mock_subprocess):
-    with patch("server.infra.device.adb._find_adb", return_value="/usr/bin/adb"):
+    with (
+        patch("server.infra.device.adb._find_adb", return_value="/usr/bin/adb"),
+        patch(
+            "server.infra.device.adb._resolve_avd_serial",
+            return_value="emulator-5554",
+        ),
+    ):
         return AdbClient()
 
 
@@ -59,7 +70,9 @@ class TestShell:
         adb_client.shell("ls /sdcard")
         mock_subprocess.assert_called_once()
         args = mock_subprocess.call_args[0][0]
-        assert args == ["/usr/bin/adb", "shell", "ls /sdcard"]
+        assert args == [
+            "/usr/bin/adb", "-s", "emulator-5554", "shell", "ls /sdcard",
+        ]
 
 
 class TestAdbCommands:
@@ -192,3 +205,48 @@ class TestAdbCommands:
         mock_subprocess.side_effect = Exception("timeout")
         result = adb_client.get_declared_activities("com.test.app")
         assert result == []
+
+
+def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
+
+
+class TestResolveAvdSerial:
+    """_resolve_avd_serial should pick the emulator whose AVD name matches."""
+
+    def test_picks_matching_avd_among_many(self, mock_subprocess):
+        # 1st call: `adb devices` lists two emulators.
+        # 2nd call: emulator-5554 reports AVD name "Pixel_5".
+        # 3rd call: emulator-5556 reports AVD name "ImplicitWorldModel".
+        mock_subprocess.side_effect = [
+            _cp(
+                "List of devices attached\n"
+                "emulator-5554\tdevice\n"
+                "emulator-5556\tdevice\n"
+            ),
+            _cp("Pixel_5\nOK\n"),
+            _cp("ImplicitWorldModel\nOK\n"),
+        ]
+        assert _resolve_avd_serial("/usr/bin/adb", "ImplicitWorldModel") == (
+            "emulator-5556"
+        )
+
+    def test_raises_when_no_emulator_online(self, mock_subprocess):
+        mock_subprocess.side_effect = [
+            _cp("List of devices attached\n"),
+        ]
+        with pytest.raises(RuntimeError, match="ImplicitWorldModel"):
+            _resolve_avd_serial("/usr/bin/adb", "ImplicitWorldModel")
+
+    def test_raises_when_avd_name_not_matched(self, mock_subprocess):
+        mock_subprocess.side_effect = [
+            _cp(
+                "List of devices attached\n"
+                "emulator-5554\tdevice\n"
+            ),
+            _cp("SomeOtherAVD\nOK\n"),
+        ]
+        with pytest.raises(RuntimeError, match="ImplicitWorldModel"):
+            _resolve_avd_serial("/usr/bin/adb", "ImplicitWorldModel")

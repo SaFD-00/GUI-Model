@@ -11,7 +11,7 @@
 
 ## 어디를 수정해야 하는가
 
-- CLI 옵션이나 서브커맨드를 바꾸면 [`server/cli.py`](./server/cli.py) 와 [`tests/test_cli.py`](./tests/test_cli.py) 를 함께 수정한다. ADB 는 단일 AVD 전제로 `AdbClient()` 를 인자 없이 생성한다 — 다중 디바이스 선택 로직은 의도적으로 제거되어 있다.
+- CLI 옵션이나 서브커맨드를 바꾸면 [`server/cli.py`](./server/cli.py) 와 [`tests/test_cli.py`](./tests/test_cli.py) 를 함께 수정한다. ADB 는 `AdbClient()` 를 인자 없이 생성하며, 내부에서 `ImplicitWorldModel` 이라는 이름의 AVD 를 자동 탐색해 해당 emulator serial 로 모든 명령을 고정한다 (상수 `REQUIRED_AVD_NAME` 은 [`server/infra/device/adb.py`](./server/infra/device/adb.py) 상단에 하드코드). AVD 이름을 바꿔야 한다면 이 상수와 관련 문서 / 테스트를 함께 수정한다.
 - 수집 루프 동작은 [`server/pipeline/collector.py`](./server/pipeline/collector.py), [`server/pipeline/collection_loop.py`](./server/pipeline/collection_loop.py), [`server/pipeline/session_manager.py`](./server/pipeline/session_manager.py) 가 기준이다.
 - 앱 목록 / 설치 상태 처리는 두 모듈로 분리되어 있다:
   - [`server/pipeline/app_catalog.py`](./server/pipeline/app_catalog.py): `apps.csv` 파싱과 category/priority/installed 필터. 새 필수 컬럼 추가는 `_REQUIRED_COLUMNS` 와 `AppJob` 을 동시에 수정. `installed` 는 optional 컬럼 — 누락된 CSV 는 자동으로 모두 `false` 로 해석된다.
