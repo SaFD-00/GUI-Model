@@ -39,18 +39,12 @@ def _escape_text_for_adb(text: str) -> str:
 class AdbClient:
     """Wrapper for ADB shell commands."""
 
-    def __init__(self, device_serial: str | None = None):
-        self.device_serial = device_serial
+    def __init__(self):
         self._adb = _find_adb()
-
-    def _cmd_prefix(self) -> list[str]:
-        if self.device_serial:
-            return [self._adb, "-s", self.device_serial]
-        return [self._adb]
 
     def shell(self, command: str, timeout: int | None = None) -> str:
         """Run an ADB shell command and return stdout."""
-        cmd = self._cmd_prefix() + ["shell", command]
+        cmd = [self._adb, "shell", command]
         logger.debug(f"ADB: {' '.join(cmd)}")
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout
@@ -127,7 +121,7 @@ class AdbClient:
 
     def install(self, apk_path: str) -> str:
         """Install an APK."""
-        cmd = self._cmd_prefix() + ["install", "-r", apk_path]
+        cmd = [self._adb, "install", "-r", apk_path]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         return result.stdout.strip()
 

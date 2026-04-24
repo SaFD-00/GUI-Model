@@ -73,7 +73,7 @@
   - [`explorer.py`](./server/pipeline/explorer.py): SmartExplorer
   - [`text_generator.py`](./server/pipeline/text_generator.py): random 또는 OpenAI 기반 입력 텍스트 생성
 - `infra/`
-  - [`device/adb.py`](./server/infra/device/adb.py): ADB wrapper. `AdbClient(device_serial=...)` 로 대상 디바이스를 고정한다. CLI 에서 `--device` 또는 `ANDROID_SERIAL` 환경변수가 `_resolve_device_serial()` 을 거쳐 주입된다.
+  - [`device/adb.py`](./server/infra/device/adb.py): ADB wrapper. `adb` 의 기본 단일 디바이스를 그대로 사용한다 (단일 AVD 전제).
   - [`network/server.py`](./server/infra/network/server.py): TCP 서버와 signal queue
   - [`storage/storage.py`](./server/infra/storage/storage.py): raw session 저장 및 XML variant 재생성
   - [`xml/ui_tree.py`](./server/infra/xml/ui_tree.py): action selection 용 UI tree
@@ -185,7 +185,7 @@ Server -> App (newline-delimited JSON):
 - scrollable 이 없으면 `swipe = 0.05`
 - 모든 가중치 합이 0 이면 PressBack 으로 fallback (첫 화면이면 random tap)
 
-실행은 `SmartExplorer.execute_action` 이 `AdbClient` ([`server/infra/device/adb.py`](./server/infra/device/adb.py)) 메서드로 위임. `AdbClient` 는 CLI 진입점에서 단일 인스턴스로 생성되어 `SmartExplorer` 와 `Collector` 에 주입되므로, 대상 디바이스는 `--device` / `ANDROID_SERIAL` 로 한 번만 결정된다.
+실행은 `SmartExplorer.execute_action` 이 `AdbClient` ([`server/infra/device/adb.py`](./server/infra/device/adb.py)) 메서드로 위임. `AdbClient` 는 CLI 진입점에서 단일 인스턴스로 생성되어 `SmartExplorer` 와 `Collector` 에 주입된다.
 
 ## 4. 세션 관리와 복구
 

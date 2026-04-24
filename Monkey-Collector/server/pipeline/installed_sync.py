@@ -116,12 +116,10 @@ def sync_installed_column(
     return total, installed_count, changed
 
 
-def sync(csv_path: str | Path, device: str | None = None) -> tuple[int, int, int]:
+def sync(csv_path: str | Path) -> tuple[int, int, int]:
     """One-shot: query device, update apps.csv, log a summary."""
-    adb = AdbClient(device_serial=device)
-    logger.info(
-        f"Querying installed packages on device={device or '(default)'}..."
-    )
+    adb = AdbClient()
+    logger.info("Querying installed packages on connected device...")
     packages = list_installed_packages(adb)
     logger.info(f"Device reports {len(packages)} installed packages")
 

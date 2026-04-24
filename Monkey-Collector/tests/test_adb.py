@@ -61,13 +61,6 @@ class TestShell:
         args = mock_subprocess.call_args[0][0]
         assert args == ["/usr/bin/adb", "shell", "ls /sdcard"]
 
-    def test_with_device_serial(self, mock_subprocess):
-        with patch("server.infra.device.adb._find_adb", return_value="/usr/bin/adb"):
-            client = AdbClient(device_serial="emulator-5554")
-        client.shell("ls")
-        args = mock_subprocess.call_args[0][0]
-        assert args[:3] == ["/usr/bin/adb", "-s", "emulator-5554"]
-
 
 class TestAdbCommands:
     def test_get_device_resolution(self, adb_client, mock_subprocess):
