@@ -4,7 +4,7 @@ F-Droid uses the public HTTP API (https://f-droid.org/api/v1/packages/<pkg>).
 Play Store uses `gplaydl` v2 as a subprocess (Aurora Store token dispenser,
 anonymous auth).
 
-Output layout (compatible with /setup-apks):
+Output layout (compatible with /setup-emulator):
 
     Monkey-Collector/apks/{package_id}.apk   # base APK only
     Monkey-Collector/apks/MISSING.md          # per-source failure log
@@ -22,7 +22,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,7 +39,6 @@ FDROID_INDEX_URL = "https://f-droid.org/repo/index-v2.json"
 FDROID_REPO_BASE = "https://f-droid.org/repo"
 DEFAULT_ABI = "x86_64"
 DEFAULT_PLAYSTORE_ARCH = "arm64"
-DEFAULT_CONCURRENCY = 4
 GPLAYDL_TIMEOUT_SEC = 300
 HTTP_CHUNK_BYTES = 65536
 
@@ -328,7 +326,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", help="Print targets only, no downloads")
     p.add_argument("--apks-dir", default=None, help="Override apks directory (default: ./apks)")
     p.add_argument("--csv", default=None, help="Override apps.csv path (default: ./apps.csv)")
-    p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     return p.parse_args(argv)
 
 
@@ -383,24 +380,18 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 index = None
             if index is not None:
-                with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-                    futures = {
-                        ex.submit(
-                            download_fdroid,
-                            session,
-                            job.package_id,
-                            args.abi,
-                            apks_dir / f"{job.package_id}.apk",
-                            index=index,
-                        ): job
-                        for job in fdroid_pending
-                    }
-                    for fut in as_completed(futures):
-                        r = fut.result()
-                        results.append(r)
-                        marker = "[+]" if r.status == "downloaded" else "[-]"
-                        suffix = f" — {r.reason}" if r.reason else ""
-                        print(f"{marker} F-Droid   {r.package_id}{suffix}")
+                for job in fdroid_pending:
+                    r = download_fdroid(
+                        session,
+                        job.package_id,
+                        args.abi,
+                        apks_dir / f"{job.package_id}.apk",
+                        index=index,
+                    )
+                    results.append(r)
+                    marker = "[+]" if r.status == "downloaded" else "[-]"
+                    suffix = f" — {r.reason}" if r.reason else ""
+                    print(f"{marker} F-Droid   {r.package_id}{suffix}")
 
     for job in playstore_pending:
         dest = apks_dir / f"{job.package_id}.apk"

@@ -36,7 +36,6 @@ def test_parse_args_defaults() -> None:
     assert ns.source == "all"
     assert ns.abi == "x86_64"
     assert ns.playstore_arch == "arm64"
-    assert ns.concurrency == 4
     assert ns.force is False
     assert ns.dry_run is False
 
