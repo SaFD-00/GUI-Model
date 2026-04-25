@@ -21,12 +21,12 @@ Productivity,Office,Google Sheets,com.google.android.apps.docs.editors.sheets,Pl
 Productivity,Office,Google Slides,com.google.android.apps.docs.editors.slides,PlayStore,Medium,Presentation editing,false
 Productivity,Office,Microsoft Word,com.microsoft.office.word,PlayStore,Medium,Document editing,false
 Productivity,Office,WPS Office,cn.wps.moffice_eng,PlayStore,Medium,Multi-format office suite,false
-Productivity,Storage,Google Drive,com.google.android.apps.docs,PlayStore,High,Cloud storage; file management,true
+Productivity,Storage,Google Drive,com.google.android.apps.docs,PlayStore,High,Cloud storage; file management,false
 Productivity,Storage,Dropbox,com.dropbox.android,PlayStore,Medium,Cloud storage + sharing,false
 Productivity,Tasks,TickTick,com.ticktick.task,PlayStore,Medium,Task manager + calendar,false
 Productivity,Tasks,Tasks.org,org.tasks,F-Droid,Medium,Open-source task manager,true
 Productivity,Tasks,Todoist,com.todoist,PlayStore,Medium,Popular task manager,false
-Productivity,Calendar,Google Calendar,com.google.android.calendar,PlayStore,High,Calendar + event management,true
+Productivity,Calendar,Google Calendar,com.google.android.calendar,PlayStore,High,Calendar + event management,false
 Productivity,Calendar,Simple Calendar,com.simplemobiletools.calendar.pro,F-Droid,High,Open-source calendar,false
 Productivity,Email,Gmail,com.google.android.gm,PlayStore,High,Email client,true
 Productivity,Email,K-9 Mail,com.fsck.k9,F-Droid,High,Open-source email client,true
