@@ -79,23 +79,19 @@ class CollectionServer:
         logger.info("Collection server stopped")
 
     def reset_for_new_session(self):
-        """Reset server state for a new collection session.
+        """Reset per-session state (queues, events) for the next collection run.
 
-        Clears package event, signal queue, XML state, and client reference.
-        Closes the old client socket so the app detects the disconnect.
-        The server socket and accept loop remain active.
+        Leaves ``self._client`` intact: the previous session's SESSION_END/F
+        handshake already closed the old socket, and the Android service
+        auto-reconnects with a fresh socket before this is called. Closing
+        that fresh socket here would force a second reconnect that the client
+        does not perform, causing the next ``wait_for_connection`` to time out.
         """
         self._package_event.clear()
         self._target_package = None
         self._xml_event.clear()
         self._latest_xml = None
         self._latest_xml_meta = None
-        if self._client:
-            try:
-                self._client.close()
-            except OSError:
-                pass
-        self._client = None
         self.clear_signal_queue()
         logger.debug("Server state reset for new session")
 

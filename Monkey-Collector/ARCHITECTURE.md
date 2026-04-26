@@ -149,9 +149,18 @@ App -> Server:
 Server -> App (newline-delimited JSON):
 
 - `{"type":"START","package":"<pkg>"}`: 서버가 다음으로 수집할 앱을 지정. 클라이언트는 `startCollection` 을 트리거하고 `P` 메시지로 같은 pkg 를 회신한다.
-- `{"type":"SESSION_END"}`: 현재 세션 종료 요청. 클라이언트는 `stopCollection` 을 수행한다.
+- `{"type":"SESSION_END"}`: 현재 세션 종료 요청. 클라이언트는 `stopCollection` 을 수행하고 `F` 회신 후 소켓을 닫은 뒤 즉시 새 소켓으로 자동 재접속한다.
 
 `CollectionServer` 는 signal queue 를 사용해 최신 signal 기준으로 collection loop 를 진행한다.
+
+#### 세션 전환 핸드셰이크
+
+`run_queue` 가 다음 앱으로 넘어갈 때:
+
+1. 이전 세션 `finalize_session` 이 `SESSION_END` 송신
+2. Android 가 `F` 회신 → 서버 `_handle_client` 의 `F` 핸들러가 break 후 `_client = None`
+3. Android 가 fresh 소켓으로 재접속 → `_run` 의 accept 루프가 새 `_client` 등록
+4. Python 측은 `reset_for_new_session()` 으로 큐/이벤트 상태만 초기화하고 **소켓은 그대로 유지** — 닫으면 클라이언트가 한 번 더 재접속하지 않아 다음 `wait_for_connection` 이 타임아웃한다.
 
 ### Action Space
 

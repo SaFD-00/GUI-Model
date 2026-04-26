@@ -96,7 +96,7 @@ monkey-collect run --apps all --input-mode random
 동작:
 
 - 서버가 각 앱마다 `adb shell am start` 로 앱을 실행하고, TCP 로 `{"type": "START", "package": "com.X"}` 를 보낸다. Android 앱은 standby 연결을 유지하다가 START 를 받아 자동으로 수집을 시작한다.
-- 한 세션이 끝나면 서버가 `SESSION_END` 를 보내 클라이언트를 정리하고, 다음 앱으로 이동한다.
+- 한 세션이 끝나면 서버가 `SESSION_END` 를 보내 클라이언트를 정리하고, Android 는 `F` 회신 후 새 소켓으로 자동 재접속한다. 서버는 이 fresh 소켓을 그대로 유지하고 다음 앱으로 `START` 를 송신한다.
 - 큐 구성 시 `data/raw/{pkg}/metadata.json` 의 `completed_at` 이 채워진 앱은 **완료로 판정되어 스킵**. `--force` 로 우회하거나, 중단된(미완료) 세션은 `completed_at` 이 `null` 이라 자동으로 resume 된다.
 
 ## CLI

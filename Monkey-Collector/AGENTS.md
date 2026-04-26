@@ -29,6 +29,7 @@
 - 세션 디렉토리는 `data/raw/{package}/` 형식이다. timestamp 기반 새 디렉토리를 만들지 않는다.
 - 기본 동작은 같은 앱 패키지의 기존 세션을 이어서 저장하는 것이다. `run` 커맨드의 `--new-session` 은 해당 앱 한 개만 초기화한다. 더 넓은 범위 삭제는 `monkey-collect reset` 을 사용한다.
 - App -> Server signal 이름 `P`, `S`, `X`, `E`, `N`, `F` 와 Server -> App 제어 메시지 (`{"type":"START","package":...}`, `{"type":"SESSION_END"}`) 계약을 깨지 마라. Android 측 `CollectorService.beginStandby` 루프가 이 계약에 의존한다.
+- 세션 전환 핸드셰이크: `SESSION_END` → 클라이언트 `F` 회신 + 소켓 close → 클라이언트 한 번 자동 재접속. Python 의 `CollectionServer.reset_for_new_session()` 은 큐/이벤트만 초기화하고 fresh 소켓은 보존해야 한다. 여기서 소켓을 닫으면 클라이언트가 두 번째 재접속을 하지 않아 두 번째 세션부터 `wait_for_connection` 이 전부 타임아웃한다.
 - first screen 보호, no-change retry, external app recovery 는 collector 의 핵심 동작이다. 관련 상수는 [`server/pipeline/recovery.py`](./server/pipeline/recovery.py) 에 있다.
 - `server/__init__.py` 의 공개 export 를 바꾸면 패키지 사용 코드와 문서도 같이 갱신한다.
 - 저장 포맷을 바꾸면 converter, page-map, regenerate, 테스트를 함께 갱신해야 한다.
