@@ -28,7 +28,7 @@ Productivity,Tasks,Tasks.org,org.tasks,F-Droid,Medium,Open-source task manager,t
 Productivity,Tasks,Todoist,com.todoist,PlayStore,Medium,Popular task manager,false
 Productivity,Calendar,Google Calendar,com.google.android.calendar,PlayStore,High,Calendar + event management,false
 Productivity,Calendar,Simple Calendar,com.simplemobiletools.calendar.pro,F-Droid,High,Open-source calendar,false
-Productivity,Email,Gmail,com.google.android.gm,PlayStore,High,Email client,true
+Productivity,Email,Gmail,com.google.android.gm,PlayStore,High,Email client,false
 Productivity,Email,K-9 Mail,com.fsck.k9,F-Droid,High,Open-source email client,true
 Productivity,Email,Microsoft Outlook,com.microsoft.office.outlook,PlayStore,Medium,Email + calendar,false
 Communication,Messaging,Signal,org.thoughtcrime.securesms,PlayStore,High,Encrypted messaging,false
@@ -100,7 +100,7 @@ Finance,Investment,Yahoo Finance,com.yahoo.mobile.client.android.finance,PlaySto
 Finance,Expense,Wallet,com.droid4you.application.wallet,PlayStore,Medium,Expense tracking,false
 Finance,Expense,GnuCash,org.gnucash.android,F-Droid,Medium,Open-source accounting,false
 Finance,Crypto,CoinGecko,com.coingecko.coingeckoapp,PlayStore,Medium,Crypto price tracking,false
-System,Settings,Settings,com.android.settings,System,High,System settings; deep menus,true
+System,Settings,Settings,com.android.settings,System,High,System settings; deep menus,false
 System,Files,Files by Google,com.google.android.apps.nbu.files,PlayStore,High,File manager,false
 System,Files,Material Files,me.zhanghai.android.files,F-Droid,Medium,Open-source file manager,true
 System,Clock,Clock,com.google.android.deskclock,PlayStore,High,Timer/alarm/stopwatch,true
