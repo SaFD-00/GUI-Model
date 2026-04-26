@@ -1,8 +1,8 @@
 """Collection pipeline: explorer, text generator, collector orchestration."""
 
-from server.pipeline.collector import Collector
-from server.pipeline.explorer import SmartExplorer
-from server.pipeline.text_generator import (
+from monkey_collector.pipeline.collector import Collector
+from monkey_collector.pipeline.explorer import SmartExplorer
+from monkey_collector.pipeline.text_generator import (
     LLMTextGenerator,
     RandomTextGenerator,
     TextGenerator,

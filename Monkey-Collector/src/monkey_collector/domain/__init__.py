@@ -1,6 +1,6 @@
 """Pure domain models: actions, tracking, page graph."""
 
-from server.domain.actions import (
+from monkey_collector.domain.actions import (
     Action,
     InputText,
     LongPress,
@@ -9,9 +9,9 @@ from server.domain.actions import (
     Swipe,
     Tap,
 )
-from server.domain.activity_coverage import ActivityCoverageTracker
-from server.domain.cost_tracker import CostTracker
-from server.domain.page_graph import (
+from monkey_collector.domain.activity_coverage import ActivityCoverageTracker
+from monkey_collector.domain.cost_tracker import CostTracker
+from monkey_collector.domain.page_graph import (
     PageGraph,
     PageNode,
     TransitionEdge,

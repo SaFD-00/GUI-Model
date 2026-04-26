@@ -1,11 +1,11 @@
-"""Tests for server.text_generator — text generation strategies."""
+"""Tests for monkey_collector.text_generator — text generation strategies."""
 
 import random
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from server.pipeline.text_generator import (
+from monkey_collector.pipeline.text_generator import (
     SAMPLE_TEXTS,
     LLMTextGenerator,
     RandomTextGenerator,

@@ -58,42 +58,42 @@
 
 ### Python Server
 
-경로: [`server/`](./server)
+경로: [`src/monkey_collector/`](./src/monkey_collector)
 
 - `domain/`
-  - [`actions.py`](./server/domain/actions.py): Action dataclass 들
-  - [`activity_coverage.py`](./server/domain/activity_coverage.py): Activity coverage CSV
-  - [`cost_tracker.py`](./server/domain/cost_tracker.py): LLM 비용 추적 CSV
-  - [`page_graph.py`](./server/domain/page_graph.py): 페이지 그래프 생성
+  - [`actions.py`](./src/monkey_collector/domain/actions.py): Action dataclass 들
+  - [`activity_coverage.py`](./src/monkey_collector/domain/activity_coverage.py): Activity coverage CSV
+  - [`cost_tracker.py`](./src/monkey_collector/domain/cost_tracker.py): LLM 비용 추적 CSV
+  - [`page_graph.py`](./src/monkey_collector/domain/page_graph.py): 페이지 그래프 생성
 - `pipeline/`
-  - [`collector.py`](./server/pipeline/collector.py): collector facade
-  - [`session_manager.py`](./server/pipeline/session_manager.py): session init/resume/finalize
-  - [`collection_loop.py`](./server/pipeline/collection_loop.py): 메인 루프
-  - [`recovery.py`](./server/pipeline/recovery.py): retry / recovery 상수와 helper
-  - [`explorer.py`](./server/pipeline/explorer.py): SmartExplorer
-  - [`text_generator.py`](./server/pipeline/text_generator.py): random 또는 OpenAI 기반 입력 텍스트 생성
-- 인프라 모듈 (server/ 직속)
-  - [`adb.py`](./server/adb.py): ADB wrapper. 상단 상수 `REQUIRED_AVD_NAME = "ImplicitWorldModel"` 에 맞춰 `adb devices` + `emu avd name` 으로 해당 AVD 의 emulator serial 을 해석하고, 이후 모든 명령에 `-s <serial>` 을 prefix 한다. 다중 디바이스 환경에서도 단일 AVD 만 쓰도록 강제.
-  - [`tcp_server.py`](./server/tcp_server.py): TCP 서버와 signal queue (`CollectionServer`)
-  - [`storage.py`](./server/storage.py): raw session 저장 및 XML variant 재생성 (`DataWriter`)
+  - [`collector.py`](./src/monkey_collector/pipeline/collector.py): collector facade
+  - [`session_manager.py`](./src/monkey_collector/pipeline/session_manager.py): session init/resume/finalize
+  - [`collection_loop.py`](./src/monkey_collector/pipeline/collection_loop.py): 메인 루프
+  - [`recovery.py`](./src/monkey_collector/pipeline/recovery.py): retry / recovery 상수와 helper
+  - [`explorer.py`](./src/monkey_collector/pipeline/explorer.py): SmartExplorer
+  - [`text_generator.py`](./src/monkey_collector/pipeline/text_generator.py): random 또는 OpenAI 기반 입력 텍스트 생성
+- 인프라 모듈 (monkey_collector/ 직속)
+  - [`adb.py`](./src/monkey_collector/adb.py): ADB wrapper. 상단 상수 `REQUIRED_AVD_NAME = "ImplicitWorldModel"` 에 맞춰 `adb devices` + `emu avd name` 으로 해당 AVD 의 emulator serial 을 해석하고, 이후 모든 명령에 `-s <serial>` 을 prefix 한다. 다중 디바이스 환경에서도 단일 AVD 만 쓰도록 강제.
+  - [`tcp_server.py`](./src/monkey_collector/tcp_server.py): TCP 서버와 signal queue (`CollectionServer`)
+  - [`storage.py`](./src/monkey_collector/storage.py): raw session 저장 및 XML variant 재생성 (`DataWriter`)
 - `xml/`
-  - [`ui_tree.py`](./server/xml/ui_tree.py): action selection 용 UI tree
-  - [`structured_parser.py`](./server/xml/structured_parser.py): 구조적 XML parser
-  - [`parser_base.py`](./server/xml/parser_base.py): `Parser` ABC
+  - [`ui_tree.py`](./src/monkey_collector/xml/ui_tree.py): action selection 용 UI tree
+  - [`structured_parser.py`](./src/monkey_collector/xml/structured_parser.py): 구조적 XML parser
+  - [`parser_base.py`](./src/monkey_collector/xml/parser_base.py): `Parser` ABC
 - `export/`
-  - [`converter.py`](./server/export/converter.py): raw session -> ShareGPT JSONL
-  - [`graph_visualizer.py`](./server/export/graph_visualizer.py): page graph HTML 시각화
+  - [`converter.py`](./src/monkey_collector/export/converter.py): raw session -> ShareGPT JSONL
+  - [`graph_visualizer.py`](./src/monkey_collector/export/graph_visualizer.py): page graph HTML 시각화
 
 ### 앱 카탈로그 & 설치 상태
 
 `run` 서브커맨드가 수집할 앱 목록을 결정할 때 사용하는 두 모듈.
 
-- `server/pipeline/app_catalog.py`
+- `src/monkey_collector/pipeline/app_catalog.py`
   - `AppCatalog`: stdlib csv 로 `catalog/apps.csv` 파싱, BOM/대소문자 정규화.
   - `AppJob`: frozen dataclass (category, sub_category, app_name, package_id, source, priority, notes, installed).
   - `filter(categories, priorities, installed)`: case-insensitive 필터. `installed=True` 는 `catalog/apps.csv` 의 `installed` 컬럼이 `true` 인 앱만 반환.
   - `installed_apps()` / `find_by_package(pkg)` 헬퍼로 `run --apps all` 과 명시적 패키지 목록 해소를 지원.
-- `server/pipeline/installed_sync.py`
+- `src/monkey_collector/pipeline/installed_sync.py`
   - `adb shell pm list packages` 결과로 `catalog/apps.csv` 의 `installed` 컬럼을 in-place (임시파일 + `os.replace`) 로 갱신. `sync-installed` 서브커맨드의 백엔드.
 
 실행 흐름 (`run --apps …`):
@@ -166,7 +166,7 @@ Server -> App (newline-delimited JSON):
 
 ### Action Space
 
-[`server/domain/actions.py`](./server/domain/actions.py) 에 정의된 6종 action 을 [`server/pipeline/explorer.py`](./server/pipeline/explorer.py) 의 `SmartExplorer` 가 가중치 기반으로 선택한다.
+[`src/monkey_collector/domain/actions.py`](./src/monkey_collector/domain/actions.py) 에 정의된 6종 action 을 [`src/monkey_collector/pipeline/explorer.py`](./src/monkey_collector/pipeline/explorer.py) 의 `SmartExplorer` 가 가중치 기반으로 선택한다.
 
 | action_type  | 파라미터                                | 설명                            |
 | ------------ | --------------------------------------- | ------------------------------- |
@@ -196,7 +196,7 @@ Server -> App (newline-delimited JSON):
 - scrollable 이 없으면 `swipe = 0.05`
 - 모든 가중치 합이 0 이면 PressBack 으로 fallback (첫 화면이면 random tap)
 
-실행은 `SmartExplorer.execute_action` 이 `AdbClient` ([`server/adb.py`](./server/adb.py)) 메서드로 위임. `AdbClient` 는 CLI 진입점에서 단일 인스턴스로 생성되어 `SmartExplorer` 와 `Collector` 에 주입된다. 생성 시점에 `ImplicitWorldModel` AVD 의 emulator serial 을 해석해 저장하므로, 해당 AVD 가 실행 중이어야 한다.
+실행은 `SmartExplorer.execute_action` 이 `AdbClient` ([`src/monkey_collector/adb.py`](./src/monkey_collector/adb.py)) 메서드로 위임. `AdbClient` 는 CLI 진입점에서 단일 인스턴스로 생성되어 `SmartExplorer` 와 `Collector` 에 주입된다. 생성 시점에 `ImplicitWorldModel` AVD 의 emulator serial 을 해석해 저장하므로, 해당 AVD 가 실행 중이어야 한다.
 
 ## 4. 세션 관리와 복구
 
@@ -211,7 +211,7 @@ Server -> App (newline-delimited JSON):
 
 ### 주요 복구 규칙
 
-[`server/pipeline/recovery.py`](./server/pipeline/recovery.py) 기준 상수:
+[`src/monkey_collector/pipeline/recovery.py`](./src/monkey_collector/pipeline/recovery.py) 기준 상수:
 
 - `MAX_NO_CHANGE_RETRIES = 3`
 - `MAX_EXTERNAL_APP_RETRIES = 10`
@@ -258,7 +258,7 @@ data/raw/{package}/
 
 ### CLI
 
-[`server/cli.py`](./server/cli.py) 가 아래 서브커맨드를 제공한다.
+[`src/monkey_collector/cli.py`](./src/monkey_collector/cli.py) 가 아래 서브커맨드를 제공한다.
 
 - `run` — server-driven 수집 (`--apps all` 또는 `--apps PKG [PKG ...]`).
 - `sync-installed` — `adb pm list packages` 결과로 `catalog/apps.csv` 의 `installed` 컬럼 갱신.
@@ -271,7 +271,7 @@ data/raw/{package}/
 
 ### 공개 API
 
-[`server/__init__.py`](./server/__init__.py) 는 아래 주요 타입을 export 한다.
+[`src/monkey_collector/__init__.py`](./src/monkey_collector/__init__.py) 는 아래 주요 타입을 export 한다.
 
 - `Collector`
 - `AppCatalog`, `AppJob`

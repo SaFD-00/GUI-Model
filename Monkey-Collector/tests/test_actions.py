@@ -1,8 +1,8 @@
-"""Tests for server.actions — action dataclasses and serialization."""
+"""Tests for monkey_collector.actions — action dataclasses and serialization."""
 
 import pytest
 
-from server.domain.actions import (
+from monkey_collector.domain.actions import (
     ACTION_REGISTRY,
     Action,
     InputText,

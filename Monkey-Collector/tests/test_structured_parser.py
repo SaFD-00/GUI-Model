@@ -1,10 +1,10 @@
-"""Tests for server.parser.structured_parser — 5-stage XML pipeline."""
+"""Tests for monkey_collector.parser.structured_parser — 5-stage XML pipeline."""
 
 import xml.etree.ElementTree as ET
 
 import pytest
 
-from server.xml.structured_parser import (
+from monkey_collector.xml.structured_parser import (
     StructuredXmlParser,
     encode_to_html_xml,
     hierarchy_parse,

@@ -1,15 +1,15 @@
-"""Tests for server.converter — session-to-JSONL conversion."""
+"""Tests for monkey_collector.converter — session-to-JSONL conversion."""
 
 import json
 
-from server.export.converter import (
+from monkey_collector.export.converter import (
     Converter,
     _find_element_at,
     _map_event_to_action,
     generate_example,
 )
-from server.xml.structured_parser import parse_to_html_xml
-from server.xml.ui_tree import parse_uiautomator_xml
+from monkey_collector.xml.structured_parser import parse_to_html_xml
+from monkey_collector.xml.ui_tree import parse_uiautomator_xml
 from tests.conftest import make_element
 from tests.fixtures.session_fixtures import create_mock_session
 from tests.fixtures.xml_samples import COMPLEX_XML, SIMPLE_XML

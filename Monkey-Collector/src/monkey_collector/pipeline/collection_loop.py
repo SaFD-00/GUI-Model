@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from server.domain.actions import Action
-from server.domain.page_graph import PageGraph
-from server.xml.ui_tree import UITree
-from server.pipeline.recovery import (
+from monkey_collector.domain.actions import Action
+from monkey_collector.domain.page_graph import PageGraph
+from monkey_collector.xml.ui_tree import UITree
+from monkey_collector.pipeline.recovery import (
     MAX_EMPTY_UI_RETRIES,
     MAX_EXTERNAL_APP_RETRIES,
     MAX_NO_CHANGE_RETRIES,
@@ -22,7 +22,7 @@ from server.pipeline.recovery import (
 )
 
 if TYPE_CHECKING:
-    from server.pipeline.collector import Collector
+    from monkey_collector.pipeline.collector import Collector
 
 
 @dataclass

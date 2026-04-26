@@ -15,20 +15,20 @@ from __future__ import annotations
 
 from loguru import logger
 
-from server.domain.activity_coverage import ActivityCoverageTracker
-from server.domain.cost_tracker import CostTracker
-from server.adb import AdbClient
-from server.tcp_server import CollectionServer
-from server.storage import DataWriter
-from server.pipeline.collection_loop import CollectionState, run_collection_loop
-from server.pipeline.explorer import SmartExplorer
-from server.pipeline.session_manager import (
+from monkey_collector.domain.activity_coverage import ActivityCoverageTracker
+from monkey_collector.domain.cost_tracker import CostTracker
+from monkey_collector.adb import AdbClient
+from monkey_collector.tcp_server import CollectionServer
+from monkey_collector.storage import DataWriter
+from monkey_collector.pipeline.collection_loop import CollectionState, run_collection_loop
+from monkey_collector.pipeline.explorer import SmartExplorer
+from monkey_collector.pipeline.session_manager import (
     finalize_session,
     init_or_resume_session,
     receive_target_package,
     wait_for_connection,
 )
-from server.pipeline.text_generator import TextGenerator
+from monkey_collector.pipeline.text_generator import TextGenerator
 
 
 class Collector:

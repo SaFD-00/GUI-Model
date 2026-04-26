@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from server.domain.page_graph import build_graph_from_session
+from monkey_collector.domain.page_graph import build_graph_from_session
 
 if TYPE_CHECKING:
-    from server.pipeline.collector import Collector
+    from monkey_collector.pipeline.collector import Collector
 
 
 def wait_for_connection(collector: Collector, timeout_seconds: int = 120) -> bool:
@@ -102,7 +102,7 @@ def finalize_session(collector: Collector, session_id: str) -> None:
         graph_data["metadata"]["session_id"] = session_id
         collector.writer.save_page_graph(graph_data)
         try:
-            from server.export.graph_visualizer import visualize_session
+            from monkey_collector.export.graph_visualizer import visualize_session
             visualize_session(
                 collector.writer.session_dir, open_browser=False,
             )

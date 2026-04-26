@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from server.xml.structured_parser import (
+from monkey_collector.xml.structured_parser import (
     encode_to_html_xml,
     parse_to_html_xml,
 )

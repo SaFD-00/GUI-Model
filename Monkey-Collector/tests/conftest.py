@@ -5,17 +5,17 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger
 
-from server.adb import AdbClient
-from server.xml.ui_tree import UIElement, UITree
+from monkey_collector.adb import AdbClient
+from monkey_collector.xml.ui_tree import UIElement, UITree
 from tests.fixtures.xml_samples import COMPLEX_XML, MINIMAL_XML, SIMPLE_XML
 
 
 @pytest.fixture(autouse=True, scope="session")
 def _suppress_loguru():
     """Suppress loguru output during tests."""
-    logger.disable("server")
+    logger.disable("monkey_collector")
     yield
-    logger.enable("server")
+    logger.enable("monkey_collector")
 
 
 # ── XML fixtures ──

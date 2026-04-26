@@ -1,11 +1,11 @@
-"""Tests for server.cost_tracker — Token cost tracking."""
+"""Tests for monkey_collector.cost_tracker — Token cost tracking."""
 
 import csv
 import os
 
 import pytest
 
-from server.domain.cost_tracker import MODEL_PRICING, CostTracker
+from monkey_collector.domain.cost_tracker import MODEL_PRICING, CostTracker
 
 
 class TestInitialize:

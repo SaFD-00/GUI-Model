@@ -27,7 +27,7 @@ from catalog.download_apks import (  # noqa: E402
     render_missing_md,
 )
 
-from server.pipeline.app_catalog import AppJob  # noqa: E402
+from monkey_collector.pipeline.app_catalog import AppJob  # noqa: E402
 
 # ── CLI ────────────────────────────────────────────────────────────────────
 

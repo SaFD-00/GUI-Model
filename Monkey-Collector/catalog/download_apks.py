@@ -33,7 +33,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from server.pipeline.app_catalog import AppCatalog, AppJob  # noqa: E402
+from monkey_collector.pipeline.app_catalog import AppCatalog, AppJob  # noqa: E402
 
 FDROID_INDEX_URL = "https://f-droid.org/repo/index-v2.json"
 FDROID_REPO_BASE = "https://f-droid.org/repo"

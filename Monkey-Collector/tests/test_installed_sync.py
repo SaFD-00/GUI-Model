@@ -1,4 +1,4 @@
-"""Tests for server.pipeline.installed_sync."""
+"""Tests for monkey_collector.pipeline.installed_sync."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from server.pipeline.installed_sync import (
+from monkey_collector.pipeline.installed_sync import (
     list_installed_packages,
     sync_installed_column,
 )

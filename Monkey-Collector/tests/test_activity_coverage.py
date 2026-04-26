@@ -1,11 +1,11 @@
-"""Tests for server.activity_coverage — Activity coverage tracking."""
+"""Tests for monkey_collector.activity_coverage — Activity coverage tracking."""
 
 import csv
 import os
 
 import pytest
 
-from server.domain.activity_coverage import ActivityCoverageTracker, _normalize_activity_name
+from monkey_collector.domain.activity_coverage import ActivityCoverageTracker, _normalize_activity_name
 
 
 class TestInitialize:

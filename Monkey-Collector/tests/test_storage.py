@@ -1,11 +1,11 @@
-"""Tests for server.storage — DataWriter session data storage."""
+"""Tests for monkey_collector.storage — DataWriter session data storage."""
 
 import json
 import os
 
 import pytest
 
-from server.storage import DataWriter
+from monkey_collector.storage import DataWriter
 
 
 @pytest.fixture

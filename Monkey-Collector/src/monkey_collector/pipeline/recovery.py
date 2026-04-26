@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from server.domain.actions import Action
-from server.adb import AdbClient
-from server.xml.ui_tree import UITree
+from monkey_collector.domain.actions import Action
+from monkey_collector.adb import AdbClient
+from monkey_collector.xml.ui_tree import UITree
 
 if TYPE_CHECKING:
-    from server.pipeline.explorer import SmartExplorer
+    from monkey_collector.pipeline.explorer import SmartExplorer
 
 MAX_NO_CHANGE_RETRIES = 3
 MAX_EXTERNAL_APP_RETRIES = 10

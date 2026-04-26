@@ -1,4 +1,4 @@
-"""Tests for server.server — CollectionServer TCP protocol and signal queue."""
+"""Tests for monkey_collector.server — CollectionServer TCP protocol and signal queue."""
 
 import json
 import socket
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from server.tcp_server import CollectionServer
+from monkey_collector.tcp_server import CollectionServer
 
 
 @pytest.fixture

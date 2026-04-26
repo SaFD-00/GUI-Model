@@ -2,7 +2,7 @@
 
 The server drives collection based on which apps are reported as installed in
 apps.csv (see ``AppCatalog.installed_apps()``).  This module provides the CLI
-backend for ``python -m server sync-installed``: it queries the device via
+backend for ``python -m monkey_collector sync-installed``: it queries the device via
 ``adb shell pm list packages`` and rewrites the ``installed`` column in place
 (atomically) without touching any other fields.
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from server.adb import AdbClient
+from monkey_collector.adb import AdbClient
 
 _INSTALLED_HEADER = "installed"
 _PACKAGE_HEADER = "package_id"

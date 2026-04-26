@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from server.xml.structured_parser import encode_to_html_xml
-from server.xml.ui_tree import UIElement
+from monkey_collector.xml.structured_parser import encode_to_html_xml
+from monkey_collector.xml.ui_tree import UIElement
 
 if TYPE_CHECKING:
-    from server.domain.cost_tracker import CostTracker
+    from monkey_collector.domain.cost_tracker import CostTracker
 
 # Default sample texts (same as explorer.SAMPLE_TEXTS)
 SAMPLE_TEXTS = [

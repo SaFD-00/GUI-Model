@@ -1,6 +1,6 @@
-"""Tests for server.xml_parser — UIElement, UITree, XML parsing."""
+"""Tests for monkey_collector.xml_parser — UIElement, UITree, XML parsing."""
 
-from server.xml.ui_tree import UIElement, UITree, parse_bounds, parse_uiautomator_xml
+from monkey_collector.xml.ui_tree import UIElement, UITree, parse_bounds, parse_uiautomator_xml
 from tests.conftest import make_element
 
 

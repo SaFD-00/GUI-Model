@@ -16,15 +16,15 @@ def cmd_run(args: argparse.Namespace) -> None:
     logger.add(str(log_path), level="DEBUG", enqueue=True)
     logger.info(f"[run] log file: {log_path}")
 
-    from server.domain.activity_coverage import ActivityCoverageTracker
-    from server.domain.cost_tracker import CostTracker
-    from server.adb import AdbClient
-    from server.tcp_server import CollectionServer
-    from server.storage import DataWriter
-    from server.pipeline.app_catalog import AppCatalog
-    from server.pipeline.collector import Collector
-    from server.pipeline.explorer import SmartExplorer
-    from server.pipeline.text_generator import create_text_generator
+    from monkey_collector.domain.activity_coverage import ActivityCoverageTracker
+    from monkey_collector.domain.cost_tracker import CostTracker
+    from monkey_collector.adb import AdbClient
+    from monkey_collector.tcp_server import CollectionServer
+    from monkey_collector.storage import DataWriter
+    from monkey_collector.pipeline.app_catalog import AppCatalog
+    from monkey_collector.pipeline.collector import Collector
+    from monkey_collector.pipeline.explorer import SmartExplorer
+    from monkey_collector.pipeline.text_generator import create_text_generator
 
     packages = _resolve_run_packages(args.apps, args.output, args.force)
     if not packages:
@@ -86,7 +86,7 @@ def _resolve_run_packages(
     ``completed_at`` field are skipped — those apps are treated as done.
     Pass ``force=True`` to include them anyway (useful for re-collection).
     """
-    from server.pipeline.app_catalog import AppCatalog
+    from monkey_collector.pipeline.app_catalog import AppCatalog
 
     if not apps_arg:
         return []
@@ -180,7 +180,7 @@ def _load_completed_packages(output_dir: str) -> set[str]:
 
 def cmd_reset(args: argparse.Namespace) -> None:
     """Delete collected session data by scope (all / apps)."""
-    from server.pipeline.reset import delete_targets, resolve_targets
+    from monkey_collector.pipeline.reset import delete_targets, resolve_targets
 
     packages = _split_or_none(args.apps)
     if args.all and packages:
@@ -226,14 +226,14 @@ def _split_or_none(raw: str | None) -> list[str] | None:
 
 def cmd_sync_installed(args: argparse.Namespace) -> None:
     """Refresh the installed column of apps.csv from the connected device."""
-    from server.pipeline.installed_sync import sync
+    from monkey_collector.pipeline.installed_sync import sync
 
     sync(csv_path=args.apps_csv)
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
     """Convert a single session to JSONL."""
-    from server.export.converter import Converter
+    from monkey_collector.export.converter import Converter
 
     converter = Converter(
         output_path=args.output,
@@ -247,8 +247,8 @@ def cmd_page_map(args: argparse.Namespace) -> None:
     """Build page map from a saved session."""
     import os
 
-    from server.domain.page_graph import build_graph_from_session
-    from server.export.graph_visualizer import visualize_session
+    from monkey_collector.domain.page_graph import build_graph_from_session
+    from monkey_collector.export.graph_visualizer import visualize_session
 
     graph = build_graph_from_session(args.session, threshold=args.threshold)
     graph.save(os.path.join(args.session, "page_graph.json"))
@@ -267,8 +267,8 @@ def cmd_page_map_all(args: argparse.Namespace) -> None:
     """Build page maps for all sessions in a directory."""
     import os
 
-    from server.domain.page_graph import build_graph_from_session
-    from server.export.graph_visualizer import visualize_session
+    from monkey_collector.domain.page_graph import build_graph_from_session
+    from monkey_collector.export.graph_visualizer import visualize_session
 
     raw_dir = args.raw_dir
     if not os.path.isdir(raw_dir):
@@ -296,7 +296,7 @@ def cmd_page_map_all(args: argparse.Namespace) -> None:
 
 def cmd_regenerate(args: argparse.Namespace) -> None:
     """Regenerate all XML variants from raw XML files."""
-    from server.storage import regenerate_xml_variants
+    from monkey_collector.storage import regenerate_xml_variants
 
     logger.info(f"Regenerating XML variants under: {args.raw_dir}")
     count = regenerate_xml_variants(args.raw_dir)
@@ -305,7 +305,7 @@ def cmd_regenerate(args: argparse.Namespace) -> None:
 
 def cmd_convert_all(args: argparse.Namespace) -> None:
     """Convert all sessions in a directory to JSONL."""
-    from server.export.converter import Converter
+    from monkey_collector.export.converter import Converter
 
     converter = Converter(
         output_path=args.output,

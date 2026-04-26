@@ -105,7 +105,7 @@ class DataWriter:
 
         # 2-5. parsed variants
         try:
-            from server.xml.structured_parser import (
+            from monkey_collector.xml.structured_parser import (
                 StructuredXmlParser,
                 hierarchy_parse,
                 indent_xml,
@@ -198,7 +198,7 @@ def regenerate_xml_variants(raw_dir: str) -> int:
 
     Returns the number of files successfully regenerated.
     """
-    from server.xml.structured_parser import (
+    from monkey_collector.xml.structured_parser import (
         StructuredXmlParser,
         indent_xml,
     )

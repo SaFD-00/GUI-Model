@@ -1,12 +1,12 @@
-"""Tests for server.explorer — SmartExplorer action selection and execution."""
+"""Tests for monkey_collector.explorer — SmartExplorer action selection and execution."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from server.domain.actions import Action, InputText, LongPress, PressBack, PressHome, Swipe, Tap
-from server.pipeline.explorer import SmartExplorer
-from server.pipeline.text_generator import TextGenerator
+from monkey_collector.domain.actions import Action, InputText, LongPress, PressBack, PressHome, Swipe, Tap
+from monkey_collector.pipeline.explorer import SmartExplorer
+from monkey_collector.pipeline.text_generator import TextGenerator
 from tests.conftest import make_tree
 
 
@@ -170,7 +170,7 @@ class TestExecuteAction:
         explorer.execute_action(Swipe(x1=10, y1=20, x2=30, y2=40, duration_ms=300))
         mock_adb.swipe.assert_called_once_with(10, 20, 30, 40, 300)
 
-    @patch("server.pipeline.explorer.time.sleep")
+    @patch("monkey_collector.pipeline.explorer.time.sleep")
     def test_input_text(self, mock_sleep, explorer, mock_adb):
         explorer.execute_action(InputText(text="hello", x=100, y=200))
         mock_adb.tap.assert_called_once_with(100, 200)
@@ -213,7 +213,7 @@ class TestAppDetection:
         mock_adb.get_current_package.return_value = ""
         assert explorer.has_left_app("com.test.app") is False
 
-    @patch("server.pipeline.explorer.time.sleep")
+    @patch("monkey_collector.pipeline.explorer.time.sleep")
     def test_return_to_app_back_returns(self, mock_sleep, mock_adb):
         """Back press returns to app → launch_app not called."""
         mock_adb.get_current_package.return_value = "com.test.app"
@@ -222,7 +222,7 @@ class TestAppDetection:
         mock_adb.press_back.assert_called_once()
         mock_adb.launch_app.assert_not_called()
 
-    @patch("server.pipeline.explorer.time.sleep")
+    @patch("monkey_collector.pipeline.explorer.time.sleep")
     def test_return_to_app_back_fails(self, mock_sleep, mock_adb):
         """Back press doesn't return → launch_app called."""
         mock_adb.get_current_package.return_value = "com.other.app"
@@ -231,7 +231,7 @@ class TestAppDetection:
         mock_adb.press_back.assert_called_once()
         mock_adb.launch_app.assert_called_once_with("com.test.app")
 
-    @patch("server.pipeline.explorer.time.sleep")
+    @patch("monkey_collector.pipeline.explorer.time.sleep")
     def test_return_to_app_exception(self, mock_sleep, mock_adb):
         """Exception during back → falls to except, launches app."""
         mock_adb.press_back.side_effect = Exception("fail")
@@ -239,7 +239,7 @@ class TestAppDetection:
         explorer.return_to_app("com.test.app")
         mock_adb.launch_app.assert_called_once_with("com.test.app")
 
-    @patch("server.pipeline.explorer.time.sleep")
+    @patch("monkey_collector.pipeline.explorer.time.sleep")
     def test_recover_success(self, mock_sleep, mock_adb):
         """recover: press_home then launch_app."""
         explorer = SmartExplorer(mock_adb)
@@ -247,7 +247,7 @@ class TestAppDetection:
         mock_adb.press_home.assert_called_once()
         mock_adb.launch_app.assert_called_once_with("com.test.app")
 
-    @patch("server.pipeline.explorer.time.sleep")
+    @patch("monkey_collector.pipeline.explorer.time.sleep")
     def test_recover_exception(self, mock_sleep, mock_adb):
         """Exception in recover doesn't propagate."""
         mock_adb.press_home.side_effect = Exception("fail")

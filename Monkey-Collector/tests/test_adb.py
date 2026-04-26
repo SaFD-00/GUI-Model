@@ -1,11 +1,11 @@
-"""Tests for server.adb — ADB command wrapper."""
+"""Tests for monkey_collector.adb — ADB command wrapper."""
 
 import subprocess
 from unittest.mock import patch
 
 import pytest
 
-from server.adb import (
+from monkey_collector.adb import (
     AdbClient,
     _escape_text_for_adb,
     _find_adb,
@@ -46,7 +46,7 @@ class TestFindAdb:
 
 @pytest.fixture
 def mock_subprocess():
-    with patch("server.adb.subprocess.run") as mock_run:
+    with patch("monkey_collector.adb.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr=""
         )
@@ -56,9 +56,9 @@ def mock_subprocess():
 @pytest.fixture
 def adb_client(mock_subprocess):
     with (
-        patch("server.adb._find_adb", return_value="/usr/bin/adb"),
+        patch("monkey_collector.adb._find_adb", return_value="/usr/bin/adb"),
         patch(
-            "server.adb._resolve_avd_serial",
+            "monkey_collector.adb._resolve_avd_serial",
             return_value="emulator-5554",
         ),
     ):

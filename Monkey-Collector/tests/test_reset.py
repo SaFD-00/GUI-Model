@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from server.pipeline.reset import delete_targets, resolve_targets
+from monkey_collector.pipeline.reset import delete_targets, resolve_targets
 
 
 def _seed(root: Path, package: str) -> Path:

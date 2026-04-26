@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 
 from loguru import logger
 
-from server.xml.parser_base import Parser
+from monkey_collector.xml.parser_base import Parser
 
 _BUTTON_CLASSES = frozenset(
     {

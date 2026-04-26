@@ -15,7 +15,7 @@ from typing import Any
 
 from loguru import logger
 
-from server.domain.actions import (
+from monkey_collector.domain.actions import (
     Action,
     InputText,
     LongPress,
@@ -24,9 +24,9 @@ from server.domain.actions import (
     Swipe,
     Tap,
 )
-from server.adb import AdbClient
-from server.xml.ui_tree import UITree
-from server.pipeline.text_generator import TextGenerator
+from monkey_collector.adb import AdbClient
+from monkey_collector.xml.ui_tree import UITree
+from monkey_collector.pipeline.text_generator import TextGenerator
 
 # Default action weights
 DEFAULT_WEIGHTS: dict[str, float] = {

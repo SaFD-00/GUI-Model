@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from server.cli import _load_completed_packages, _resolve_run_packages
+from monkey_collector.cli import _load_completed_packages, _resolve_run_packages
 
 
 def _apps_csv(path: Path, rows: list[tuple[str, bool]]) -> None:

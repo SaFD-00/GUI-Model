@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from server.domain.page_graph import (
+from monkey_collector.domain.page_graph import (
     PageGraph,
     _extract_structural_tuples,
     build_graph_from_session,

@@ -1,4 +1,4 @@
-"""Tests for server.pipeline.app_catalog — AppCatalog CSV parser + filter."""
+"""Tests for monkey_collector.pipeline.app_catalog — AppCatalog CSV parser + filter."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from server.pipeline.app_catalog import AppCatalog, AppJob
+from monkey_collector.pipeline.app_catalog import AppCatalog, AppJob
 
 SAMPLE_CSV = (
     "category,sub_category,app_name,package_id,source,priority,notes\n"
