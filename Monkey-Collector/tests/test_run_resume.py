@@ -58,7 +58,8 @@ class TestResolveRunPackages:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _apps_csv(tmp_path / "apps.csv", [("com.a", True), ("com.b", True)])
+        (tmp_path / "catalog").mkdir()
+        _apps_csv(tmp_path / "catalog" / "apps.csv", [("com.a", True), ("com.b", True)])
         result = _resolve_run_packages(
             ["com.a", "com.b", "com.a"], str(tmp_path / "data"), force=False,
         )
@@ -68,7 +69,8 @@ class TestResolveRunPackages:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _apps_csv(tmp_path / "apps.csv", [
+        (tmp_path / "catalog").mkdir()
+        _apps_csv(tmp_path / "catalog" / "apps.csv", [
             ("com.yes", True),
             ("com.no", False),
             ("com.yes2", True),
@@ -82,7 +84,8 @@ class TestResolveRunPackages:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _apps_csv(tmp_path / "apps.csv", [
+        (tmp_path / "catalog").mkdir()
+        _apps_csv(tmp_path / "catalog" / "apps.csv", [
             ("com.done", True),
             ("com.fresh", True),
         ])
@@ -98,7 +101,8 @@ class TestResolveRunPackages:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _apps_csv(tmp_path / "apps.csv", [
+        (tmp_path / "catalog").mkdir()
+        _apps_csv(tmp_path / "catalog" / "apps.csv", [
             ("com.done", True),
             ("com.fresh", True),
         ])
@@ -114,7 +118,8 @@ class TestResolveRunPackages:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _apps_csv(tmp_path / "apps.csv", [
+        (tmp_path / "catalog").mkdir()
+        _apps_csv(tmp_path / "catalog" / "apps.csv", [
             ("com.done", True),
             ("com.fresh", True),
         ])
@@ -131,7 +136,8 @@ class TestResolveRunPackages:
     ) -> None:
         """A session with completed_at=null should be re-run (resume)."""
         monkeypatch.chdir(tmp_path)
-        _apps_csv(tmp_path / "apps.csv", [("com.a", True)])
+        (tmp_path / "catalog").mkdir()
+        _apps_csv(tmp_path / "catalog" / "apps.csv", [("com.a", True)])
         output = tmp_path / "data"
         _seed_session(output, "com.a", completed=False)
 

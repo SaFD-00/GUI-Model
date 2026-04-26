@@ -1,4 +1,4 @@
-"""Tests for scripts.download_apks — CLI parsing, F-Droid build selection,
+"""Tests for catalog.download_apks — CLI parsing, F-Droid build selection,
 partition logic, Play Store subprocess command, and MISSING.md rendering.
 """
 
@@ -16,7 +16,7 @@ _MC_ROOT = Path(__file__).resolve().parents[1]
 if str(_MC_ROOT) not in sys.path:
     sys.path.insert(0, str(_MC_ROOT))
 
-from scripts.download_apks import (  # noqa: E402
+from catalog.download_apks import (  # noqa: E402
     DownloadError,
     DownloadResult,
     build_gplaydl_command,
@@ -258,7 +258,7 @@ def _mk_index(package_id: str, *, sha: str, file_name: str = "/pkg_1.apk") -> di
 
 
 def test_download_fdroid_writes_and_verifies_hash(tmp_path: Path) -> None:
-    from scripts.download_apks import download_fdroid
+    from catalog.download_apks import download_fdroid
 
     body = b"fake-apk-contents"
     sha = hashlib.sha256(body).hexdigest()
@@ -281,7 +281,7 @@ def test_download_fdroid_writes_and_verifies_hash(tmp_path: Path) -> None:
 
 
 def test_download_fdroid_records_hash_mismatch(tmp_path: Path) -> None:
-    from scripts.download_apks import download_fdroid
+    from catalog.download_apks import download_fdroid
 
     apk_resp = MagicMock()
     apk_resp.status_code = 200
@@ -306,7 +306,7 @@ def test_download_fdroid_records_hash_mismatch(tmp_path: Path) -> None:
 
 
 def test_download_fdroid_raises_when_package_missing_from_index(tmp_path: Path) -> None:
-    from scripts.download_apks import download_fdroid
+    from catalog.download_apks import download_fdroid
 
     session = MagicMock()
     dest = tmp_path / "com.example.apk"
@@ -322,7 +322,7 @@ def test_download_fdroid_raises_when_package_missing_from_index(tmp_path: Path) 
 # ── PlayStore subprocess mock ──────────────────────────────────────────────
 
 def test_download_playstore_invokes_gplaydl(tmp_path: Path) -> None:
-    from scripts.download_apks import download_playstore
+    from catalog.download_apks import download_playstore
 
     def fake_run(cmd, capture_output, text, timeout, check):
         # Simulate gplaydl writing a base APK to the output dir.
@@ -336,7 +336,7 @@ def test_download_playstore_invokes_gplaydl(tmp_path: Path) -> None:
         return proc
 
     dest = tmp_path / "com.example.apk"
-    with patch("scripts.download_apks.subprocess.run", side_effect=fake_run):
+    with patch("catalog.download_apks.subprocess.run", side_effect=fake_run):
         result = download_playstore("com.example", "arm64", dest)
 
     assert result.status == "downloaded"
@@ -344,14 +344,14 @@ def test_download_playstore_invokes_gplaydl(tmp_path: Path) -> None:
 
 
 def test_download_playstore_failure_records_reason(tmp_path: Path) -> None:
-    from scripts.download_apks import download_playstore
+    from catalog.download_apks import download_playstore
 
     proc = MagicMock()
     proc.returncode = 1
     proc.stdout = ""
     proc.stderr = "auth token expired"
 
-    with patch("scripts.download_apks.subprocess.run", return_value=proc):
+    with patch("catalog.download_apks.subprocess.run", return_value=proc):
         result = download_playstore("com.example", "arm64", tmp_path / "x.apk")
 
     assert result.status == "failed"

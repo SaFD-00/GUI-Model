@@ -133,7 +133,7 @@ class TestSyncInstalledArgsParsing:
         ), patch("server.cli.cmd_sync_installed") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
-            assert args.apps_csv == "apps.csv"
+            assert args.apps_csv == "catalog/apps.csv"
 
     def test_custom_apps_csv(self):
         from server.cli import main
@@ -159,20 +159,20 @@ class TestResetArgsParsing:
             assert args.yes is True
             assert args.dry_run is False
             assert args.output == "data/raw"
-            assert args.packages is None
+            assert args.apps is None
 
     def test_packages(self):
         from server.cli import main
 
         with patch("sys.argv", [
             "monkey-collect", "reset",
-            "--packages", "com.a,com.b",
+            "--apps", "com.a,com.b",
             "--output", "/tmp/out",
             "--dry-run",
         ]), patch("server.cli.cmd_reset") as mock_cmd:
             main()
             args = mock_cmd.call_args[0][0]
-            assert args.packages == "com.a,com.b"
+            assert args.apps == "com.a,com.b"
             assert args.output == "/tmp/out"
             assert args.dry_run is True
 

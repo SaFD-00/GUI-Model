@@ -93,23 +93,23 @@ def _resolve_run_packages(
 
     if len(apps_arg) == 1 and apps_arg[0].strip().lower() == "all":
         try:
-            catalog = AppCatalog.load("apps.csv")
+            catalog = AppCatalog.load("catalog/apps.csv")
         except FileNotFoundError:
             logger.error(
-                "apps.csv not found. Run `sync-installed` first or add the "
-                "catalog file."
+                "catalog/apps.csv not found. Run `sync-installed` first or "
+                "add the catalog file."
             )
             sys.exit(2)
         jobs = catalog.installed_apps()
         if not jobs:
             logger.warning(
-                "apps.csv has no rows with installed=true. "
+                "catalog/apps.csv has no rows with installed=true. "
                 "Run `sync-installed` to refresh it."
             )
         candidates = [j.package_id for j in jobs]
     else:
         try:
-            catalog = AppCatalog.load("apps.csv")
+            catalog = AppCatalog.load("catalog/apps.csv")
         except FileNotFoundError:
             catalog = None
 
@@ -179,15 +179,15 @@ def _load_completed_packages(output_dir: str) -> set[str]:
 
 
 def cmd_reset(args: argparse.Namespace) -> None:
-    """Delete collected session data by scope (all / packages)."""
+    """Delete collected session data by scope (all / apps)."""
     from server.pipeline.reset import delete_targets, resolve_targets
 
-    packages = _split_or_none(args.packages)
+    packages = _split_or_none(args.apps)
     if args.all and packages:
-        logger.error("--all is mutually exclusive with --packages")
+        logger.error("--all is mutually exclusive with --apps")
         sys.exit(2)
     if not args.all and not packages:
-        logger.error("reset requires a scope: --all or --packages")
+        logger.error("reset requires a scope: --all or --apps")
         sys.exit(2)
 
     targets = resolve_targets(
@@ -333,7 +333,7 @@ def main() -> None:
         metavar="PKG",
         help=(
             "Target apps. Use 'all' to sweep every app with installed=true "
-            "in apps.csv, or pass one or more package ids explicitly "
+            "in catalog/apps.csv, or pass one or more package ids explicitly "
             "(e.g. --apps com.google.android.deskclock com.google.android.calculator)."
         ),
     )
@@ -370,17 +370,17 @@ def main() -> None:
     # reset (delete collected data)
     p = sub.add_parser(
         "reset",
-        help="Delete collected session data by scope (all / packages)",
+        help="Delete collected session data by scope (all / apps)",
     )
     p.add_argument("--output", default="data/raw", help="Data root directory")
     p.add_argument(
         "--all",
         action="store_true",
         default=False,
-        help="Wipe the entire output root (exclusive with --packages)",
+        help="Wipe the entire output root (exclusive with --apps)",
     )
     p.add_argument(
-        "--packages",
+        "--apps",
         default=None,
         help="Comma-separated package IDs to wipe",
     )
@@ -402,7 +402,9 @@ def main() -> None:
         "sync-installed",
         help="Update apps.csv 'installed' column from the connected device",
     )
-    p.add_argument("--apps-csv", default="apps.csv", help="Path to apps.csv")
+    p.add_argument(
+        "--apps-csv", default="catalog/apps.csv", help="Path to apps.csv"
+    )
 
     # convert
     p = sub.add_parser("convert", help="Convert session to JSONL")

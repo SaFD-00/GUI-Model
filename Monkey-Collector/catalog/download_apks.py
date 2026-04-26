@@ -1,4 +1,4 @@
-"""Download APKs for apps in apps.csv from F-Droid and Google Play.
+"""Download APKs for apps in catalog/apps.csv from F-Droid and Google Play.
 
 F-Droid uses the public HTTP API (https://f-droid.org/api/v1/packages/<pkg>).
 Play Store uses `gplaydl` v2 as a subprocess (Aurora Store token dispenser,
@@ -6,12 +6,12 @@ anonymous auth).
 
 Output layout (compatible with /setup-emulator):
 
-    Monkey-Collector/apks/{package_id}.apk   # base APK only
-    Monkey-Collector/apks/MISSING.md          # per-source failure log
+    Monkey-Collector/catalog/apks/{package_id}.apk   # base APK only
+    Monkey-Collector/catalog/apks/MISSING.md          # per-source failure log
 
 Run:
 
-    python -m scripts.download_apks --help
+    python -m catalog.download_apks --help
 """
 
 from __future__ import annotations
@@ -324,16 +324,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--only", default="", help="Comma-separated package_id allowlist")
     p.add_argument("--force", action="store_true", help="Re-download even if apk exists")
     p.add_argument("--dry-run", action="store_true", help="Print targets only, no downloads")
-    p.add_argument("--apks-dir", default=None, help="Override apks directory (default: ./apks)")
-    p.add_argument("--csv", default=None, help="Override apps.csv path (default: ./apps.csv)")
+    p.add_argument("--apks-dir", default=None, help="Override apks directory (default: ./catalog/apks)")
+    p.add_argument("--csv", default=None, help="Override apps.csv path (default: ./catalog/apps.csv)")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    apks_dir = Path(args.apks_dir) if args.apks_dir else _REPO_ROOT / "apks"
-    csv_path = Path(args.csv) if args.csv else _REPO_ROOT / "apps.csv"
+    apks_dir = Path(args.apks_dir) if args.apks_dir else _REPO_ROOT / "catalog" / "apks"
+    csv_path = Path(args.csv) if args.csv else _REPO_ROOT / "catalog" / "apps.csv"
     apks_dir.mkdir(parents=True, exist_ok=True)
 
     sources: set[str] = {"fdroid", "playstore"} if args.source == "all" else {args.source}

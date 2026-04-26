@@ -87,17 +87,17 @@
 `run` 서브커맨드가 수집할 앱 목록을 결정할 때 사용하는 두 모듈.
 
 - `server/pipeline/app_catalog.py`
-  - `AppCatalog`: stdlib csv 로 `apps.csv` 파싱, BOM/대소문자 정규화.
+  - `AppCatalog`: stdlib csv 로 `catalog/apps.csv` 파싱, BOM/대소문자 정규화.
   - `AppJob`: frozen dataclass (category, sub_category, app_name, package_id, source, priority, notes, installed).
-  - `filter(categories, priorities, installed)`: case-insensitive 필터. `installed=True` 는 `apps.csv` 의 `installed` 컬럼이 `true` 인 앱만 반환.
+  - `filter(categories, priorities, installed)`: case-insensitive 필터. `installed=True` 는 `catalog/apps.csv` 의 `installed` 컬럼이 `true` 인 앱만 반환.
   - `installed_apps()` / `find_by_package(pkg)` 헬퍼로 `run --apps all` 과 명시적 패키지 목록 해소를 지원.
 - `server/pipeline/installed_sync.py`
-  - `adb shell pm list packages` 결과로 `apps.csv` 의 `installed` 컬럼을 in-place (임시파일 + `os.replace`) 로 갱신. `sync-installed` 서브커맨드의 백엔드.
+  - `adb shell pm list packages` 결과로 `catalog/apps.csv` 의 `installed` 컬럼을 in-place (임시파일 + `os.replace`) 로 갱신. `sync-installed` 서브커맨드의 백엔드.
 
 실행 흐름 (`run --apps …`):
 
 ```
-AppCatalog.load(apps.csv)
+AppCatalog.load(catalog/apps.csv)
   -> installed_apps()  (--apps all)
      or resolve tokens (--apps com.X com.Y)
   -> candidate packages
@@ -204,7 +204,7 @@ Server -> App (newline-delimited JSON):
 - 동일 패키지에 `metadata.json` 이 있으면 resume. 이때 `completed_at` 은 `None` 으로 되돌아간다 (진행 중 상태).
 - `run` 은 큐 구성 단계에서 `completed_at` 이 채워진 앱을 자동 skip 한다. `--force` 로 우회.
 - `run --new-session` 은 해당 앱 세션을 삭제하고 새로 시작
-- `reset` 서브커맨드로 범위 단위 (all / packages) 일괄 삭제 가능
+- `reset` 서브커맨드로 범위 단위 (all / apps) 일괄 삭제 가능
 - 세션 정상 종료 시 `completed_at` 기록, page graph 재빌드, HTML 시각화 생성. 다음 `run` 부터는 이 앱이 큐에서 자동 제외.
 
 ### 주요 복구 규칙
@@ -259,7 +259,7 @@ data/raw/{package}/
 [`server/cli.py`](./server/cli.py) 가 아래 서브커맨드를 제공한다.
 
 - `run` — server-driven 수집 (`--apps all` 또는 `--apps PKG [PKG ...]`).
-- `sync-installed` — `adb pm list packages` 결과로 `apps.csv` 의 `installed` 컬럼 갱신.
+- `sync-installed` — `adb pm list packages` 결과로 `catalog/apps.csv` 의 `installed` 컬럼 갱신.
 - `reset`
 - `convert`
 - `convert-all`

@@ -40,11 +40,11 @@ Communication,Social,Reddit,com.reddit.frontpage,PlayStore,Medium,Forum-style so
 Communication,Social,Mastodon,org.joinmastodon.android,F-Droid,Medium,Decentralized social network,true
 Communication,Phone,Contacts,com.google.android.contacts,PlayStore,Medium,Contact management,true
 Communication,Phone,Simple Contacts,com.simplemobiletools.contacts.pro,F-Droid,Medium,Open-source contacts,false
-Media,Video,YouTube,com.google.android.youtube,PlayStore,High,Video streaming; search/browse,true
+Media,Video,YouTube,com.google.android.youtube,PlayStore,High,Video streaming; search/browse,false
 Media,Video,VLC,org.videolan.vlc,F-Droid,High,Video player; file browser,false
 Media,Video,NewPipe,org.schabi.newpipe,F-Droid,Medium,YouTube frontend; open-source,true
 Media,Music,Spotify,com.spotify.music,PlayStore,High,Music streaming; playlists,false
-Media,Music,YouTube Music,com.google.android.apps.youtube.music,PlayStore,Medium,Music streaming,true
+Media,Music,YouTube Music,com.google.android.apps.youtube.music,PlayStore,Medium,Music streaming,false
 Media,Music,Retro Music,code.name.monkey.retromusic,F-Droid,High,Local music player; rich UI,true
 Media,Music,Metro,io.github.nicehash.metro,F-Droid,Medium,Music player,false
 Media,Photo,Google Photos,com.google.android.apps.photos,PlayStore,High,Photo gallery + editing,true
