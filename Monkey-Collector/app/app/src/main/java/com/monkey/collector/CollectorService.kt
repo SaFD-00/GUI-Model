@@ -406,7 +406,7 @@ class CollectorService : AccessibilityService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "MonkeyCollector Service",
+                "Monkey-Collector Service",
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
@@ -414,7 +414,7 @@ class CollectorService : AccessibilityService() {
         }
 
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("MonkeyCollector")
+            .setContentTitle("Monkey-Collector")
             .setContentText("Collecting UI data...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setPriority(NotificationCompat.PRIORITY_LOW)

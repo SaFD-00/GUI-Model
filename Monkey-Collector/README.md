@@ -62,7 +62,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ### 1. Android 앱 준비
 
-1. Monkey Collector 앱에서 server IP / port 입력
+1. Monkey-Collector 앱에서 server IP / port 입력
 2. Save & Ready → Accessibility 권한 + MediaProjection 권한 허용
 3. 이후 앱은 백그라운드에서 서버 연결을 유지한다. 사용자가 수집 시작 버튼을 누를 필요가 없다.
 
