@@ -1,7 +1,8 @@
 """XML adapters: UI tree and structured parser."""
 
-from server.infra.xml.parser import Parser, StructuredXmlParser
-from server.infra.xml.ui_tree import (
+from server.xml.parser_base import Parser
+from server.xml.structured_parser import StructuredXmlParser
+from server.xml.ui_tree import (
     UIElement,
     UITree,
     parse_uiautomator_xml,

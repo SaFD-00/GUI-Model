@@ -9,7 +9,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from server.infra.xml.ui_tree import UIElement, parse_uiautomator_xml
+from server.xml.ui_tree import UIElement, parse_uiautomator_xml
 
 SYSTEM_PROMPT = (
     "You are a mobile UI transition predictor.\n"

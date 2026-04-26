@@ -17,9 +17,9 @@ from loguru import logger
 
 from server.domain.activity_coverage import ActivityCoverageTracker
 from server.domain.cost_tracker import CostTracker
-from server.infra.device.adb import AdbClient
-from server.infra.network.server import CollectionServer
-from server.infra.storage.storage import DataWriter
+from server.adb import AdbClient
+from server.tcp_server import CollectionServer
+from server.storage import DataWriter
 from server.pipeline.collection_loop import CollectionState, run_collection_loop
 from server.pipeline.explorer import SmartExplorer
 from server.pipeline.session_manager import (

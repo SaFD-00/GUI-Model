@@ -18,9 +18,9 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     from server.domain.activity_coverage import ActivityCoverageTracker
     from server.domain.cost_tracker import CostTracker
-    from server.infra.device.adb import AdbClient
-    from server.infra.network.server import CollectionServer
-    from server.infra.storage.storage import DataWriter
+    from server.adb import AdbClient
+    from server.tcp_server import CollectionServer
+    from server.storage import DataWriter
     from server.pipeline.app_catalog import AppCatalog
     from server.pipeline.collector import Collector
     from server.pipeline.explorer import SmartExplorer
@@ -296,7 +296,7 @@ def cmd_page_map_all(args: argparse.Namespace) -> None:
 
 def cmd_regenerate(args: argparse.Namespace) -> None:
     """Regenerate all XML variants from raw XML files."""
-    from server.infra.storage.storage import regenerate_xml_variants
+    from server.storage import regenerate_xml_variants
 
     logger.info(f"Regenerating XML variants under: {args.raw_dir}")
     count = regenerate_xml_variants(args.raw_dir)

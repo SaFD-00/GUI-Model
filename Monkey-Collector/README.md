@@ -226,7 +226,7 @@ data/raw/{package}/
 - [`server/cli.py`](./server/cli.py): 실제 CLI
 - [`server/pipeline/collector.py`](./server/pipeline/collector.py): 수집 진입점
 - [`server/pipeline/explorer.py`](./server/pipeline/explorer.py): action selection
-- [`server/infra/storage/storage.py`](./server/infra/storage/storage.py): 세션 포맷
+- [`server/storage.py`](./server/storage.py): 세션 포맷
 - [`app/app/src/main/java/com/monkey/collector`](./app/app/src/main/java/com/monkey/collector): Android 앱
 
 구조 설명은 [`ARCHITECTURE.md`](./ARCHITECTURE.md), 작업 규칙은 [`AGENTS.md`](./AGENTS.md) 를 본다.

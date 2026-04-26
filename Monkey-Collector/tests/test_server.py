@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from server.infra.network.server import CollectionServer
+from server.tcp_server import CollectionServer
 
 
 @pytest.fixture

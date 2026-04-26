@@ -10,7 +10,7 @@ from loguru import logger
 
 from server.domain.actions import Action
 from server.domain.page_graph import PageGraph
-from server.infra.xml.ui_tree import UITree
+from server.xml.ui_tree import UITree
 from server.pipeline.recovery import (
     MAX_EMPTY_UI_RETRIES,
     MAX_EXTERNAL_APP_RETRIES,

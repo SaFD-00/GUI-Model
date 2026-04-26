@@ -24,8 +24,8 @@ from server.domain.actions import (
     Swipe,
     Tap,
 )
-from server.infra.device.adb import AdbClient
-from server.infra.xml.ui_tree import UITree
+from server.adb import AdbClient
+from server.xml.ui_tree import UITree
 from server.pipeline.text_generator import TextGenerator
 
 # Default action weights

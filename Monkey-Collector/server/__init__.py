@@ -2,9 +2,9 @@
 
 from server.domain.page_graph import PageGraph, build_graph_from_session
 from server.export.converter import Converter
-from server.infra.device.adb import AdbClient
-from server.infra.network.server import CollectionServer
-from server.infra.storage.storage import DataWriter
+from server.adb import AdbClient
+from server.tcp_server import CollectionServer
+from server.storage import DataWriter
 from server.pipeline.app_catalog import AppCatalog, AppJob
 from server.pipeline.collector import Collector
 from server.pipeline.explorer import SmartExplorer

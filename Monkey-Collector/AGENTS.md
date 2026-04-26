@@ -7,11 +7,11 @@
 - Python 쪽 진입점은 [`server/cli.py`](./server/cli.py) 의 `monkey-collect` CLI 다.
 - 공개 API 는 [`server/__init__.py`](./server/__init__.py) 에서 export 된다.
 - Android 앱 코드는 [`app/app/src/main/java/com/monkey/collector`](./app/app/src/main/java/com/monkey/collector) 아래에 있다.
-- 서버 구조는 `domain`, `pipeline`, `export`, `infra` 4개 레이어로 분리되어 있다.
+- 서버 구조는 `domain`, `pipeline`, `export`, `xml` 4개 서브패키지 + 인프라 모듈 (`adb.py`, `tcp_server.py`, `storage.py`) 로 구성된다.
 
 ## 어디를 수정해야 하는가
 
-- CLI 옵션이나 서브커맨드를 바꾸면 [`server/cli.py`](./server/cli.py) 와 [`tests/test_cli.py`](./tests/test_cli.py) 를 함께 수정한다. ADB 는 `AdbClient()` 를 인자 없이 생성하며, 내부에서 `ImplicitWorldModel` 이라는 이름의 AVD 를 자동 탐색해 해당 emulator serial 로 모든 명령을 고정한다 (상수 `REQUIRED_AVD_NAME` 은 [`server/infra/device/adb.py`](./server/infra/device/adb.py) 상단에 하드코드). AVD 이름을 바꿔야 한다면 이 상수와 관련 문서 / 테스트를 함께 수정한다.
+- CLI 옵션이나 서브커맨드를 바꾸면 [`server/cli.py`](./server/cli.py) 와 [`tests/test_cli.py`](./tests/test_cli.py) 를 함께 수정한다. ADB 는 `AdbClient()` 를 인자 없이 생성하며, 내부에서 `ImplicitWorldModel` 이라는 이름의 AVD 를 자동 탐색해 해당 emulator serial 로 모든 명령을 고정한다 (상수 `REQUIRED_AVD_NAME` 은 [`server/adb.py`](./server/adb.py) 상단에 하드코드). AVD 이름을 바꿔야 한다면 이 상수와 관련 문서 / 테스트를 함께 수정한다.
 - 수집 루프 동작은 [`server/pipeline/collector.py`](./server/pipeline/collector.py), [`server/pipeline/collection_loop.py`](./server/pipeline/collection_loop.py), [`server/pipeline/session_manager.py`](./server/pipeline/session_manager.py) 가 기준이다.
 - 앱 목록 / 설치 상태 처리는 두 모듈로 분리되어 있다:
   - [`server/pipeline/app_catalog.py`](./server/pipeline/app_catalog.py): `catalog/apps.csv` 파싱과 category/priority/installed 필터. 새 필수 컬럼 추가는 `_REQUIRED_COLUMNS` 와 `AppJob` 을 동시에 수정. `installed` 는 optional 컬럼 — 누락된 CSV 는 자동으로 모두 `false` 로 해석된다.
@@ -21,8 +21,8 @@
 - 완료 앱 스킵 로직은 [`server/cli.py`](./server/cli.py) 의 `_resolve_run_packages` / `_load_completed_packages` 에 있다. `metadata.completed_at` 이 채워진 앱은 기본적으로 큐에서 제외되고, `--force` 로 우회한다. 이 규약이 바뀌면 `tests/test_run_resume.py` 를 함께 업데이트한다.
 - 액션 선택 로직은 [`server/pipeline/explorer.py`](./server/pipeline/explorer.py) 와 [`tests/test_explorer.py`](./tests/test_explorer.py) 를 함께 본다.
 - 텍스트 입력 생성은 [`server/pipeline/text_generator.py`](./server/pipeline/text_generator.py) 가 기준이며, 현재 OpenAI Responses API `gpt-5-nano` + random fallback 구조다.
-- 세션 저장 형식은 [`server/infra/storage/storage.py`](./server/infra/storage/storage.py) 가 기준이다.
-- XML 파싱 규약은 [`server/infra/xml/ui_tree.py`](./server/infra/xml/ui_tree.py), [`server/infra/xml/parser/structured_parser.py`](./server/infra/xml/parser/structured_parser.py) 를 본다.
+- 세션 저장 형식은 [`server/storage.py`](./server/storage.py) 가 기준이다.
+- XML 파싱 규약은 [`server/xml/ui_tree.py`](./server/xml/ui_tree.py), [`server/xml/structured_parser.py`](./server/xml/structured_parser.py) 를 본다.
 - Android 측 전환 감지와 TCP 프로토콜은 [`CollectorService.kt`](./app/app/src/main/java/com/monkey/collector/CollectorService.kt), [`ScreenStabilizer.kt`](./app/app/src/main/java/com/monkey/collector/ScreenStabilizer.kt), [`TcpClient.kt`](./app/app/src/main/java/com/monkey/collector/TcpClient.kt) 에 있다.
 
 ## 작업 시 주의점

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from server.infra.storage.storage import DataWriter
+from server.storage import DataWriter
 
 
 @pytest.fixture

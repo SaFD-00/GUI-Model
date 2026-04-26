@@ -30,8 +30,8 @@ def _make_xml_signal(xml=SIMPLE_XML, pkg="com.test.app", is_first=False, activit
 def _make_collector(mock_adb, signals, max_steps=10):
     """Create a Collector with all dependencies mocked."""
     from server.pipeline.explorer import SmartExplorer
-    from server.infra.network.server import CollectionServer
-    from server.infra.storage.storage import DataWriter
+    from server.tcp_server import CollectionServer
+    from server.storage import DataWriter
 
     mock_explorer = MagicMock(spec=SmartExplorer)
     mock_explorer.select_action.return_value = Tap(x=500, y=500, element_index=0)
@@ -248,8 +248,8 @@ class TestRunSessionNoConnection:
     @patch("server.pipeline.collection_loop.time.sleep")
     def test_no_client(self, mock_sleep, mock_adb):
         from server.pipeline.explorer import SmartExplorer
-        from server.infra.network.server import CollectionServer
-        from server.infra.storage.storage import DataWriter
+        from server.tcp_server import CollectionServer
+        from server.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         mock_server.is_client_connected.return_value = False
@@ -277,8 +277,8 @@ class TestRunQueue:
         mock_run_session.side_effect = ["session_1", "session_2"]
 
         from server.pipeline.explorer import SmartExplorer
-        from server.infra.network.server import CollectionServer
-        from server.infra.storage.storage import DataWriter
+        from server.tcp_server import CollectionServer
+        from server.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -302,8 +302,8 @@ class TestRunQueue:
         mock_run_session.side_effect = ["session_1", KeyboardInterrupt()]
 
         from server.pipeline.explorer import SmartExplorer
-        from server.infra.network.server import CollectionServer
-        from server.infra.storage.storage import DataWriter
+        from server.tcp_server import CollectionServer
+        from server.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -324,8 +324,8 @@ class TestRunQueue:
         mock_run_session.side_effect = ["", "session_2"]
 
         from server.pipeline.explorer import SmartExplorer
-        from server.infra.network.server import CollectionServer
-        from server.infra.storage.storage import DataWriter
+        from server.tcp_server import CollectionServer
+        from server.storage import DataWriter
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(

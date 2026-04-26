@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from server.infra.xml.parser.structured_parser import encode_to_html_xml
-from server.infra.xml.ui_tree import UIElement
+from server.xml.structured_parser import encode_to_html_xml
+from server.xml.ui_tree import UIElement
 
 if TYPE_CHECKING:
     from server.domain.cost_tracker import CostTracker

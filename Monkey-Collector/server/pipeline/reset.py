@@ -1,4 +1,4 @@
-"""Reset: delete collected session data by scope (all / packages)."""
+"""Reset: delete collected session data by scope (all / apps)."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def resolve_targets(
             if p.exists()
         ]
 
-    raise ValueError("reset requires a scope: --all or --packages")
+    raise ValueError("reset requires a scope: --all or --apps")
 
 
 def delete_targets(targets: list[Path], dry_run: bool = False) -> int:

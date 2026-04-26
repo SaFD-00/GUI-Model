@@ -16,7 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from server.infra.device.adb import AdbClient
+from server.adb import AdbClient
 
 _INSTALLED_HEADER = "installed"
 _PACKAGE_HEADER = "package_id"

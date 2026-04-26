@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from server.domain.actions import Action
-from server.infra.device.adb import AdbClient
-from server.infra.xml.ui_tree import UITree
+from server.adb import AdbClient
+from server.xml.ui_tree import UITree
 
 if TYPE_CHECKING:
     from server.pipeline.explorer import SmartExplorer
