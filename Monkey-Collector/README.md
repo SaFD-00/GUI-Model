@@ -215,7 +215,7 @@ data/raw/{package}/
 ├── screenshots/
 ├── xml/
 ├── events.jsonl
-├── activity_coverage.csv
+├── activity_coverage.csv     # ground truth: catalog/activities.json (fallback: dumpsys)
 ├── cost.csv
 ├── page_graph.json
 └── page_graph.html
@@ -250,7 +250,9 @@ Monkey-Collector/
 ├── catalog/                          # 앱 카탈로그
 │   ├── apps.csv
 │   ├── apks/                         # *.apk + MISSING.md
-│   └── download_apks.py
+│   ├── activities.json               # androguard 추출 manifest activity (coverage ground truth)
+│   ├── download_apks.py
+│   └── extract_activities.py         # apks/*.apk → activities.json
 │
 ├── tests/
 │   ├── conftest.py, fixtures/

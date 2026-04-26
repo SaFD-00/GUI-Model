@@ -5,7 +5,10 @@ import os
 
 import pytest
 
-from monkey_collector.domain.activity_coverage import ActivityCoverageTracker, _normalize_activity_name
+from monkey_collector.domain.activity_coverage import (
+    ActivityCoverageTracker,
+    _normalize_activity_name,
+)
 
 
 class TestInitialize:
@@ -148,6 +151,64 @@ class TestEdgeCases:
         tracker.record("D", step=4)
         assert tracker.get_coverage() <= 1.0
         assert len(tracker.total_activities) == 4
+
+
+class TestStaticGroundTruth:
+    def test_outside_ground_truth_not_counted(self, tmp_path):
+        """allow_dynamic_total=False ignores activities not in the catalog set."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(
+            str(tmp_path), ["com.test/.A", "com.test/.B"],
+            package="com.test", allow_dynamic_total=False,
+        )
+        tracker.record("com.test/.A", step=1)
+        tracker.record("com.test/.NotInCatalog", step=2)
+        tracker.record("androidx/.SomeDialog", step=3)
+        assert len(tracker.total_activities) == 2  # fixed denominator
+        assert tracker.get_visited_count() == 1    # only A counted
+        assert tracker.get_coverage() == pytest.approx(0.5)
+
+    def test_format_normalization_static(self, tmp_path):
+        """Shorthand visit matches full-form catalog entry under static mode."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(
+            str(tmp_path), ["com.test.app/.MainActivity"],
+            package="com.test.app", allow_dynamic_total=False,
+        )
+        # Catalog stores shorthand; observed activity arrives in full form
+        tracker.record("com.test.app/com.test.app.MainActivity", step=1)
+        assert tracker.get_visited_count() == 1
+        assert tracker.get_coverage() == pytest.approx(1.0)
+
+    def test_clamp_safety_net(self, tmp_path):
+        """Coverage stays <= 1.0 even if visits ever exceed the denominator."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(
+            str(tmp_path), ["A"], package="", allow_dynamic_total=False,
+        )
+        tracker.record("A", step=1)
+        assert tracker.get_coverage() == 1.0
+
+    def test_resume_preserves_static_flag(self, tmp_path):
+        """resume(allow_dynamic_total=False) keeps the same counting policy."""
+        tracker = ActivityCoverageTracker()
+        tracker.initialize(
+            str(tmp_path), ["com.test/.A", "com.test/.B"],
+            package="com.test", allow_dynamic_total=False,
+        )
+        tracker.record("com.test/.A", step=1)
+        tracker.record("com.test/.NotInCatalog", step=2)
+
+        tracker2 = ActivityCoverageTracker()
+        tracker2.resume(
+            str(tmp_path), ["com.test/.A", "com.test/.B"],
+            package="com.test", allow_dynamic_total=False,
+        )
+        assert len(tracker2.total_activities) == 2
+        assert tracker2.get_visited_count() == 1  # NotInCatalog ignored on rebuild
+        tracker2.record("com.test/.AnotherNotInCatalog", step=3)
+        assert len(tracker2.total_activities) == 2
+        assert tracker2.get_visited_count() == 1
 
 
 class TestNormalize:

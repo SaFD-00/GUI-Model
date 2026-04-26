@@ -62,12 +62,14 @@
 
 - `domain/`
   - [`actions.py`](./src/monkey_collector/domain/actions.py): Action dataclass 들
-  - [`activity_coverage.py`](./src/monkey_collector/domain/activity_coverage.py): Activity coverage CSV
+  - [`activity_coverage.py`](./src/monkey_collector/domain/activity_coverage.py): Activity coverage CSV. ground truth 의 분모(`total_activities`)와 분자 후보 집합 모두 `session_manager._resolve_declared_activities` 가 결정하며, 1차 소스는 [`catalog/activities.json`](./catalog/activities.json) (androguard manifest 추출), 폴백은 `adb dumpsys package`. catalog hit 시 (`allow_dynamic_total=False`) 분모 고정 + 분자(`unique_visited`)는 catalog set 안의 activity 만 normalize 후 카운트 + `coverage = min(1.0, ...)` 클램프. catalog 외 activity 는 `activity` 컬럼에 그대로 기록되지만 coverage 에는 영향 없음. catalog miss 폴백 (`allow_dynamic_total=True`) 은 legacy 동작 (target package 의 미선언 activity 발견 시 분모 동적 확장 + 모든 visited 카운트).
   - [`cost_tracker.py`](./src/monkey_collector/domain/cost_tracker.py): LLM 비용 추적 CSV
   - [`page_graph.py`](./src/monkey_collector/domain/page_graph.py): 페이지 그래프 생성
+- 인프라 모듈에 인접
+  - [`catalog_activities.py`](./src/monkey_collector/catalog_activities.py): `catalog/activities.json` 의 process-lifetime 캐시 (`ActivityCatalog`). activity coverage ground truth 1차 소스.
 - `pipeline/`
   - [`collector.py`](./src/monkey_collector/pipeline/collector.py): collector facade
-  - [`session_manager.py`](./src/monkey_collector/pipeline/session_manager.py): session init/resume/finalize
+  - [`session_manager.py`](./src/monkey_collector/pipeline/session_manager.py): session init/resume/finalize. `_resolve_declared_activities` 헬퍼가 catalog 우선, dumpsys 폴백 정책을 적용한다.
   - [`collection_loop.py`](./src/monkey_collector/pipeline/collection_loop.py): 메인 루프
   - [`recovery.py`](./src/monkey_collector/pipeline/recovery.py): retry / recovery 상수와 helper
   - [`explorer.py`](./src/monkey_collector/pipeline/explorer.py): SmartExplorer
@@ -241,7 +243,7 @@ data/raw/{package}/
 │   ├── 0000_encoded.xml
 │   └── 0000_pretty.xml
 ├── events.jsonl
-├── activity_coverage.csv
+├── activity_coverage.csv     # ground truth: catalog/activities.json (fallback: dumpsys)
 ├── cost.csv
 ├── page_graph.json
 └── page_graph.html

@@ -1,12 +1,15 @@
 """Tests for monkey_collector.collector — main collection orchestration (integration)."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from monkey_collector.catalog_activities import ActivityCatalog
 from monkey_collector.domain.actions import Tap
-from monkey_collector.pipeline.collector import Collector
+from monkey_collector.domain.activity_coverage import ActivityCoverageTracker
 from monkey_collector.domain.page_graph import PageGraph
+from monkey_collector.pipeline.collector import Collector
 from tests.fixtures.xml_samples import MINIMAL_XML, SIMPLE_XML
 
 
@@ -30,8 +33,8 @@ def _make_xml_signal(xml=SIMPLE_XML, pkg="com.test.app", is_first=False, activit
 def _make_collector(mock_adb, signals, max_steps=10):
     """Create a Collector with all dependencies mocked."""
     from monkey_collector.pipeline.explorer import SmartExplorer
-    from monkey_collector.tcp_server import CollectionServer
     from monkey_collector.storage import DataWriter
+    from monkey_collector.tcp_server import CollectionServer
 
     mock_explorer = MagicMock(spec=SmartExplorer)
     mock_explorer.select_action.return_value = Tap(x=500, y=500, element_index=0)
@@ -248,8 +251,8 @@ class TestRunSessionNoConnection:
     @patch("monkey_collector.pipeline.collection_loop.time.sleep")
     def test_no_client(self, mock_sleep, mock_adb):
         from monkey_collector.pipeline.explorer import SmartExplorer
-        from monkey_collector.tcp_server import CollectionServer
         from monkey_collector.storage import DataWriter
+        from monkey_collector.tcp_server import CollectionServer
 
         mock_server = MagicMock(spec=CollectionServer)
         mock_server.is_client_connected.return_value = False
@@ -277,8 +280,8 @@ class TestRunQueue:
         mock_run_session.side_effect = ["session_1", "session_2"]
 
         from monkey_collector.pipeline.explorer import SmartExplorer
-        from monkey_collector.tcp_server import CollectionServer
         from monkey_collector.storage import DataWriter
+        from monkey_collector.tcp_server import CollectionServer
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -302,8 +305,8 @@ class TestRunQueue:
         mock_run_session.side_effect = ["session_1", KeyboardInterrupt()]
 
         from monkey_collector.pipeline.explorer import SmartExplorer
-        from monkey_collector.tcp_server import CollectionServer
         from monkey_collector.storage import DataWriter
+        from monkey_collector.tcp_server import CollectionServer
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -324,8 +327,8 @@ class TestRunQueue:
         mock_run_session.side_effect = ["", "session_2"]
 
         from monkey_collector.pipeline.explorer import SmartExplorer
-        from monkey_collector.tcp_server import CollectionServer
         from monkey_collector.storage import DataWriter
+        from monkey_collector.tcp_server import CollectionServer
 
         mock_server = MagicMock(spec=CollectionServer)
         collector = Collector(
@@ -576,6 +579,75 @@ class TestTapRandomFallback:
 
         mock_adb.get_device_resolution.side_effect = Exception("no device")
         tap_random_fallback(mock_adb)  # should not raise
+
+
+@pytest.mark.integration
+class TestActivityGroundTruthSource:
+    @pytest.fixture
+    def _isolate_catalog(self):
+        ActivityCatalog.reset()
+        yield
+        ActivityCatalog.reset()
+
+    @patch("monkey_collector.pipeline.collection_loop.time.sleep")
+    def test_catalog_hit_skips_dumpsys(
+        self, mock_sleep, mock_adb, tmp_path, _isolate_catalog,
+    ):
+        """When catalog has the package, dumpsys is not consulted."""
+        cat_path = tmp_path / "activities.json"
+        cat_path.write_text(json.dumps({
+            "com.test.app": {
+                "app_name": "Test",
+                "activities": [
+                    "com.test.app/.MainActivity",
+                    "com.test.app/.SettingsActivity",
+                    "com.test.app/.ThirdActivity",
+                ],
+            },
+        }))
+        ActivityCatalog.instance(cat_path)
+
+        signals = [_make_xml_signal(), ("finish", None, None)]
+        collector, *_ = _make_collector(mock_adb, signals)
+        collector._activity_tracker = MagicMock(spec=ActivityCoverageTracker)
+
+        collector.run(package="com.test.app")
+        mock_adb.get_declared_activities.assert_not_called()
+        collector._activity_tracker.initialize.assert_called_once()
+        kwargs = collector._activity_tracker.initialize.call_args.kwargs
+        assert kwargs["allow_dynamic_total"] is False
+
+    @patch("monkey_collector.pipeline.collection_loop.time.sleep")
+    def test_catalog_miss_falls_back_to_dumpsys(
+        self, mock_sleep, mock_adb, tmp_path, _isolate_catalog,
+    ):
+        """When catalog is loaded but lacks the package, dumpsys is queried."""
+        cat_path = tmp_path / "activities.json"
+        cat_path.write_text(json.dumps({"some.other.pkg": {"activities": []}}))
+        ActivityCatalog.instance(cat_path)
+
+        signals = [_make_xml_signal(), ("finish", None, None)]
+        collector, *_ = _make_collector(mock_adb, signals)
+        collector._activity_tracker = MagicMock(spec=ActivityCoverageTracker)
+
+        collector.run(package="com.test.app")
+        mock_adb.get_declared_activities.assert_called_once_with("com.test.app")
+        kwargs = collector._activity_tracker.initialize.call_args.kwargs
+        assert kwargs["allow_dynamic_total"] is True
+
+    @patch("monkey_collector.pipeline.collection_loop.time.sleep")
+    def test_no_catalog_file_falls_back_to_dumpsys(
+        self, mock_sleep, mock_adb, tmp_path, _isolate_catalog,
+    ):
+        """No catalog file at all → universal dumpsys fallback."""
+        ActivityCatalog.instance(tmp_path / "absent.json")
+
+        signals = [_make_xml_signal(), ("finish", None, None)]
+        collector, *_ = _make_collector(mock_adb, signals)
+        collector._activity_tracker = MagicMock(spec=ActivityCoverageTracker)
+
+        collector.run(package="com.test.app")
+        mock_adb.get_declared_activities.assert_called_once_with("com.test.app")
 
 
 @pytest.mark.integration
