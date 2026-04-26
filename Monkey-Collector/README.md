@@ -221,6 +221,38 @@ data/raw/{package}/
 - `{step}_encoded.xml`
 - `{step}_pretty.xml`
 
+## 프로젝트 구조
+
+```
+Monkey-Collector/
+├── README.md, ARCHITECTURE.md, AGENTS.md
+├── pyproject.toml, .env.example
+│
+├── app/                              # Android Gradle 프로젝트
+│
+├── src/monkey_collector/             # Python 패키지
+│   ├── cli.py
+│   ├── adb.py, tcp_server.py, storage.py
+│   ├── domain/        (actions, page_graph, activity_coverage, cost_tracker)
+│   ├── pipeline/      (collector, collection_loop, explorer, recovery,
+│   │                   session_manager, app_catalog, installed_sync,
+│   │                   reset, text_generator)
+│   ├── export/        (converter, graph_visualizer)
+│   └── xml/           (ui_tree, structured_parser, parser_base)
+│
+├── catalog/                          # 앱 카탈로그
+│   ├── apps.csv
+│   ├── apks/                         # *.apk + MISSING.md
+│   └── download_apks.py
+│
+├── tests/
+│   ├── conftest.py, fixtures/
+│   ├── unit/                         # 13 files
+│   └── integration/                  # 6 files
+│
+└── (gitignored) data/raw/, logs/, *.egg-info/
+```
+
 ## 코드 읽기 시작점
 
 - [`src/monkey_collector/cli.py`](./src/monkey_collector/cli.py): 실제 CLI

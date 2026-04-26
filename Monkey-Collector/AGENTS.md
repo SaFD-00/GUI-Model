@@ -37,9 +37,11 @@
 
 ## 빠른 검증 포인트
 
-- `pytest -q`
-- `pytest -q tests/test_cli.py tests/test_collector.py tests/test_storage.py`
-- `pytest -q tests/test_app_catalog.py tests/test_installed_sync.py tests/test_run_resume.py tests/test_reset.py`
+- `pytest -q` (전체)
+- `pytest -q tests/unit` (외부 의존 없음, 빠름)
+- `pytest -q tests/integration` (ADB / TCP / subprocess mock)
+- `pytest -q tests/unit/test_cli.py tests/integration/test_collector.py tests/unit/test_storage.py`
+- `pytest -q tests/unit/test_app_catalog.py tests/integration/test_installed_sync.py tests/unit/test_run_resume.py tests/unit/test_reset.py`
 - `python -m monkey_collector.cli run --help`
 - `python -m monkey_collector.cli sync-installed --help`
 - `python -m monkey_collector.cli reset --help`

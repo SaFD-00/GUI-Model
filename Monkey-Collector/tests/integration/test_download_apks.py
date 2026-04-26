@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_MC_ROOT = Path(__file__).resolve().parents[1]
+_MC_ROOT = Path(__file__).resolve().parents[2]
 if str(_MC_ROOT) not in sys.path:
     sys.path.insert(0, str(_MC_ROOT))
 
