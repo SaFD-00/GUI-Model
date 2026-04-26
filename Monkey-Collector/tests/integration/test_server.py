@@ -107,11 +107,12 @@ class TestSendSessionEnd:
 
 class TestResetForNewSession:
     def test_clears_state(self, srv):
+        sentinel_client = MagicMock()
         srv._target_package = "com.test.app"
         srv._package_event.set()
         srv._latest_xml = "<xml/>"
         srv._latest_xml_meta = {"key": "val"}
-        srv._client = MagicMock()
+        srv._client = sentinel_client
         srv._signal_queue.put(("xml", "data", {}))
 
         srv.reset_for_new_session()
@@ -120,17 +121,22 @@ class TestResetForNewSession:
         assert not srv._package_event.is_set()
         assert srv._latest_xml is None
         assert srv._latest_xml_meta is None
-        assert srv._client is None
         assert srv._signal_queue.empty()
+        assert srv._client is sentinel_client
+        sentinel_client.close.assert_not_called()
 
-    def test_closes_client_socket(self, srv):
+    def test_preserves_client_socket(self, srv):
+        # Per ARCHITECTURE handshake: reset must not touch the fresh socket
+        # the client has already reconnected with. Closing it here would
+        # force a second reconnect that the Android service does not
+        # perform, causing the next wait_for_connection to time out.
         mock_socket = MagicMock()
         srv._client = mock_socket
 
         srv.reset_for_new_session()
 
-        mock_socket.close.assert_called_once()
-        assert srv._client is None
+        mock_socket.close.assert_not_called()
+        assert srv._client is mock_socket
 
 
 class TestIsClientConnected:
