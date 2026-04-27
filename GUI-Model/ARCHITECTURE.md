@@ -99,6 +99,15 @@ AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 
 | 3-4B | 1.2e-4 | 12 / 24 | 0.05 |
 | 7-9B | 1.0e-4 | 16 / 32 | 0.05 |
 
+LoRA 모드의 `deepspeed` 필드는 `GPU_TYPE` 환경변수에 따라 분기된다 (Stage 1: Cell 9, Stage 2: Cell 13 — 동일 정책):
+
+| GPU_TYPE | LoRA deepspeed config | 근거 |
+|---|---|---|
+| `RTX5090` (32GB) | `examples/deepspeed/ds_z3_offload_config.json` | 단일 GPU + 32GB VRAM 에서 7-9B 모델 OOM 회피 (ZeRO-3 + CPU offload) |
+| `A100` / `H100` (80GB) | `examples/deepspeed/ds_z3_config.json` (= `stage1_deepspeed` 기본값) | 80GB 면 offload 불필요, 통신 오버헤드만 추가됨 |
+
+Full FT (Stage 1 / Stage 2 양쪽) 는 분기 없이 모델별 `stage1_deepspeed` (기본 `ds_z3_config.json`) 그대로 사용. 분기 로직은 `lora` 모드에만 적용된다.
+
 **Stage 2 (LoRA)** — dataset baseline 대비 다른 필드만:
 
 | 구간 | lr | LoRA r / α | dropout | warmup_ratio |
