@@ -59,15 +59,15 @@ gui-model       gui-model.ipynb     llamafactory-cli train/export    Qwen2-VL ×
 | short_name | model_id | template | size |
 |------------|----------|----------|------|
 | qwen2-vl-2b | Qwen/Qwen2-VL-2B-Instruct | qwen2_vl | 2B |
-| qwen2-vl-7b | Qwen/Qwen2-VL-7B-Instruct | qwen2_vl | 7-8B |
+| qwen2-vl-7b | Qwen/Qwen2-VL-7B-Instruct | qwen2_vl | 7-9B |
 | qwen2.5-vl-3b | Qwen/Qwen2.5-VL-3B-Instruct | qwen2_vl | 3-4B |
-| qwen2.5-vl-7b | Qwen/Qwen2.5-VL-7B-Instruct | qwen2_vl | 7-8B |
+| qwen2.5-vl-7b | Qwen/Qwen2.5-VL-7B-Instruct | qwen2_vl | 7-9B |
 | qwen3-vl-4b | Qwen/Qwen3-VL-4B-Instruct | qwen3_vl_nothink | 3-4B |
-| qwen3-vl-8b | Qwen/Qwen3-VL-8B-Instruct | qwen3_vl_nothink | 7-8B |
-| qwen3.5-4b-base ⚠️ | Qwen/Qwen3.5-4B-Base | qwen *(TODO)* | 3-4B |
-| qwen3.5-9b-base ⚠️ | Qwen/Qwen3.5-9B-Base | qwen *(TODO)* | 7-8B |
+| qwen3-vl-8b | Qwen/Qwen3-VL-8B-Instruct | qwen3_vl_nothink | 7-9B |
+| qwen3.5-4b-base | Qwen/Qwen3.5-4B-Base | qwen3_5_nothink | 3-4B |
+| qwen3.5-9b-base | Qwen/Qwen3.5-9B-Base | qwen3_5_nothink | 7-9B |
 
-> ⚠️ Qwen3.5-Base 는 신규 추가 모델로, HF Hub 가용성 / multimodal 입력 지원 / 적합한 `template` 등이 미확정이다. `# TODO(qwen3.5-base)` 마커로 추적된다.
+> Qwen3.5-Base 는 LlamaFactory 가 multimodal `hf_model_type=qwen3_5` 로 인식하며 (Qwen3-VL 과 동일 그룹, `LlamaFactory/src/llamafactory/train/mca/workflow.py`), `template=qwen3_5_nothink` 로 학습한다. `vllm_infer.py` 호출 시 `_common.sh::build_infer_cmd` 가 `--enable_thinking False` 를 자동 주입한다.
 
 모델 family 별 image-pixel budget 은 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에서 관리된다 (Qwen2/2.5-VL: factor 28 / 1,605,632 px / 3,136 px, Qwen3-VL & Qwen3.5: factor 32 / 2,097,152 px / 4,096 px). YAML 의 `image_max_pixels` / `image_min_pixels` 는 family config 에서 자동 주입된다.
 
@@ -76,10 +76,10 @@ gui-model       gui-model.ipynb     llamafactory-cli train/export    Qwen2-VL ×
 하이퍼파라미터는 **3 단 구조**로 해석된다 (두 노트북 모두 Section 0 CONFIGS 셀에서 동일 로직):
 
 1. `_DATASET_CONFIG[ds].stage{1,2}` — 데이터셋 공통 baseline (학습 대상 DS: AC, MC).
-2. `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` — **AC 전용** 모델 크기 공유값 (2B / 3-4B / 7-8B). MC 에는 적용되지 않는다.
+2. `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` — **AC 전용** 모델 크기 공유값 (2B / 3-4B / 7-9B). MC 에는 적용되지 않는다.
 3. `_MODEL_CONFIG[model].hparam_overrides` — 모델별 delta.
 
-AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 만 적용된다 (tier 미적용). 각 모델은 `_MODEL_CONFIG[model]["size"]` (`"2B" | "3-4B" | "7-8B"`) 필드로 tier 를 지정한다. MobiBench 는 평가 전용 벤치마크이므로 학습 하이퍼파라미터 해석에서 제외된다.
+AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 만 적용된다 (tier 미적용). 각 모델은 `_MODEL_CONFIG[model]["size"]` (`"2B" | "3-4B" | "7-9B"`) 필드로 tier 를 지정한다. MobiBench 는 평가 전용 벤치마크이므로 학습 하이퍼파라미터 해석에서 제외된다.
 
 #### AC 크기 tier 값 (`_SIZE_CONFIG_AC`)
 
@@ -89,7 +89,7 @@ AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 
 |---|---|---|---|
 | 2B | 1.5e-5 | 0.08 | 0.5 |
 | 3-4B | 1.2e-5 | 0.06 | 0.5 |
-| 7-8B | (baseline 유지: 1.0e-5 / 0.03 / 1.0) | | |
+| 7-9B | (baseline 유지: 1.0e-5 / 0.03 / 1.0) | | |
 
 **Stage 1 LoRA** — `stage1_full` 위에 덮어쓰기:
 
@@ -97,7 +97,7 @@ AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 
 |---|---|---|---|
 | 2B | 1.5e-4 | 8 / 16 | 0.05 |
 | 3-4B | 1.2e-4 | 12 / 24 | 0.05 |
-| 7-8B | 1.0e-4 | 16 / 32 | 0.05 |
+| 7-9B | 1.0e-4 | 16 / 32 | 0.05 |
 
 **Stage 2 (LoRA)** — dataset baseline 대비 다른 필드만:
 
@@ -105,9 +105,9 @@ AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 
 |---|---|---|---|---|
 | 2B | 6.0e-5 | 16 / 32 | 0.05 | 0.05 |
 | 3-4B | 5.0e-5 | 24 / 48 | 0.05 | 0.04 |
-| 7-8B | 4.0e-5 | (baseline: 32 / 64) | 0.05 | (baseline: 0.03) |
+| 7-9B | 4.0e-5 | (baseline: 32 / 64) | 0.05 | (baseline: 0.03) |
 
-설계 근거: `outputs/AC/eval/qwen{2.5-vl-7b,3-vl-8b}/stage2_eval` 실측에서 lr 5e-5 가 7-8B 상단 경계 (7B e3 retrograde, 8B cond_text 퇴화), dropout 0.10 이 저빈도 action type 을 불안정하게 만듦. 2B / 3-4B 는 Stage 1 크기 규칙을 Stage 2 에 이식한 외삽.
+설계 근거: `outputs/AC/eval/qwen{2.5-vl-7b,3-vl-8b}/stage2_eval` 실측에서 lr 5e-5 가 7-9B 상단 경계 (7B e3 retrograde, 8B cond_text 퇴화), dropout 0.10 이 저빈도 action type 을 불안정하게 만듦. 2B / 3-4B 는 Stage 1 크기 규칙을 Stage 2 에 이식한 외삽.
 
 #### 계열 delta (`_MODEL_CONFIG[model].hparam_overrides`)
 
@@ -123,7 +123,7 @@ AC 는 ① → ② → ③ 순으로 `dict.update()` 되며, MC 는 ① → ③ 
 |-----------|----------------|-------------|-------------|
 | 2B        | 4              | 8           | 8           |
 | 3-4B      | 2              | 4           | 4           |
-| 7-8B      | 1              | 2           | 2           |
+| 7-9B      | 1              | 2           | 2           |
 
 #### `gradient_accumulation_steps`
 

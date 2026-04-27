@@ -23,10 +23,10 @@
 | 4 | Qwen/Qwen2.5-VL-7B-Instruct | qwen2.5-vl-7b | qwen2_vl |
 | 5 | Qwen/Qwen3-VL-4B-Instruct | qwen3-vl-4b | qwen3_vl_nothink |
 | 6 | Qwen/Qwen3-VL-8B-Instruct | qwen3-vl-8b | qwen3_vl_nothink |
-| 7 | Qwen/Qwen3.5-4B-Base ⚠️ | qwen3.5-4b-base | qwen *(TODO)* |
-| 8 | Qwen/Qwen3.5-9B-Base ⚠️ | qwen3.5-9b-base | qwen *(TODO)* |
+| 7 | Qwen/Qwen3.5-4B-Base | qwen3.5-4b-base | qwen3_5_nothink |
+| 8 | Qwen/Qwen3.5-9B-Base | qwen3.5-9b-base | qwen3_5_nothink |
 
-> ⚠️ **Qwen3.5-Base 는 신규 추가 모델로, HF Hub 가용성 / multimodal 입력 지원 / 적합한 `template` 등이 미확정 상태다.** `_MODEL_CONFIG` / `_common.sh::MODEL_ID` 에는 등록만 되어 있고 학습 가능성은 별도로 검증해야 한다 (코드 안에 `# TODO(qwen3.5-base)` 마커).
+> Qwen3.5-Base 는 LlamaFactory 가 multimodal `hf_model_type=qwen3_5` 로 인식하며 (Qwen3-VL 과 동일 그룹), `template=qwen3_5_nothink` 로 학습한다. 추론 시 `vllm_infer.py` 에 `--enable_thinking False` 가 자동 주입된다.
 
 ### 모델 계열별 image budget
 
@@ -92,7 +92,7 @@ deepspeed 가 기본 포함되며, `llamafactory-cli train` / `llamafactory-cli 
 |-----------|----------------|-------------|-------------|
 | 2B        | 4              | 8           | 8           |
 | 3-4B      | 2              | 4           | 4           |
-| 7-8B      | 1              | 2           | 2           |
+| 7-9B      | 1              | 2           | 2           |
 
 `GLOBAL_BATCH_SIZE = 64` 를 유지하기 위해 `gradient_accumulation_steps = 64 / (per_device × NPROC_PER_NODE)` 가 자동 역계산된다 (정수가 아니면 `ValueError`). 표 값을 바꾸면 4 가지 GPU 수 (1/2/4/8) 모두에서 정수가 되는지 확인한다.
 
@@ -207,7 +207,7 @@ data/MonkeyCollection/
 > `gradient_accumulation_steps` 를 역계산해 `GLOBAL_BATCH_SIZE=64` 를 유지한다. GPU 종류/수 변경 시
 > `.env` 만 수정하고 Section 0 의 CONFIGS 셀과 YAML 생성 셀을 다시 실행하면 된다 (위 ".env 변수" 표 참고).
 >
-> **AC 하이퍼파라미터는 모델 크기 3 단(2B / 3-4B / 7-8B) 으로 공유**된다 (`_SIZE_CONFIG_AC`).
+> **AC 하이퍼파라미터는 모델 크기 3 단(2B / 3-4B / 7-9B) 으로 공유**된다 (`_SIZE_CONFIG_AC`).
 > 상세 tier 표는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2 "하이퍼파라미터" 참조.
 
 1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성 (Stage 1 full · lora 학습용 + Stage 2 base · world-model-full · world-model-lora 학습용 · merge 용). **Stage 1 eval YAML 은 더 이상 생성하지 않는다** (쉘 스크립트가 HF Hub merged 모델을 직접 sweep).

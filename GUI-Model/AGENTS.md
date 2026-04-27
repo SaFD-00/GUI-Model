@@ -5,7 +5,7 @@
 ## 현재 코드 기준 요약
 
 - 이 프로젝트의 실제 실행 엔트리포인트는 단일 노트북 [`gui-model.ipynb`](./gui-model.ipynb) 와 [`scripts/`](./scripts) 다. 노트북은 단일 conda env (`gui-model`, `pip install -e '.[llamafactory]'`) 를 전제로 한다.
-- **8개 Vision-Language 모델 (모두 Qwen 계열)** 을 지원한다: Qwen2-VL ×2, Qwen2.5-VL ×2, Qwen3-VL ×2, Qwen3.5-Base ×2 (⚠️ 신규, multimodal 가용성 미검증).
+- **8개 Vision-Language 모델 (모두 Qwen 계열)** 을 지원한다: Qwen2-VL ×2, Qwen2.5-VL ×2, Qwen3-VL ×2, Qwen3.5-Base ×2 (`template=qwen3_5_nothink`, LlamaFactory `hf_model_type=qwen3_5` multimodal 그룹).
 - **GPU-aware `per_device_train_batch_size`**: `.env` 의 `GPU_TYPE` (`RTX5090` / `A100` / `H100`) 와 모델 size 로 `_PER_DEVICE_BS_BY_SIZE` 표를 조회 (Cell 5 의 `lf_per_device_bs(size)` 헬퍼). `NPROC_PER_NODE ∈ {1,2,4,8}` 만 허용. 4 가지 GPU 수 모두에서 `GLOBAL_BATCH_SIZE=64` 가 정수로 나뉘도록 표 값을 유지해야 한다.
 - 모델 레지스트리는 두 곳에 있다: 노트북 Section 0 의 `_MODEL_CONFIG` 와 `scripts/_common.sh` 의 `MODEL_ID` / `MODEL_TEMPLATE` / `ALL_MODELS`. 두 곳을 동시에 수정해야 한다.
 - 모델 family 별 image budget 은 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에서 관리된다 (Qwen2/2.5-VL: factor 28 / 1,605,632 px, Qwen3-VL & Qwen3.5: factor 32 / 2,097,152 px).
@@ -20,8 +20,8 @@
 
 ## 어디를 수정해야 하는가
 
-- **모델 추가**: 노트북 Section 0 `_MODEL_CONFIG` (필드: `model_id`, `short_name`, `template`, `size` ∈ {`"2B"`, `"3-4B"`, `"7-8B"`}, image-pixel 은 `_img_cfg(short)` 헬퍼로 family config 에서 자동 주입) + `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 를 동시에 수정한다. 새 family 라면 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에 image budget 을 추가한다. 노트북의 Section 0 "Stage 1 YAML 일괄 생성" 셀이 자동으로 Stage 1 YAML 을 **full / lora 두 벌** 생성하고, "Stage 2 YAML 일괄 생성" 셀이 Stage 2 YAML 을 **full / lora 두 벌 × base/world-model-full/world-model-lora** 자동 생성한다. shell 스크립트의 `--stage1-mode`, `--stage2-mode` 로 full/lora 분기.
-- **하이퍼파라미터 구조**: AC 는 `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` 로 **크기 3 단(2B / 3-4B / 7-8B)** 공유값을 관리한다. `_MODEL_CONFIG[model].hparam_overrides` 는 모델별 delta 전용이다. lr / warmup / LoRA rank / dropout 은 `_MODEL_CONFIG` 에 직접 쓰지 말고 `_SIZE_CONFIG_AC` 에서 해당 tier 의 값을 바꿔야 한다. MC 는 tier 미적용 — dataset baseline + per-model override 만 적용. MB 는 평가 전용이라 학습 하이퍼파라미터 해석에서 제외. merge 순서: `_DATASET_CONFIG` baseline → `_SIZE_CONFIG_AC[size]` (AC 일 때만) → `hparam_overrides`. 전체 표는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2 참조.
+- **모델 추가**: 노트북 Section 0 `_MODEL_CONFIG` (필드: `model_id`, `short_name`, `template`, `size` ∈ {`"2B"`, `"3-4B"`, `"7-9B"`}, image-pixel 은 `_img_cfg(short)` 헬퍼로 family config 에서 자동 주입) + `scripts/_common.sh` 의 `MODEL_ID`, `MODEL_TEMPLATE`, `ALL_MODELS` 를 동시에 수정한다. 새 family 라면 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에 image budget 을 추가한다. 노트북의 Section 0 "Stage 1 YAML 일괄 생성" 셀이 자동으로 Stage 1 YAML 을 **full / lora 두 벌** 생성하고, "Stage 2 YAML 일괄 생성" 셀이 Stage 2 YAML 을 **full / lora 두 벌 × base/world-model-full/world-model-lora** 자동 생성한다. shell 스크립트의 `--stage1-mode`, `--stage2-mode` 로 full/lora 분기.
+- **하이퍼파라미터 구조**: AC 는 `_SIZE_CONFIG_AC[size].stage{1, 1_lora, 2}` 로 **크기 3 단(2B / 3-4B / 7-9B)** 공유값을 관리한다. `_MODEL_CONFIG[model].hparam_overrides` 는 모델별 delta 전용이다. lr / warmup / LoRA rank / dropout 은 `_MODEL_CONFIG` 에 직접 쓰지 말고 `_SIZE_CONFIG_AC` 에서 해당 tier 의 값을 바꿔야 한다. MC 는 tier 미적용 — dataset baseline + per-model override 만 적용. MB 는 평가 전용이라 학습 하이퍼파라미터 해석에서 제외. merge 순서: `_DATASET_CONFIG` baseline → `_SIZE_CONFIG_AC[size]` (AC 일 때만) → `hparam_overrides`. 전체 표는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2 참조.
 - **notebook 실행 순서나 YAML 생성 흐름**: [`gui-model.ipynb`](./gui-model.ipynb) 와 [`scripts/stage1_*.sh`](./scripts/stage1_train.sh), [`scripts/stage2_*.sh`](./scripts/stage2_train.sh) 를 함께 맞춰라.
 - **데이터 분할 규칙**: [`scripts/split_data.py`](./scripts/split_data.py) 가 기준. AC 는 Stage 1 / Stage 2 모두 app-level ID/OOD (단일 partition 공유), MC 는 Stage 1 random split (메타 없음, 자동 fallback), MB 는 split 없음.
 - **Stage 1 평가**: [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py) 가 기준 (`score` 서브커맨드만 유지, winner 선정 없음). single-pair (`--test/--pred`) 와 ID/OOD (`--test-id/--pred-id/--test-ood/--pred-ood`) 두 모드 지원 — ID/OOD 모드는 `hungarian_metrics.json` 에 `overall`/`in_domain`/`out_of_domain` 3 섹션 기록. 흐름은 **train → merge → eval** — `stage1_merge.sh` 가 모든 epoch 를 각각 local merge + HF push 하고 (`trainer_state.json.epoch` 파싱), `stage1_eval.sh` 가 `--train-dataset {AC|MC}` / `--eval-datasets {AC,MC,MB}` / `--variants` / `--epochs` 로 지정된 HF Hub merged repo (`SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}`) 를 pull 해 EVAL_DS 별 test JSONL 에 대해 `hungarian_metrics.json` 을 산출한다. EVAL_DS 별 분기:
@@ -72,7 +72,7 @@
   # → SaFD-00/qwen2.5-vl-7b-ac-world-model-stage1-full-epoch3-stage2-lora-epoch1
   ```
 - `rg "BEST_CHECKPOINT" scripts/ tests/` — 비어야 함.
-- GPU-aware per-device 검증: `.env` 에 `GPU_TYPE=RTX5090 NPROC_PER_NODE=8` 로 설정 후 노트북 Cell 5 실행 → "RTX5090 × 8 GPU: 2B pd=4 ga=2 | 3-4B pd=2 ga=4 | 7-8B pd=1 ga=8" 출력 확인. 모든 size × GPU × NPROC ∈ {1,2,4,8} 조합이 64 로 나뉘어야 함.
+- GPU-aware per-device 검증: `.env` 에 `GPU_TYPE=RTX5090 NPROC_PER_NODE=8` 로 설정 후 노트북 Cell 5 실행 → "RTX5090 × 8 GPU: 2B pd=4 ga=2 | 3-4B pd=2 ga=4 | 7-9B pd=1 ga=8" 출력 확인. 모든 size × GPU × NPROC ∈ {1,2,4,8} 조합이 64 로 나뉘어야 함.
 
 ## 문서 동기화 원칙
 

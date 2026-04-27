@@ -121,7 +121,6 @@ declare -A MODEL_ID=(
   [qwen2.5-vl-7b]="Qwen/Qwen2.5-VL-7B-Instruct"
   [qwen3-vl-4b]="Qwen/Qwen3-VL-4B-Instruct"
   [qwen3-vl-8b]="Qwen/Qwen3-VL-8B-Instruct"
-  # TODO(qwen3.5-base): Hub 가용성 + multimodal 여부 확인
   [qwen3.5-4b-base]="Qwen/Qwen3.5-4B-Base"
   [qwen3.5-9b-base]="Qwen/Qwen3.5-9B-Base"
 )
@@ -132,9 +131,8 @@ declare -A MODEL_TEMPLATE=(
   [qwen2.5-vl-7b]="qwen2_vl"
   [qwen3-vl-4b]="qwen3_vl_nothink"
   [qwen3-vl-8b]="qwen3_vl_nothink"
-  # TODO(qwen3.5-base): 실제 template 확인 (Base 모델 = chat template 미정)
-  [qwen3.5-4b-base]="qwen"
-  [qwen3.5-9b-base]="qwen"
+  [qwen3.5-4b-base]="qwen3_5_nothink"
+  [qwen3.5-9b-base]="qwen3_5_nothink"
 )
 # 정렬 순서: Qwen 이전세대 → 최신세대. 세대 내 작은 모델 먼저.
 ALL_MODELS=(
@@ -579,7 +577,7 @@ build_infer_cmd() {
   local model_short="$1" model_path="$2" ds_name="$3" \
         test_jsonl="$4" template="$5" save_rel="$6" matrix_rel="$7"
   local enable_thinking_flag=""
-  if [[ "$template" == qwen3_vl* ]]; then
+  if [[ "$template" == qwen3_vl* || "$template" == qwen3_5* ]]; then
     enable_thinking_flag="--enable_thinking False"
   fi
   INFER_CMD="python scripts/vllm_infer.py \
