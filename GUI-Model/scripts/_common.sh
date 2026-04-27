@@ -11,14 +11,13 @@ set -euo pipefail
 # 다만 /root/.local/workspace/python-packages/bin 의 낡은 accelerate CLI 는
 # shebang 이 base env python 을 가리킬 때가 있어 `No module named 'torch'` 를
 # 유발한다. conda env 가 활성화되어 있다면 해당 env 의 bin 을 PATH 맨 앞에 고정해
-# env 소속 CLI (/root/anaconda3/envs/gui-model-{llamafactory,unsloth}/bin/accelerate 등) 가
+# env 소속 CLI (/root/anaconda3/envs/gui-model/bin/accelerate 등) 가
 # 먼저 잡히도록 강제한다.
 if [[ -n "${CONDA_PREFIX:-}" ]]; then
   export PATH="$CONDA_PREFIX/bin:$PATH"
 else
-  echo "[!] conda env 가 활성화되어 있지 않습니다. 모델 backend 에 맞춰 다음 중 하나를 먼저 실행하세요:" >&2
-  echo "      conda activate gui-model-llamafactory   # qwen*, llava*" >&2
-  echo "      conda activate gui-model-unsloth        # gemma-4-*" >&2
+  echo "[!] conda env 가 활성화되어 있지 않습니다. 다음을 먼저 실행하세요:" >&2
+  echo "      conda activate gui-model" >&2
   exit 1
 fi
 
@@ -32,7 +31,6 @@ fi
 # scripts/ 의 부모 디렉토리가 BASE_DIR (notebook Cell 3 의 BASE_DIR 대응)
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LF_ROOT="$BASE_DIR/LlamaFactory"
-UNSLOTH_ROOT="$BASE_DIR/unsloth"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
 
@@ -121,49 +119,30 @@ declare -A MODEL_ID=(
   [qwen2-vl-7b]="Qwen/Qwen2-VL-7B-Instruct"
   [qwen2.5-vl-3b]="Qwen/Qwen2.5-VL-3B-Instruct"
   [qwen2.5-vl-7b]="Qwen/Qwen2.5-VL-7B-Instruct"
-  [qwen3-vl-2b]="Qwen/Qwen3-VL-2B-Instruct"
   [qwen3-vl-4b]="Qwen/Qwen3-VL-4B-Instruct"
   [qwen3-vl-8b]="Qwen/Qwen3-VL-8B-Instruct"
-  [gemma-4-e2b]="google/gemma-4-E2B-it"
-  [gemma-4-e4b]="google/gemma-4-E4B-it"
-  [llava-v1.6-mistral-7b]="llava-hf/llava-v1.6-mistral-7b-hf"
-  [llava-v1.6-vicuna-7b]="llava-hf/llava-v1.6-vicuna-7b-hf"
-  [llama3-llava-next-8b]="llava-hf/llama3-llava-next-8b-hf"
+  # TODO(qwen3.5-base): Hub 가용성 + multimodal 여부 확인
+  [qwen3.5-4b-base]="Qwen/Qwen3.5-4B-Base"
+  [qwen3.5-9b-base]="Qwen/Qwen3.5-9B-Base"
 )
 declare -A MODEL_TEMPLATE=(
   [qwen2-vl-2b]="qwen2_vl"
   [qwen2-vl-7b]="qwen2_vl"
   [qwen2.5-vl-3b]="qwen2_vl"
   [qwen2.5-vl-7b]="qwen2_vl"
-  [qwen3-vl-2b]="qwen3_vl_nothink"
   [qwen3-vl-4b]="qwen3_vl_nothink"
   [qwen3-vl-8b]="qwen3_vl_nothink"
-  [gemma-4-e2b]="gemma4"
-  [gemma-4-e4b]="gemma4"
-  [llava-v1.6-mistral-7b]="llava_next"
-  [llava-v1.6-vicuna-7b]="llava_next"
-  [llama3-llava-next-8b]="llava_next"
+  # TODO(qwen3.5-base): 실제 template 확인 (Base 모델 = chat template 미정)
+  [qwen3.5-4b-base]="qwen"
+  [qwen3.5-9b-base]="qwen"
 )
-# 정렬 순서: Qwen 이전세대→최신세대, Google, LLaVA-HF. 세대 내 작은 모델 먼저.
+# 정렬 순서: Qwen 이전세대 → 최신세대. 세대 내 작은 모델 먼저.
 ALL_MODELS=(
   qwen2-vl-2b qwen2-vl-7b
   qwen2.5-vl-3b qwen2.5-vl-7b
-  qwen3-vl-2b qwen3-vl-4b qwen3-vl-8b
-  gemma-4-e2b gemma-4-e4b
-  llava-v1.6-mistral-7b llava-v1.6-vicuna-7b llama3-llava-next-8b
+  qwen3-vl-4b qwen3-vl-8b
+  qwen3.5-4b-base qwen3.5-9b-base
 )
-
-# --- 학습 백엔드 매핑 (notebook _MODEL_CONFIG["backend"] 와 일치) --------------
-# 미지정 모델은 기본값 "llamafactory" 로 분기된다.
-# Gemma-4 계열은 Unsloth (https://github.com/unslothai/unsloth) 사용.
-declare -A MODEL_BACKEND=(
-  [gemma-4-e2b]="unsloth"
-  [gemma-4-e4b]="unsloth"
-)
-get_backend() {
-  local m="$1"
-  echo "${MODEL_BACKEND[$m]:-llamafactory}"
-}
 
 # --- CLI 인자 파싱 (학습/merge 스크립트용): --model MODEL --dataset DS --------
 # 사용법:
@@ -596,39 +575,24 @@ resolve_stage1_variants() {
 #   호출부는 `bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_REL' && $INFER_CMD && ..."`
 #   형태로 체이닝한다. 경로는 cwd=$LF_ROOT 기준 상대 (save_rel/matrix_rel) 와
 #   절대 (test_jsonl) 가 섞여 있으며 기존 스크립트 관행을 그대로 유지.
-#
-# backend=="unsloth"  → scripts/_unsloth_infer.py (vllm 우회)
-# backend=="llamafactory" (기본) → scripts/vllm_infer.py (기존 경로)
 build_infer_cmd() {
   local model_short="$1" model_path="$2" ds_name="$3" \
         test_jsonl="$4" template="$5" save_rel="$6" matrix_rel="$7"
-  local backend
-  backend=$(get_backend "$model_short")
-  if [[ "$backend" == "unsloth" ]]; then
-    INFER_CMD="python '$BASE_DIR/scripts/_unsloth_infer.py' \
-        --model_name_or_path '$model_path' \
-        --test '$test_jsonl' \
-        --image_dir '$BASE_DIR/data' \
-        --save_name        '$save_rel' \
-        --matrix_save_name '$matrix_rel' \
-        --image_max_pixels 4233600"
-  else
-    local enable_thinking_flag=""
-    if [[ "$template" == qwen3_vl* ]]; then
-      enable_thinking_flag="--enable_thinking False"
-    fi
-    INFER_CMD="python scripts/vllm_infer.py \
-        --model_name_or_path '$model_path' \
-        --dataset '$ds_name' \
-        --dataset_dir '$LF_ROOT/data' \
-        --template $template \
-        --cutoff_len 8192 \
-        --image_max_pixels 4233600 \
-        $enable_thinking_flag \
-        --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
-        --save_name        '$save_rel' \
-        --matrix_save_name '$matrix_rel'"
+  local enable_thinking_flag=""
+  if [[ "$template" == qwen3_vl* ]]; then
+    enable_thinking_flag="--enable_thinking False"
   fi
+  INFER_CMD="python scripts/vllm_infer.py \
+      --model_name_or_path '$model_path' \
+      --dataset '$ds_name' \
+      --dataset_dir '$LF_ROOT/data' \
+      --template $template \
+      --cutoff_len 8192 \
+      --image_max_pixels 4233600 \
+      $enable_thinking_flag \
+      --vllm_config '{\"gpu_memory_utilization\": 0.80}' \
+      --save_name        '$save_rel' \
+      --matrix_save_name '$matrix_rel'"
 }
 
 resolve_stage2_variants() {

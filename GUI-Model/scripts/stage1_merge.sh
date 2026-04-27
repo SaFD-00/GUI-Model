@@ -7,10 +7,8 @@
 #
 # --stage1-mode full (default) | lora.
 #
-# Backend 분기 (_common.sh::MODEL_BACKEND):
-#   - llamafactory: 임시 merge YAML 생성 → llamafactory-cli export
-#                   (lora 모드는 base model + adapter_name_or_path 블록 추가)
-#   - unsloth:      scripts/_unsloth_merge.py --mode {full|lora}
+# 임시 merge YAML 생성 → llamafactory-cli export
+# (lora 모드는 base model + adapter_name_or_path 블록 추가)
 #
 # HF repo id 규칙 (단일 정의: _common.sh::hf_repo_id_stage1):
 #   SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}
@@ -32,7 +30,6 @@ FAILED_COUNT=0
 for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
   for DS in "${DATASETS[@]}"; do
-    BACKEND="$(get_backend "$MODEL_SHORT")"
     # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/...").
     TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage1_${STAGE1_MODE}"
     TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
@@ -61,11 +58,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
       echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] ${CKPT_NAME} (epoch=${EPOCH}) → ${HUB_ID}" >&2
 
-      case "$BACKEND" in
-        llamafactory)
-          TMP_YAML=$(mktemp -t "stage1_merge_${MODEL_SHORT}_${DS}_${STAGE1_MODE}_ep${EPOCH}_XXXXXX.yaml")
-          if [ "$STAGE1_MODE" = "full" ]; then
-            cat > "$TMP_YAML" <<EOF
+      TMP_YAML=$(mktemp -t "stage1_merge_${MODEL_SHORT}_${DS}_${STAGE1_MODE}_ep${EPOCH}_XXXXXX.yaml")
+      if [ "$STAGE1_MODE" = "full" ]; then
+        cat > "$TMP_YAML" <<EOF
 ### model
 model_name_or_path: ${CKPT_REL}
 trust_remote_code: true
@@ -78,8 +73,8 @@ export_device: cpu
 export_legacy_format: false
 export_hub_model_id: ${HUB_ID}
 EOF
-          else
-            cat > "$TMP_YAML" <<EOF
+      else
+        cat > "$TMP_YAML" <<EOF
 ### model
 model_name_or_path: ${BASE_MODEL}
 adapter_name_or_path: ${CKPT_REL}
@@ -94,45 +89,17 @@ export_device: cpu
 export_legacy_format: false
 export_hub_model_id: ${HUB_ID}
 EOF
-          fi
+      fi
 
-          if run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_epoch${EPOCH}" \
-            bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"; then
-            :
-          else
-            FAILED_COUNT=$((FAILED_COUNT + 1))
-            rm -f "$TMP_YAML"
-            continue
-          fi
-          rm -f "$TMP_YAML"
-          ;;
-
-        unsloth)
-          if [ "$STAGE1_MODE" = "full" ]; then
-            run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_epoch${EPOCH}" \
-              python "$BASE_DIR/scripts/_unsloth_merge.py" \
-                --mode full \
-                --checkpoint "$CKPT_DIR" \
-                --export-dir "$LOCAL_DIR" \
-                --hub-id "$HUB_ID" \
-              || { FAILED_COUNT=$((FAILED_COUNT + 1)); continue; }
-          else
-            run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_epoch${EPOCH}" \
-              python "$BASE_DIR/scripts/_unsloth_merge.py" \
-                --mode lora \
-                --base-model "$BASE_MODEL" \
-                --checkpoint "$CKPT_DIR" \
-                --export-dir "$LOCAL_DIR" \
-                --hub-id "$HUB_ID" \
-              || { FAILED_COUNT=$((FAILED_COUNT + 1)); continue; }
-          fi
-          ;;
-
-        *)
-          echo "[!] Unknown backend '$BACKEND' for model $MODEL_SHORT" >&2
-          exit 2
-          ;;
-      esac
+      if run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_epoch${EPOCH}" \
+        bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"; then
+        :
+      else
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+        rm -f "$TMP_YAML"
+        continue
+      fi
+      rm -f "$TMP_YAML"
 
       if [ ! -d "$LOCAL_DIR" ]; then
         echo "[!] [$MODEL_SHORT][$DS][$STAGE1_MODE][epoch${EPOCH}] Expected output dir missing: $LOCAL_DIR" >&2

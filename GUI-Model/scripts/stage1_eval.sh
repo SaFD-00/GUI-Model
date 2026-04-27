@@ -12,15 +12,18 @@
 #     lora_world_model   : SaFD-00/{short}-{slug}world-model-stage1-lora-epoch{E}
 #   --epochs LIST        콤마 구분 정수 (기본 1,2,3). world-model variant 대상.
 #
-# EVAL_DS 별 테스트 파일:
-#   AC / MC : data/{DATADIR}/gui-model_stage1_test.jsonl  (split_data.py 산출)
-#   MB      : data/MobiBench/gui-model_stage1.jsonl       (단일 벤치마크 파일)
+# EVAL_DS 별 분기 (Stage 2 와 동일 패턴):
+#   AC : test_id + test_ood 2-회 inference → hungarian_metrics.json
+#        (overall / in_domain / out_of_domain 3-섹션)
+#   MC : 단일 파일 gui-model_stage1_test.jsonl 1-회 (random split 산출물)
+#        → hungarian_metrics.json (overall 1-섹션, single-pair)
+#   MB : 단일 파일 gui-model_stage1.jsonl 1-회 (벤치마크 단일 파일)
+#        → hungarian_metrics.json (overall 1-섹션, single-pair)
 #
-# 산출물 (TRAIN_DS 루트, EVAL_DS 별 on-{DS}/ 서브디렉토리):
-#   outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/base/on-{EVAL_DS}/
-#       (generated_predictions|hungarian_metrics).json
-#   outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{full|lora}_world_model/epoch-{E}/on-{EVAL_DS}/
-#       (generated_predictions|hungarian_metrics).json
+# 산출물:
+#   outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{variant}[/epoch-{E}]/on-{EVAL_DS}/
+#     EVAL_DS=AC      : generated_predictions_{id,ood}.jsonl + hungarian_metrics.json
+#     EVAL_DS=MC / MB : generated_predictions.jsonl          + hungarian_metrics.json (overall only)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -31,18 +34,87 @@ export DISABLE_VERSION_CHECK=1
 SCRIPT_TAG="stage1_eval"
 TRAIN_DS="$TRAIN_DATASET"
 
-# EVAL_DS → (TEST_JSONL, DATASET_NAME) 조합.
-# MB 는 단일 파일, AC/MC 는 split 된 *_test.jsonl.
-stage1_eval_paths() {
-  local eval_ds="$1"
+# 한 (MODEL, TRAIN_DS, VARIANT, EPOCH, HUB_ID, EVAL_DS) 조합 평가 실행.
+# - EVAL_DS=AC : test_id + test_ood → 3-섹션 hungarian_metrics.
+# - EVAL_DS=MC : 단일 파일 gui-model_stage1_test.jsonl  → overall only.
+# - EVAL_DS=MB : 단일 파일 gui-model_stage1.jsonl       → overall only.
+run_variant_epoch_eval_on() {
+  local model_short="$1" train_ds="$2" variant="$3" epoch="$4" hub_id="$5" \
+        out_rel_base="$6" template="$7" eval_ds="$8"
+  local out_rel="${out_rel_base}/on-${eval_ds}"
+  local out_dir="$LF_ROOT/$out_rel"
+  local tag="${SCRIPT_TAG}_${model_short}_${train_ds}_${variant}"
+  if [[ -n "$epoch" ]]; then
+    tag="${tag}_epoch${epoch}"
+  fi
+  tag="${tag}_on-${eval_ds}"
+  if skip_if_done "$tag" "$out_dir/hungarian_metrics.json"; then
+    return 0
+  fi
+
   local datadir="${DS_DATADIR[$eval_ds]}"
-  local prefix="${DS_PREFIX[$eval_ds]}"
-  if [[ "$eval_ds" == "MB" ]]; then
-    EVAL_TEST_JSONL="$BASE_DIR/data/${datadir}/gui-model_stage1.jsonl"
-    EVAL_DATASET_NAME="${prefix}_stage1"
+  local eval_prefix="${DS_PREFIX[$eval_ds]}"
+
+  if [[ "$eval_ds" == "AC" ]]; then
+    local test_id="$BASE_DIR/data/${datadir}/gui-model_stage1_test_id.jsonl"
+    local test_ood="$BASE_DIR/data/${datadir}/gui-model_stage1_test_ood.jsonl"
+    if [ ! -f "$test_id" ] || [ ! -f "$test_ood" ]; then
+      echo "[!] [$model_short][train=$train_ds][eval=$eval_ds] Missing test_id/test_ood jsonl:" >&2
+      echo "      $test_id" >&2
+      echo "      $test_ood" >&2
+      exit 1
+    fi
+    local ds_test_id="${eval_prefix}_stage1_test_id"
+    local ds_test_ood="${eval_prefix}_stage1_test_ood"
+
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test_id" \
+      "$test_id" "$template" \
+      "$out_rel/generated_predictions_id.jsonl" \
+      "$out_rel/predict_results_id.json"
+    local infer_id="$INFER_CMD"
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test_ood" \
+      "$test_ood" "$template" \
+      "$out_rel/generated_predictions_ood.jsonl" \
+      "$out_rel/predict_results_ood.json"
+    local infer_ood="$INFER_CMD"
+
+    run_logged "$tag" \
+      bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
+        $infer_id && \
+        $infer_ood && \
+        python '$BASE_DIR/scripts/_hungarian_eval.py' score \
+          --test-id  '$test_id' \
+          --pred-id  '$out_dir/generated_predictions_id.jsonl' \
+          --test-ood '$test_ood' \
+          --pred-ood '$out_dir/generated_predictions_ood.jsonl' \
+          --output   '$out_dir/hungarian_metrics.json'"
   else
-    EVAL_TEST_JSONL="$BASE_DIR/data/${datadir}/gui-model_stage1_test.jsonl"
-    EVAL_DATASET_NAME="${prefix}_stage1_test"
+    local test_jsonl
+    local ds_test
+    if [[ "$eval_ds" == "MB" ]]; then
+      test_jsonl="$BASE_DIR/data/${datadir}/gui-model_stage1.jsonl"
+      ds_test="${eval_prefix}_stage1"
+    else  # MC (random split)
+      test_jsonl="$BASE_DIR/data/${datadir}/gui-model_stage1_test.jsonl"
+      ds_test="${eval_prefix}_stage1_test"
+    fi
+    if [ ! -f "$test_jsonl" ]; then
+      echo "[!] [$model_short][train=$train_ds][eval=$eval_ds] Missing test file: $test_jsonl" >&2
+      exit 1
+    fi
+
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test" \
+      "$test_jsonl" "$template" \
+      "$out_rel/generated_predictions.jsonl" \
+      "$out_rel/predict_results.json"
+
+    run_logged "$tag" \
+      bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
+        $INFER_CMD && \
+        python '$BASE_DIR/scripts/_hungarian_eval.py' score \
+          --test   '$test_jsonl' \
+          --pred   '$out_dir/generated_predictions.jsonl' \
+          --output '$out_dir/hungarian_metrics.json'"
   fi
 }
 
@@ -52,61 +124,28 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
   EVAL_DIR_REL="../outputs/${TRAIN_DS}/eval/${MODEL_SHORT}/stage1_eval"
 
-  for EVAL_DS in "${EVAL_DATASETS[@]}"; do
-    stage1_eval_paths "$EVAL_DS"
+  for VARIANT in "${VARIANTS[@]}"; do
+    case "$VARIANT" in
+      base)
+        OUT_REL_BASE="${EVAL_DIR_REL}/base"
+        for EVAL_DS in "${EVAL_DATASETS[@]}"; do
+          run_variant_epoch_eval_on "$MODEL_SHORT" "$TRAIN_DS" base "" "$BASE_MODEL" \
+            "$OUT_REL_BASE" "$TEMPLATE" "$EVAL_DS"
+        done
+        ;;
 
-    if [ ! -f "$EVAL_TEST_JSONL" ]; then
-      echo "[!] [$MODEL_SHORT][train=$TRAIN_DS][eval=$EVAL_DS] Missing test file: $EVAL_TEST_JSONL" >&2
-      exit 1
-    fi
-
-    for VARIANT in "${VARIANTS[@]}"; do
-      case "$VARIANT" in
-        base)
-          OUT_REL="${EVAL_DIR_REL}/base/on-${EVAL_DS}"
-          OUT_DIR="$LF_ROOT/$OUT_REL"
-          TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${TRAIN_DS}_base_on-${EVAL_DS}"
-          if skip_if_done "$TAG" "$OUT_DIR/hungarian_metrics.json"; then continue; fi
-
-          build_infer_cmd "$MODEL_SHORT" "$BASE_MODEL" "$EVAL_DATASET_NAME" \
-            "$EVAL_TEST_JSONL" "$TEMPLATE" \
-            "$OUT_REL/generated_predictions.jsonl" \
-            "$OUT_REL/predict_results.json"
-
-          run_logged "$TAG" \
-            bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_REL' && \
-              $INFER_CMD && \
-              python '$BASE_DIR/scripts/_hungarian_eval.py' score \
-                --test   '$EVAL_TEST_JSONL' \
-                --pred   '$OUT_DIR/generated_predictions.jsonl' \
-                --output '$OUT_DIR/hungarian_metrics.json'"
-          ;;
-
-        full_world_model|lora_world_model)
-          MODE="${VARIANT%_world_model}"    # full | lora
-          echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][eval=$EVAL_DS][$VARIANT] Sweeping epochs: ${EPOCHS[*]}" >&2
-          for EPOCH in "${EPOCHS[@]}"; do
-            HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$TRAIN_DS" "$MODE" "$EPOCH")
-            OUT_REL="${EVAL_DIR_REL}/${VARIANT}/epoch-${EPOCH}/on-${EVAL_DS}"
-            OUT_DIR="$LF_ROOT/$OUT_REL"
-            TAG="${SCRIPT_TAG}_${MODEL_SHORT}_${TRAIN_DS}_${VARIANT}_epoch${EPOCH}_on-${EVAL_DS}"
-            if skip_if_done "$TAG" "$OUT_DIR/hungarian_metrics.json"; then continue; fi
-
-            build_infer_cmd "$MODEL_SHORT" "$HUB_ID" "$EVAL_DATASET_NAME" \
-              "$EVAL_TEST_JSONL" "$TEMPLATE" \
-              "$OUT_REL/generated_predictions.jsonl" \
-              "$OUT_REL/predict_results.json"
-
-            run_logged "$TAG" \
-              bash -c "cd '$LF_ROOT' && mkdir -p '$OUT_REL' && \
-                $INFER_CMD && \
-                python '$BASE_DIR/scripts/_hungarian_eval.py' score \
-                  --test   '$EVAL_TEST_JSONL' \
-                  --pred   '$OUT_DIR/generated_predictions.jsonl' \
-                  --output '$OUT_DIR/hungarian_metrics.json'"
+      full_world_model|lora_world_model)
+        MODE="${VARIANT%_world_model}"    # full | lora
+        echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT] Sweeping epochs: ${EPOCHS[*]}" >&2
+        for EPOCH in "${EPOCHS[@]}"; do
+          HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$TRAIN_DS" "$MODE" "$EPOCH")
+          OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT}/epoch-${EPOCH}"
+          for EVAL_DS in "${EVAL_DATASETS[@]}"; do
+            run_variant_epoch_eval_on "$MODEL_SHORT" "$TRAIN_DS" "$VARIANT" "$EPOCH" "$HUB_ID" \
+              "$OUT_REL_BASE" "$TEMPLATE" "$EVAL_DS"
           done
-          ;;
-      esac
-    done
+        done
+        ;;
+    esac
   done
 done

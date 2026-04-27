@@ -14,14 +14,12 @@
 #   --model / --dataset          (공통)
 #
 # YAML 위치:
-#   LlamaFactory: examples/custom/GUI-Model-${DS}/stage2_{MODE}/{MODEL}_{VARIANT}.yaml
-#   Unsloth:      unsloth/configs/GUI-Model-${DS}/stage2_{MODE}/{MODEL}_{VARIANT}.yaml
+#   examples/custom/GUI-Model-${DS}/stage2_{MODE}/{MODEL}_{VARIANT}.yaml
 #
 # world-model variant 는 노트북이 생성한 YAML 의 model_name_or_path 를 런타임에
 # Stage 1 local merged 경로로 sed 치환한다 (임시 YAML).
 #
 # NPROC_PER_NODE 은 .env 에서 관리 (기본값 2).
-# Backend 매핑은 _common.sh::MODEL_BACKEND 에 정의된다.
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -32,7 +30,7 @@ export DISABLE_VERSION_CHECK=1
 SCRIPT_TAG="stage2_train_${STAGE2_MODE}_from_${STAGE1_MODE}"
 
 resolve_stage1_base() {
-  # 반환: LF/Unsloth cwd 기준 상대경로 "../outputs/{DS}/merged/...epoch-N".
+  # 반환: LF cwd 기준 상대경로 "../outputs/{DS}/merged/...epoch-N".
   local model_short="$1" ds="$2" mode="$3" epoch="$4"
   local abs; abs="$(local_merged_epoch_dir stage1 "$model_short" "$ds" "$mode" "$epoch")"
   if [ ! -d "$abs" ]; then
@@ -45,8 +43,6 @@ resolve_stage1_base() {
 
 for MODEL_SHORT in "${MODELS[@]}"; do
   for DS in "${DATASETS[@]}"; do
-    BACKEND="$(get_backend "$MODEL_SHORT")"
-
     VARIANTS_LOCAL=("base" "world-model-${STAGE1_MODE}")
 
     for VARIANT in "${VARIANTS_LOCAL[@]}"; do
@@ -58,66 +54,30 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         fi
       fi
 
-      case "$BACKEND" in
-        llamafactory)
-          YAML_REL="examples/custom/GUI-Model-${DS}/stage2_${STAGE2_MODE}/${MODEL_SHORT}_${VARIANT}.yaml"
-          YAML_ABS="$LF_ROOT/$YAML_REL"
-          require_yaml "$YAML_REL" "run notebook Cell (Stage 2 ${STAGE2_MODE}) to generate this YAML"
-          RUN_YAML_REL="$YAML_REL"
+      YAML_REL="examples/custom/GUI-Model-${DS}/stage2_${STAGE2_MODE}/${MODEL_SHORT}_${VARIANT}.yaml"
+      YAML_ABS="$LF_ROOT/$YAML_REL"
+      require_yaml "$YAML_REL" "run notebook Cell (Stage 2 ${STAGE2_MODE}) to generate this YAML"
+      RUN_YAML_REL="$YAML_REL"
 
-          if [[ "$VARIANT" == world-model-* ]]; then
-            S1_BASE=$(resolve_stage1_base "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$STAGE1_EPOCH") || exit 1
-            TMP_YAML=$(mktemp -t "stage2_train_${MODEL_SHORT}_${DS}_${VARIANT}_${STAGE2_MODE}_XXXXXX.yaml")
-            sed "0,/^model_name_or_path:/{s|^model_name_or_path:.*|model_name_or_path: ${S1_BASE}|}" \
-              "$YAML_ABS" > "$TMP_YAML"
-            LINK_REL="examples/custom/GUI-Model-${DS}/stage2_${STAGE2_MODE}/.${MODEL_SHORT}_${VARIANT}.runtime.yaml"
-            ln -sfn "$TMP_YAML" "$LF_ROOT/$LINK_REL"
-            RUN_YAML_REL="$LINK_REL"
-            echo "[+] [$MODEL_SHORT][$DS][$VARIANT][stage2=${STAGE2_MODE}] Stage 1 base = $S1_BASE" >&2
-            trap 'rm -f "$TMP_YAML" "$LF_ROOT/$LINK_REL"' RETURN
-          fi
+      if [[ "$VARIANT" == world-model-* ]]; then
+        S1_BASE=$(resolve_stage1_base "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$STAGE1_EPOCH") || exit 1
+        TMP_YAML=$(mktemp -t "stage2_train_${MODEL_SHORT}_${DS}_${VARIANT}_${STAGE2_MODE}_XXXXXX.yaml")
+        sed "0,/^model_name_or_path:/{s|^model_name_or_path:.*|model_name_or_path: ${S1_BASE}|}" \
+          "$YAML_ABS" > "$TMP_YAML"
+        LINK_REL="examples/custom/GUI-Model-${DS}/stage2_${STAGE2_MODE}/.${MODEL_SHORT}_${VARIANT}.runtime.yaml"
+        ln -sfn "$TMP_YAML" "$LF_ROOT/$LINK_REL"
+        RUN_YAML_REL="$LINK_REL"
+        echo "[+] [$MODEL_SHORT][$DS][$VARIANT][stage2=${STAGE2_MODE}] Stage 1 base = $S1_BASE" >&2
+        trap 'rm -f "$TMP_YAML" "$LF_ROOT/$LINK_REL"' RETURN
+      fi
 
-          run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
-            bash -c "cd '$LF_ROOT' && llamafactory-cli train '$RUN_YAML_REL'"
+      run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
+        bash -c "cd '$LF_ROOT' && llamafactory-cli train '$RUN_YAML_REL'"
 
-          if [[ "$VARIANT" == world-model-* ]]; then
-            rm -f "$TMP_YAML" "$LF_ROOT/$LINK_REL"
-            trap - RETURN
-          fi
-          ;;
-
-        unsloth)
-          YAML_ABS="$BASE_DIR/unsloth/configs/GUI-Model-${DS}/stage2_${STAGE2_MODE}/${MODEL_SHORT}_${VARIANT}.yaml"
-          if [ ! -f "$YAML_ABS" ]; then
-            echo "[!] Missing Unsloth YAML: $YAML_ABS" >&2
-            echo "    Hint: run notebook Cell (Unsloth Stage 2 ${STAGE2_MODE}) to generate this YAML" >&2
-            exit 1
-          fi
-          RUN_YAML="$YAML_ABS"
-
-          if [[ "$VARIANT" == world-model-* ]]; then
-            S1_BASE=$(resolve_stage1_base "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$STAGE1_EPOCH") || exit 1
-            TMP_YAML=$(mktemp -t "stage2_train_${MODEL_SHORT}_${DS}_${VARIANT}_${STAGE2_MODE}_XXXXXX.yaml")
-            sed "0,/^model_name_or_path:/{s|^model_name_or_path:.*|model_name_or_path: ${S1_BASE}|}" \
-              "$YAML_ABS" > "$TMP_YAML"
-            RUN_YAML="$TMP_YAML"
-            echo "[+] [$MODEL_SHORT][$DS][$VARIANT][stage2=${STAGE2_MODE}] Stage 1 base = $S1_BASE" >&2
-          fi
-
-          run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}" \
-            bash -c "cd '$UNSLOTH_ROOT' && accelerate launch --multi_gpu --num_processes ${NPROC_PER_NODE} \
-              ../scripts/_unsloth_train.py --config '$RUN_YAML' --base-dir '$UNSLOTH_ROOT'"
-
-          if [[ "$VARIANT" == world-model-* ]]; then
-            rm -f "$TMP_YAML"
-          fi
-          ;;
-
-        *)
-          echo "[!] Unknown backend '$BACKEND' for model $MODEL_SHORT" >&2
-          exit 2
-          ;;
-      esac
+      if [[ "$VARIANT" == world-model-* ]]; then
+        rm -f "$TMP_YAML" "$LF_ROOT/$LINK_REL"
+        trap - RETURN
+      fi
     done
   done
 done

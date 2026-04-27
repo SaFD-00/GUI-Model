@@ -5,25 +5,31 @@
 MobiBench(MB) 는 평가 전용 벤치마크이므로 split 하지 않는다 —
 ``data/MobiBench/gui-model_stage{1,2}.jsonl`` 두 단일 파일이 eval 입력.
 
-Stage 1 (World Modeling):  random split over ``gui-model_stage1.jsonl``.
-Stage 2 (Action Prediction): app-level in-domain / out-of-domain split over
-    ``gui-model_stage2.jsonl`` using ``episodes_meta.jsonl`` (primary_app).
-    ``primary_app`` 값은 앱 라벨이 아닌 package 식별자 (예:
-    ``com.ajnsnewmedia.kitchenstories``) 이다 — ``scripts/extract_androidcontrol_metadata.py``
-    가 AndroidAccessibilityForest proto 에서 전경 application window 의
-    ``package_name`` 을 집계해 생성한다.
-    MC 는 Stage 2 데이터가 없으므로 자동 skip (``--skip-stage2`` 기본 적용).
+Stage 1 (World Modeling)
+    AC: ``episodes_meta.jsonl.primary_app`` 기반 **app-level ID/OOD** split.
+        Stage 2 와 동일 partition 을 공유 (한 번 계산 → 양쪽 재사용) 해
+        Stage 2 OOD 앱이 world-modeling 학습에서도 노출되지 않게 한다.
+    MC: meta 없음 → 자동 random split (단일 ``_test.jsonl``).
+Stage 2 (Action Prediction)
+    AC: app-level ID/OOD split (Stage 1 과 partition 공유).
+    MC: 데이터 없음 → 자동 skip (``--skip-stage2`` 기본 적용).
+
+``primary_app`` 값은 앱 라벨이 아닌 package 식별자 (예:
+``com.ajnsnewmedia.kitchenstories``) 이며,
+``scripts/extract_androidcontrol_metadata.py`` 가
+AndroidAccessibilityForest proto 에서 전경 application window 의
+``package_name`` 을 다수결로 집계해 생성한다.
 
 Usage
 -----
-  # AC: Stage 1 + Stage 2 (defaults: train=50000, test_id=3000, test_ood=3000)
+  # AC: Stage 1 + Stage 2 모두 ID/OOD (defaults: train=50000, test_id=3000, test_ood=3000)
   python scripts/split_data.py --dataset AndroidControl
 
-  # MC: Stage 1 random split 만 수행 (Stage 2 없음)
+  # MC: Stage 1 random split 만 수행 (Stage 2 자동 skip, meta 없음)
   python scripts/split_data.py --dataset MonkeyCollection
 
-  # Skip Stage 1 / Stage 2 selectively
-  python scripts/split_data.py --dataset AndroidControl --skip-stage1
+  # AC 인데 Stage 1 만 random 으로 강제하고 싶을 때
+  python scripts/split_data.py --dataset AndroidControl --stage1-mode random
 """
 
 from __future__ import annotations
@@ -70,9 +76,9 @@ def write_jsonl(entries: list, path: Path) -> None:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-# ── Stage 1 ───────────────────────────────────────────────────────────────
-def split_stage1(entries: list, ratio: float, seed: int) -> tuple[list, list]:
-    """Random split for Stage 1 (World Modeling)."""
+# ── Stage 1 random split (MC fallback) ────────────────────────────────────
+def split_stage1_random(entries: list, ratio: float, seed: int) -> tuple[list, list]:
+    """Random split for Stage 1 (used when meta is absent — e.g., MC)."""
     rng = random.Random(seed)
     shuffled = entries.copy()
     rng.shuffle(shuffled)
@@ -80,9 +86,11 @@ def split_stage1(entries: list, ratio: float, seed: int) -> tuple[list, list]:
     return shuffled[:split_idx], shuffled[split_idx:]
 
 
-# ── Stage 2 ───────────────────────────────────────────────────────────────
+# ── Sampling helpers ──────────────────────────────────────────────────────
 def stratified_subsample(entries: list, target_size: int, seed: int) -> list:
-    """Subsample preserving action-type ratio via largest-remainder method."""
+    """Subsample preserving action-type ratio via largest-remainder method.
+
+    Stage 2 전용 — 마지막 message 가 action JSON 임을 가정한다."""
     rng = random.Random(seed)
     type_groups = defaultdict(list)
     for entry in entries:
@@ -111,26 +119,17 @@ def stratified_subsample(entries: list, target_size: int, seed: int) -> list:
     return sampled
 
 
-def split_stage2_by_ratio(entries: list, ratio: float, seed: int) -> tuple[list, list]:
-    """Stratified random split (no ID/OOD) — retained for legacy callers."""
+def random_subsample(entries: list, target_size: int, seed: int) -> list:
+    """Stage 1 용 단순 random subsample (action-type stratification 없음)."""
+    if target_size >= len(entries):
+        return entries.copy()
     rng = random.Random(seed)
-    type_groups = defaultdict(list)
-    for entry in entries:
-        action = json.loads(entry["messages"][-1]["value"])
-        type_groups[action.get("type", "unknown")].append(entry)
-
-    train_entries, test_entries = [], []
-    for action_type, group in type_groups.items():
-        rng.shuffle(group)
-        split_idx = max(1, int(len(group) * ratio))
-        train_entries.extend(group[:split_idx])
-        test_entries.extend(group[split_idx:])
-
-    rng.shuffle(train_entries)
-    rng.shuffle(test_entries)
-    return train_entries, test_entries
+    shuffled = entries.copy()
+    rng.shuffle(shuffled)
+    return shuffled[:target_size]
 
 
+# ── Episode / app mapping ─────────────────────────────────────────────────
 def episode_id_from_entry(entry: dict) -> str | None:
     images = entry.get("images") or []
     if not images:
@@ -148,6 +147,11 @@ def _norm_ep(raw: object) -> str:
         return s
 
 
+def _build_ep_to_app(meta_entries: list[dict]) -> dict[str, str | None]:
+    return {_norm_ep(m.get("episode_id")): m.get("primary_app") for m in meta_entries}
+
+
+# ── App-level partition ───────────────────────────────────────────────────
 def partition_apps(
     app_to_rows: dict[str, list[dict]],
     ood_budget: int,
@@ -189,19 +193,27 @@ def partition_apps(
     return id_apps, ood_apps
 
 
-def build_stage2_id_ood_split(
+def compute_app_partition(
     stage2_entries: list[dict],
     meta_entries: list[dict],
-    train_size: int,
-    test_id_size: int,
-    test_ood_size: int,
+    ood_row_budget: int,
+    id_row_budget: int,
     seed: int,
-    exclude_null_app: bool = False,
-) -> tuple[list[dict], list[dict], list[dict], dict]:
-    """Core ID/OOD splitter. Returns (train, test_id, test_ood, info)."""
-    ep_to_app: dict[str, str | None] = {}
-    for m in meta_entries:
-        ep_to_app[_norm_ep(m.get("episode_id"))] = m.get("primary_app")
+) -> tuple[list[str], list[str], dict[str, list[dict]], list[dict], dict[str, str | None]]:
+    """Stage 2 행 수 기준으로 app partition 을 단일 계산.
+
+    Returns
+    -------
+    id_apps, ood_apps : list[str]
+        Partition 결과 (Stage 1 / Stage 2 모두에서 재사용).
+    app_to_rows_stage2 : dict[str, list[dict]]
+        Stage 2 행을 app 별로 그룹핑한 결과 (Stage 2 split 에서 직접 사용).
+    null_rows_stage2 : list[dict]
+        episode_id 추출 실패 또는 app 라벨 결측 행 (Stage 2 train 에 옵션 합류).
+    ep_to_app : dict[str, str | None]
+        Stage 1 라우팅에서 재사용할 episode → primary_app 매핑.
+    """
+    ep_to_app = _build_ep_to_app(meta_entries)
 
     null_rows: list[dict] = []
     app_to_rows: dict[str, list[dict]] = defaultdict(list)
@@ -219,17 +231,106 @@ def build_stage2_id_ood_split(
     rng = random.Random(seed)
     id_apps, ood_apps = partition_apps(
         app_to_rows,
-        ood_budget=test_ood_size,
-        id_budget=test_id_size * 2,
+        ood_budget=ood_row_budget,
+        id_budget=id_row_budget,
         rng=rng,
     )
+    return id_apps, ood_apps, dict(app_to_rows), null_rows, ep_to_app
 
+
+def route_entries_by_app(
+    entries: list[dict],
+    ep_to_app: dict[str, str | None],
+    id_apps: set[str],
+    ood_apps: set[str],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """주어진 partition 으로 entries 를 (id_pool, ood_pool, null_pool) 로 라우팅."""
+    id_pool: list[dict] = []
+    ood_pool: list[dict] = []
+    null_pool: list[dict] = []
+    for entry in entries:
+        ep = episode_id_from_entry(entry)
+        if ep is None:
+            null_pool.append(entry)
+            continue
+        app = ep_to_app.get(_norm_ep(ep))
+        if app is None or not str(app).strip():
+            null_pool.append(entry)
+            continue
+        a = str(app).strip()
+        if a in id_apps:
+            id_pool.append(entry)
+        elif a in ood_apps:
+            ood_pool.append(entry)
+        else:
+            # partition 밖 (이론상 도달 불가) — 안전하게 null 로
+            null_pool.append(entry)
+    return id_pool, ood_pool, null_pool
+
+
+# ── Stage 1 ID/OOD split (AC) ─────────────────────────────────────────────
+def build_stage1_id_ood_split(
+    stage1_entries: list[dict],
+    ep_to_app: dict[str, str | None],
+    id_apps: list[str],
+    ood_apps: list[str],
+    train_size: int,
+    test_id_size: int,
+    test_ood_size: int,
+    seed: int,
+    exclude_null_app: bool = False,
+) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """Stage 2 와 동일 partition 으로 Stage 1 을 ID/OOD 분할.
+
+    Stage 1 entry 는 마지막 message 가 UI XML (action JSON 이 아님) 이므로
+    action-type stratification 대신 단순 random subsample 을 사용한다.
+    """
+    id_set = set(id_apps)
+    ood_set = set(ood_apps)
+    id_pool, ood_pool, null_pool = route_entries_by_app(
+        stage1_entries, ep_to_app, id_set, ood_set
+    )
+
+    test_id = random_subsample(id_pool, test_id_size, seed + 1)
+    marks = {id(e) for e in test_id}
+    id_remaining = [e for e in id_pool if id(e) not in marks]
+
+    train_pool = list(id_remaining)
+    if not exclude_null_app:
+        train_pool.extend(null_pool)
+    train = random_subsample(train_pool, train_size, seed)
+
+    test_ood = random_subsample(ood_pool, test_ood_size, seed + 2)
+
+    info = {
+        "total_rows": len(stage1_entries),
+        "labeled_rows": len(id_pool) + len(ood_pool),
+        "null_rows": len(null_pool),
+        "id_pool_rows": len(id_pool),
+        "ood_pool_rows": len(ood_pool),
+    }
+    return train, test_id, test_ood, info
+
+
+# ── Stage 2 ID/OOD split (AC) ─────────────────────────────────────────────
+def build_stage2_id_ood_split(
+    app_to_rows: dict[str, list[dict]],
+    null_rows: list[dict],
+    id_apps: list[str],
+    ood_apps: list[str],
+    train_size: int,
+    test_id_size: int,
+    test_ood_size: int,
+    seed: int,
+    exclude_null_app: bool = False,
+) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """Stage 2 ID/OOD split — precomputed partition 을 받아 샘플링만 수행."""
     id_pool: list[dict] = []
     for a in id_apps:
-        id_pool.extend(app_to_rows[a])
+        id_pool.extend(app_to_rows.get(a, []))
     ood_pool: list[dict] = []
     for a in ood_apps:
-        ood_pool.extend(app_to_rows[a])
+        ood_pool.extend(app_to_rows.get(a, []))
 
     test_id = stratified_subsample(id_pool, test_id_size, seed + 1)
     marks = {id(e) for e in test_id}
@@ -243,7 +344,7 @@ def build_stage2_id_ood_split(
     test_ood = stratified_subsample(ood_pool, test_ood_size, seed + 2)
 
     info = {
-        "total_rows": len(stage2_entries),
+        "total_rows": sum(len(v) for v in app_to_rows.values()) + len(null_rows),
         "labeled_rows": sum(len(v) for v in app_to_rows.values()),
         "null_rows": len(null_rows),
         "unique_labeled_apps": len(app_to_rows),
@@ -277,7 +378,7 @@ def print_stage2_distribution(entries: list, label: str) -> None:
 # ── CLI ───────────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Train/Test split builder (Stage 1 random + Stage 2 ID/OOD)",
+        description="Train/Test split builder (Stage 1/2 ID/OOD; MC Stage 1 random)",
     )
     parser.add_argument(
         "--dataset", required=True, choices=sorted(DATASET_DIRS),
@@ -292,11 +393,24 @@ def main() -> int:
     parser.add_argument("--skip-stage1", action="store_true")
     parser.add_argument("--skip-stage2", action="store_true")
 
+    # Stage 1
+    parser.add_argument(
+        "--stage1-mode", choices=("auto", "random", "id-ood"), default="auto",
+        help="auto: meta 가 있으면 id-ood, 없으면 random (default).",
+    )
     parser.add_argument(
         "--stage1-ratio", type=float, default=0.95,
-        help="Train ratio for Stage 1 random split (default: 0.95)",
+        help="Stage 1 random mode 전용 train 비율 (default 0.95).",
+    )
+    parser.add_argument("--stage1-train-size", type=int, default=50000)
+    parser.add_argument("--stage1-test-id-size", type=int, default=3000)
+    parser.add_argument("--stage1-test-ood-size", type=int, default=3000)
+    parser.add_argument(
+        "--stage1-exclude-null-app", action="store_true",
+        help="Stage 1 ID/OOD 모드에서 null primary_app 행을 train pool 에 합치지 않음.",
     )
 
+    # Stage 2
     parser.add_argument("--stage2-train-size", type=int, default=50000)
     parser.add_argument("--stage2-test-id-size", type=int, default=3000)
     parser.add_argument("--stage2-test-ood-size", type=int, default=3000)
@@ -321,19 +435,102 @@ def main() -> int:
         print(f"[ERROR] Dataset directory not found: {dataset_dir}", file=sys.stderr)
         return 1
 
+    stage1_path = dataset_dir / "gui-model_stage1.jsonl"
+    stage2_path = dataset_dir / "gui-model_stage2.jsonl"
+    meta_path = dataset_dir / "episodes_meta.jsonl"
+    meta_available = meta_path.exists()
+
+    # Resolve Stage 1 mode (auto → id-ood/random by meta 존재)
+    stage1_mode = args.stage1_mode
+    if stage1_mode == "auto":
+        stage1_mode = "id-ood" if meta_available else "random"
+    if stage1_mode == "id-ood" and not meta_available:
+        print(f"[ERROR] Stage 1 id-ood requires {meta_path} — run "
+              f"extract_{ds_dir_name.lower()}_metadata.py first.", file=sys.stderr)
+        return 1
+
     print(f"Dataset: {args.dataset} ({dataset_dir})")
     print(f"Seed: {args.seed}")
+    print(f"Stage 1 mode: {stage1_mode}")
     print()
 
+    # ── Shared partition (id-ood 모드에서 한 번만 계산) ──────────────────
+    partition_needed = (
+        (not args.skip_stage1 and stage1_mode == "id-ood") or
+        (not args.skip_stage2)
+    )
+    id_apps: list[str] = []
+    ood_apps: list[str] = []
+    app_to_rows_s2: dict[str, list[dict]] = {}
+    null_rows_s2: list[dict] = []
+    ep_to_app: dict[str, str | None] = {}
+    stage2_entries: list[dict] = []
+
+    if partition_needed:
+        if not stage2_path.exists():
+            print(f"[ERROR] App partition requires {stage2_path}.", file=sys.stderr)
+            return 1
+        if not meta_available:
+            print(f"[ERROR] App partition requires {meta_path}.", file=sys.stderr)
+            return 1
+        stage2_entries = load_jsonl(stage2_path)
+        meta_entries = load_jsonl(meta_path)
+        id_apps, ood_apps, app_to_rows_s2, null_rows_s2, ep_to_app = (
+            compute_app_partition(
+                stage2_entries,
+                meta_entries,
+                ood_row_budget=args.stage2_test_ood_size,
+                id_row_budget=args.stage2_test_id_size * 2,
+                seed=args.seed,
+            )
+        )
+        print("=== App Partition (Stage 1 / Stage 2 공유) ===")
+        print(f"  Total Stage 2 rows: {len(stage2_entries)} "
+              f"(labeled {sum(len(v) for v in app_to_rows_s2.values())}, "
+              f"null {len(null_rows_s2)})")
+        print(f"  Unique labeled apps: {len(app_to_rows_s2)}")
+        print(f"  IN-DOMAIN apps:  {len(id_apps)}")
+        print(f"  OUT-OF-DOMAIN apps: {len(ood_apps)}")
+        print()
+
     # ── Stage 1 ───────────────────────────────────────────────────────
-    stage1_path = dataset_dir / "gui-model_stage1.jsonl"
     if args.skip_stage1:
         print("[skip] Stage 1 split (per --skip-stage1)")
     elif not stage1_path.exists():
         print(f"[skip] Stage 1 file not found: {stage1_path}")
-    else:
+    elif stage1_mode == "id-ood":
         stage1_entries = load_jsonl(stage1_path)
-        train, test = split_stage1(stage1_entries, args.stage1_ratio, args.seed)
+        train, test_id, test_ood, info = build_stage1_id_ood_split(
+            stage1_entries,
+            ep_to_app,
+            id_apps,
+            ood_apps,
+            train_size=args.stage1_train_size,
+            test_id_size=args.stage1_test_id_size,
+            test_ood_size=args.stage1_test_ood_size,
+            seed=args.seed,
+            exclude_null_app=args.stage1_exclude_null_app,
+        )
+
+        train_path = dataset_dir / "gui-model_stage1_train.jsonl"
+        test_id_path = dataset_dir / "gui-model_stage1_test_id.jsonl"
+        test_ood_path = dataset_dir / "gui-model_stage1_test_ood.jsonl"
+        write_jsonl(train, train_path)
+        write_jsonl(test_id, test_id_path)
+        write_jsonl(test_ood, test_ood_path)
+
+        print("=== Stage 1 (World Modeling, ID/OOD) ===")
+        print(f"  Total rows: {info['total_rows']} "
+              f"(labeled {info['labeled_rows']}, null {info['null_rows']})")
+        print(f"  IN-DOMAIN pool: {info['id_pool_rows']} rows")
+        print(f"  OUT-OF-DOMAIN pool: {info['ood_pool_rows']} rows")
+        print(f"  → {train_path.name} ({len(train)})")
+        print(f"  → {test_id_path.name} ({len(test_id)})")
+        print(f"  → {test_ood_path.name} ({len(test_ood)})")
+        print()
+    else:  # random
+        stage1_entries = load_jsonl(stage1_path)
+        train, test = split_stage1_random(stage1_entries, args.stage1_ratio, args.seed)
         train_path = dataset_dir / "gui-model_stage1_train.jsonl"
         test_path = dataset_dir / "gui-model_stage1_test.jsonl"
         write_jsonl(train, train_path)
@@ -347,23 +544,14 @@ def main() -> int:
         print()
 
     # ── Stage 2 (ID/OOD) ──────────────────────────────────────────────
-    stage2_path = dataset_dir / "gui-model_stage2.jsonl"
-    meta_path = dataset_dir / "episodes_meta.jsonl"
     if args.skip_stage2:
         print("[skip] Stage 2 split (per --skip-stage2)")
-    elif not stage2_path.exists():
-        print(f"[skip] Stage 2 file not found: {stage2_path}")
-    elif not meta_path.exists():
-        print(f"[ERROR] Stage 2 split requires {meta_path} — run the metadata "
-              f"extractor first (extract_{ds_dir_name.lower()}_metadata.py).",
-              file=sys.stderr)
-        return 1
     else:
-        stage2_entries = load_jsonl(stage2_path)
-        meta_entries = load_jsonl(meta_path)
         train, test_id, test_ood, info = build_stage2_id_ood_split(
-            stage2_entries,
-            meta_entries,
+            app_to_rows_s2,
+            null_rows_s2,
+            id_apps,
+            ood_apps,
             train_size=args.stage2_train_size,
             test_id_size=args.stage2_test_id_size,
             test_ood_size=args.stage2_test_ood_size,
@@ -381,11 +569,8 @@ def main() -> int:
         print("=== Stage 2 (Action Prediction, ID/OOD) ===")
         print(f"  Total rows: {info['total_rows']} "
               f"(labeled {info['labeled_rows']}, null {info['null_rows']})")
-        print(f"  Unique labeled apps: {info['unique_labeled_apps']}")
-        print(f"  IN-DOMAIN apps:  {info['id_apps']} "
-              f"(pool: {info['id_pool_rows']} rows)")
-        print(f"  OUT-OF-DOMAIN apps: {info['ood_apps']} "
-              f"(pool: {info['ood_pool_rows']} rows)")
+        print(f"  IN-DOMAIN pool: {info['id_pool_rows']} rows")
+        print(f"  OUT-OF-DOMAIN pool: {info['ood_pool_rows']} rows")
         print(f"  → {train_path.name} ({len(train)})")
         print(f"  → {test_id_path.name} ({len(test_id)})")
         print(f"  → {test_ood_path.name} ({len(test_ood)})")

@@ -7,22 +7,15 @@ name = "gui-model"
 version = "0.1.0"
 description = "Training and evaluation pipeline for GUI world modeling and action prediction."
 requires-python = ">=3.10,<3.13"
-# 공통 deps — 두 백엔드 (llamafactory / unsloth) 가 모두 필요로 하는 것만.
-# transformers / 서브프로젝트 / deepspeed / vllm / bitsandbytes 는 백엔드별 extras 에서 선언한다.
-# 설치는 env 별로:
-#     conda activate gui-model-llamafactory
+# 공통 deps. transformers / 서브프로젝트 / deepspeed / vllm 등은 extras 에서 선언한다.
+# 설치는 단일 env (`gui-model`) 에서:
+#     conda activate gui-model
+#     pip install -e ./LlamaFactory --no-deps
 #     pip install -e '.[llamafactory]'
-#   또는
-#     conda activate gui-model-unsloth
-#     pip install -e ./LlamaFactory --no-deps   # stage{1,2}_eval.sh 가 LlamaFactory vllm_infer.py 를 호출
-#     pip install -e '.[unsloth]'
-# transformers 버전은 env 별로 다르게 잡는다:
-#   - llamafactory extras: `transformers==5.5.4` (Qwen / LLaVA 에서 검증된 고정값)
-#   - unsloth extras    : `transformers>=5.5.4`  (학습 대상 google/gemma-4-E2B-it /
-#                          google/gemma-4-E4B-it 가 최신 Gemma-4 loader 를 요구)
-# 서브프로젝트 transitive 상한(LF <=5.2.0 / Unsloth <=5.5.0) 과 충돌 시
-# `pip install -e ./LlamaFactory --no-deps` / `pip install -e ./unsloth[huggingface,triton] --no-deps`
-# 로 회피한다. 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다.
+# transformers 는 `==5.5.4` 로 고정한다 (Qwen2/2.5/3-VL 에서 검증된 값).
+# 서브프로젝트 transitive 상한(LF <=5.2.0) 과 충돌하므로
+# `pip install -e ./LlamaFactory --no-deps` 로 회피한다.
+# 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다.
 dependencies = [
   "python-dotenv",
   "pyyaml",
@@ -42,6 +35,6 @@ dependencies = [
 ]
 
 # optional-dependencies 는 setup.py 의 EXTRAS 에서 동적으로 채운다 —
-# local subproject (`./LlamaFactory`, `./unsloth`) 를 PEP 508 `file://` 절대 경로로
+# local subproject (`./LlamaFactory`) 를 PEP 508 `file://` 절대 경로로
 # 끌어와야 해서 선언적 테이블로는 표현할 수 없다. 여기서는 dynamic 만 선언한다.
 dynamic = ["optional-dependencies"]

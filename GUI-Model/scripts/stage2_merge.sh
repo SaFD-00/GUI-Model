@@ -23,11 +23,9 @@
 # 로컬 산출물 (전부 보존):
 #   outputs/{DS}/merged/{MODEL}_stage2_{STAGE2_MODE}_{base|world_model_from_{STAGE1_MODE}}/epoch-{E2}/
 #
-# Backend 분기 (_common.sh::MODEL_BACKEND):
-#   - llamafactory: 임시 merge YAML → llamafactory-cli export
-#     · full:  model_name_or_path=ckpt (adapter 블록 없음)
-#     · lora:  model_name_or_path=base + adapter_name_or_path=ckpt
-#   - unsloth:      scripts/_unsloth_merge.py
+# 임시 merge YAML → llamafactory-cli export
+#   · full:  model_name_or_path=ckpt (adapter 블록 없음)
+#   · lora:  model_name_or_path=base + adapter_name_or_path=ckpt
 #
 # 요구: HF_TOKEN (.env 또는 환경변수)
 
@@ -43,7 +41,6 @@ SKIPPED_COUNT=0
 
 for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
-  BACKEND="$(get_backend "$MODEL_SHORT")"
 
   for DS in "${DATASETS[@]}"; do
     # Stage 1 local merged base (world-model variant 전용). --stage1-epoch 기반.
@@ -67,10 +64,6 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     BASE_VARIANT_KEY="${STAGE2_MODE}_base"
     WM_VARIANT_KEY="${STAGE2_MODE}_world_model_from_${STAGE1_MODE}"
 
-    declare -A VARIANT_BASE_ABS=(
-      [base]="$BASE_MODEL"
-      [world_model]="${S1_WINNER_ABS}"
-    )
     declare -A VARIANT_BASE_LF_REL=(
       [base]="$BASE_MODEL"
       [world_model]="${S1_WINNER_REL}"
@@ -116,16 +109,13 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage2_${ADAPTER_SUFFIX}/epoch-${EPOCH}"
         LOCAL_DIR="$(local_merged_epoch_dir stage2 "$MODEL_SHORT" "$DS" "$ADAPTER_SUFFIX" "$EPOCH")"
         ADAPTER_REL="${TRAIN_DIR_REL}/${CKPT_NAME}"
-        ADAPTER_ABS="$TRAIN_DIR/$CKPT_NAME"
 
         echo "[+] [$MODEL_SHORT][$DS][stage2_${ADAPTER_SUFFIX}] ${CKPT_NAME} (epoch=${EPOCH}) → ${HUB_ID}" >&2
 
-        case "$BACKEND" in
-          llamafactory)
-            TMP_YAML=$(mktemp -t "stage2_merge_${MODEL_SHORT}_${DS}_${VARIANT}_ep${EPOCH}_XXXXXX.yaml")
-            if [ "$STAGE2_MODE" = "full" ]; then
-              # Full FT: checkpoint 자체가 이미 전체 모델 → adapter 없음.
-              cat > "$TMP_YAML" <<EOF
+        TMP_YAML=$(mktemp -t "stage2_merge_${MODEL_SHORT}_${DS}_${VARIANT}_ep${EPOCH}_XXXXXX.yaml")
+        if [ "$STAGE2_MODE" = "full" ]; then
+          # Full FT: checkpoint 자체가 이미 전체 모델 → adapter 없음.
+          cat > "$TMP_YAML" <<EOF
 ### model
 model_name_or_path: ${ADAPTER_REL}
 trust_remote_code: true
@@ -138,8 +128,8 @@ export_device: cpu
 export_legacy_format: false
 export_hub_model_id: ${HUB_ID}
 EOF
-            else
-              cat > "$TMP_YAML" <<EOF
+        else
+          cat > "$TMP_YAML" <<EOF
 ### model
 model_name_or_path: ${VARIANT_BASE_LF_REL[$VARIANT]}
 adapter_name_or_path: ${ADAPTER_REL}
@@ -154,42 +144,14 @@ export_device: cpu
 export_legacy_format: false
 export_hub_model_id: ${HUB_ID}
 EOF
-            fi
-            if ! run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_epoch${EPOCH}" \
-              bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"; then
-              FAILED_COUNT=$((FAILED_COUNT + 1))
-              rm -f "$TMP_YAML"
-              continue
-            fi
-            rm -f "$TMP_YAML"
-            ;;
-
-          unsloth)
-            if [ "$STAGE2_MODE" = "full" ]; then
-              run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_epoch${EPOCH}" \
-                python "$BASE_DIR/scripts/_unsloth_merge.py" \
-                  --mode full \
-                  --checkpoint "$ADAPTER_ABS" \
-                  --export-dir "$LOCAL_DIR" \
-                  --hub-id "$HUB_ID" \
-                || { FAILED_COUNT=$((FAILED_COUNT + 1)); continue; }
-            else
-              run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_epoch${EPOCH}" \
-                python "$BASE_DIR/scripts/_unsloth_merge.py" \
-                  --mode lora \
-                  --base-model "${VARIANT_BASE_ABS[$VARIANT]}" \
-                  --checkpoint "$ADAPTER_ABS" \
-                  --export-dir "$LOCAL_DIR" \
-                  --hub-id "$HUB_ID" \
-                || { FAILED_COUNT=$((FAILED_COUNT + 1)); continue; }
-            fi
-            ;;
-
-          *)
-            echo "[!] Unknown backend '$BACKEND' for model $MODEL_SHORT" >&2
-            exit 2
-            ;;
-        esac
+        fi
+        if ! run_logged "${SCRIPT_TAG}_${MODEL_SHORT}_${DS}_${VARIANT}_epoch${EPOCH}" \
+          bash -c "cd '$LF_ROOT' && llamafactory-cli export '$TMP_YAML'"; then
+          FAILED_COUNT=$((FAILED_COUNT + 1))
+          rm -f "$TMP_YAML"
+          continue
+        fi
+        rm -f "$TMP_YAML"
 
         if [ ! -d "$LOCAL_DIR" ]; then
           echo "[!] [$MODEL_SHORT][$DS][stage2_${ADAPTER_SUFFIX}][epoch${EPOCH}] Expected output dir missing: $LOCAL_DIR" >&2
@@ -200,7 +162,7 @@ EOF
       done
     done
 
-    unset VARIANT_BASE_ABS VARIANT_BASE_LF_REL VARIANT_ADAPTER_SUFFIX
+    unset VARIANT_BASE_LF_REL VARIANT_ADAPTER_SUFFIX
   done
 done
 

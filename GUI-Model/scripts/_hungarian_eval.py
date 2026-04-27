@@ -2,20 +2,29 @@
 """
 Standalone Hungarian/BLEU/ROUGE evaluator for Stage 1 World-Modeling predictions.
 
-Ported from the Stage 1 evaluation section of the project notebooks
-(gui-model-llamafactory.ipynb / gui-model-unsloth.ipynb, Section 5).
-Used by scripts/stage1_eval.sh.
+Ported from the Stage 1 evaluation section of the project notebook
+(gui-model.ipynb, Section 5). Used by scripts/stage1_eval.sh.
 
 Subcommand
 ----------
-score   : 단일 prediction.jsonl 의 평균 메트릭 계산 → hungarian_metrics.json 저장
+score   : prediction.jsonl 의 평균 메트릭 계산 → hungarian_metrics.json 저장.
+          ID/OOD 파일이 주어지면 overall/in_domain/out_of_domain 3-섹션 출력.
 
-Example
--------
+Examples
+--------
+  # 1. Single-pair (MC / MB) — overall 만 기록
   python scripts/_hungarian_eval.py score \\
-      --test  data/AndroidControl/gui-model_stage1_test.jsonl \\
-      --pred  outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/epoch-1/generated_predictions.jsonl \\
-      --output outputs/AC/eval/{MODEL}/stage1_eval/full_world_model/epoch-1/hungarian_metrics.json
+      --test  data/MonkeyCollection/gui-model_stage1_test.jsonl \\
+      --pred  .../generated_predictions.jsonl \\
+      --output .../hungarian_metrics.json
+
+  # 2. ID + OOD 동시 입력 (AC) — overall/in_domain/out_of_domain 3 섹션
+  python scripts/_hungarian_eval.py score \\
+      --test-id   data/AndroidControl/gui-model_stage1_test_id.jsonl \\
+      --pred-id   .../generated_predictions_id.jsonl \\
+      --test-ood  data/AndroidControl/gui-model_stage1_test_ood.jsonl \\
+      --pred-ood  .../generated_predictions_ood.jsonl \\
+      --output    .../hungarian_metrics.json
 """
 from __future__ import annotations
 
@@ -226,12 +235,13 @@ def calc_rouge_l(reference, hypothesis):
 
 
 # ── 전체 평가 (Cell 26 evaluate_stage1_predictions 포팅) ───────────────
-def evaluate_stage1_predictions(test_path, pred_path):
-    with open(test_path, 'r') as f:
-        gt_entries = [json.loads(line) for line in f if line.strip()]
-    with open(pred_path, 'r') as f:
-        pred_entries = [json.loads(line) for line in f if line.strip()]
+def _load_jsonl(path):
+    with open(path, 'r') as f:
+        return [json.loads(line) for line in f if line.strip()]
 
+
+def evaluate_pairs(gt_entries, pred_entries):
+    """Pair-level Hungarian/BLEU/ROUGE 집계. ID/OOD 합산용으로 entries 리스트를 직접 받음."""
     results = []
     for gt_entry, pred_entry in zip(gt_entries, pred_entries):
         gt_text = gt_entry['messages'][-1]['value']
@@ -260,16 +270,66 @@ def evaluate_stage1_predictions(test_path, pred_path):
     }
 
 
+def evaluate_stage1_predictions(test_path, pred_path):
+    """Backward-compatible file-based entry point."""
+    return evaluate_pairs(_load_jsonl(test_path), _load_jsonl(pred_path))
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
+def _print_metrics_row(label, metrics):
+    print(
+        f"[score:{label}] total={metrics['total']}  "
+        f"f1={metrics['avg_hungarian_f1']:.4f}  "
+        f"bleu={metrics['avg_bleu']:.4f}  "
+        f"rouge-l={metrics['avg_rouge_l']:.4f}  "
+        f"em={metrics['exact_match_rate']:.4f}"
+    )
+
+
 def _cmd_score(args):
     _lazy_deps()
-    metrics = evaluate_stage1_predictions(args.test, args.pred)
+
+    split_mode = bool(args.test_id or args.pred_id or args.test_ood or args.pred_ood)
+
+    if split_mode:
+        missing = [
+            name for name, val in [
+                ("--test-id", args.test_id), ("--pred-id", args.pred_id),
+                ("--test-ood", args.test_ood), ("--pred-ood", args.pred_ood),
+            ] if not val
+        ]
+        if missing:
+            print(f"[score] ERROR: split mode needs {missing}", file=sys.stderr)
+            return 2
+
+        gt_id  = _load_jsonl(args.test_id)
+        pr_id  = _load_jsonl(args.pred_id)
+        gt_ood = _load_jsonl(args.test_ood)
+        pr_ood = _load_jsonl(args.pred_ood)
+
+        m_id      = evaluate_pairs(gt_id, pr_id)
+        m_ood     = evaluate_pairs(gt_ood, pr_ood)
+        m_overall = evaluate_pairs(gt_id + gt_ood, pr_id + pr_ood)
+
+        metrics = {
+            "overall": m_overall,
+            "in_domain": m_id,
+            "out_of_domain": m_ood,
+        }
+        _print_metrics_row("overall", m_overall)
+        _print_metrics_row("in_domain", m_id)
+        _print_metrics_row("out_of_domain", m_ood)
+    else:
+        if not (args.test and args.pred):
+            print("[score] ERROR: --test and --pred required in single-pair mode",
+                  file=sys.stderr)
+            return 2
+        metrics = evaluate_stage1_predictions(args.test, args.pred)
+        _print_metrics_row("all", metrics)
+
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, 'w', encoding='utf-8') as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
-    print(f"[score] pred={args.pred}")
-    print(f"[score] total={metrics['total']}  f1={metrics['avg_hungarian_f1']:.4f}  "
-          f"bleu={metrics['avg_bleu']:.4f}  rouge-l={metrics['avg_rouge_l']:.4f}")
     print(f"[score] saved: {args.output}")
     return 0
 
@@ -278,9 +338,17 @@ def main():
     parser = argparse.ArgumentParser(description="Stage 1 Hungarian/BLEU/ROUGE evaluator")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_score = sub.add_parser("score", help="Compute metrics for a single prediction jsonl")
-    p_score.add_argument("--test", required=True, help="Ground-truth test jsonl (with messages/images)")
-    p_score.add_argument("--pred", required=True, help="Model prediction jsonl (generated_predictions.jsonl)")
+    p_score = sub.add_parser(
+        "score",
+        help="Compute metrics. Single-pair (--test/--pred) or "
+             "ID/OOD split (--test-id/--pred-id/--test-ood/--pred-ood).",
+    )
+    p_score.add_argument("--test", default=None, help="Single-pair: GT test jsonl")
+    p_score.add_argument("--pred", default=None, help="Single-pair: prediction jsonl")
+    p_score.add_argument("--test-id",  default=None, dest="test_id",  help="ID/OOD: in-domain GT")
+    p_score.add_argument("--pred-id",  default=None, dest="pred_id",  help="ID/OOD: in-domain prediction")
+    p_score.add_argument("--test-ood", default=None, dest="test_ood", help="ID/OOD: out-of-domain GT")
+    p_score.add_argument("--pred-ood", default=None, dest="pred_ood", help="ID/OOD: out-of-domain prediction")
     p_score.add_argument("--output", required=True, help="Output metrics.json path")
     p_score.set_defaults(func=_cmd_score)
 
