@@ -10,12 +10,11 @@ requires-python = ">=3.10,<3.13"
 # 공통 deps. transformers / 서브프로젝트 / deepspeed / vllm 등은 extras 에서 선언한다.
 # 설치는 단일 env (`gui-model`) 에서:
 #     conda activate gui-model
-#     pip install -e ./LlamaFactory --no-deps
+#     pip install -e ./LlamaFactory
 #     pip install -e '.[llamafactory]'
-# transformers 는 `==5.5.4` 로 고정한다 (Qwen2/2.5/3-VL 에서 검증된 값).
-# 서브프로젝트 transitive 상한(LF <=5.2.0) 과 충돌하므로
-# `pip install -e ./LlamaFactory --no-deps` 로 회피한다.
-# 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다.
+# transformers 는 `>=4.56.0,<5` 로 고정한다 (vllm 0.11.2 의 `transformers<5` 제약과
+# LlamaFactory 서브프로젝트 pin `<=5.2.0` 의 교집합). 두 pin 이 겹치므로 `--no-deps`
+# 우회는 더 이상 필요 없다. 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다.
 dependencies = [
   "python-dotenv",
   "pyyaml",

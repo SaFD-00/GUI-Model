@@ -2,12 +2,12 @@ from setuptools import setup
 
 
 # 설치는 단일 conda env (`gui-model`) 에서 두 단계로 한다.
-# 서브프로젝트 (`./LlamaFactory`) 의 transitive 상한 (LF `transformers<=5.2.0`) 이
-# 우리 extras 의 `transformers==5.5.4` 와 충돌하므로 pip resolver 한 번으로는 해결되지 않는다.
-# 따라서 서브프로젝트는 `--no-deps` 로 먼저 editable 설치한 뒤, 루트 extras 를 올린다.
+# 서브프로젝트 (`./LlamaFactory`) 의 transitive 상한 (LF `transformers<=5.2.0`) 과
+# 우리 extras 의 `transformers>=4.56.0,<5` 는 4.56–4.57.x 구간에서 겹치므로 한 번에
+# 풀린다. 두 단계 분리는 historical 순서 보존용이며 `--no-deps` 우회는 더 이상 필요 없다.
 #
 #   conda activate gui-model
-#   PIP_USER=0 pip install --no-user -e ./LlamaFactory --no-deps
+#   PIP_USER=0 pip install --no-user -e ./LlamaFactory
 #   PIP_USER=0 pip install --no-user -e '.[llamafactory]'
 #
 # 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다 — 업스트림 sync 를 깨뜨린다.
@@ -38,16 +38,16 @@ COMMON = [
 ]
 
 # LlamaFactory 전용 (Qwen2/2.5/3-VL 계열).
-# `llamafactory` 서브프로젝트 자체는 미리 `pip install -e ./LlamaFactory --no-deps` 로
-# 설치한다 — 여기서 `file://` ref 로 끌어오면 서브프로젝트의 transitive 상한이 pip resolver
-# 에 노출돼 `transformers==5.5.4` 와 충돌한다.
+# `llamafactory` 서브프로젝트는 별도 단계로 `pip install -e ./LlamaFactory` 로 먼저 깐다.
 LLAMAFACTORY = [
-    # 최상위 pin. LlamaFactory 서브프로젝트의 transitive 상한(<=5.2.0) 을 덮어쓴다.
-    "transformers==5.5.4",
+    # vllm 0.11.2 가 `transformers<5,>=4.56.0` 을 강제하므로 5.x 는 사용 불가.
+    # LlamaFactory 서브프로젝트 pin (`>=4.55.0,<=5.2.0,!=4.57.0`) 과의 교집합 = 4.56–4.57.x.
+    "transformers>=4.56.0,<5",
     "deepspeed>=0.10.0,<=0.18.4",
-    # transformers 5.5.x 의 새 `rope_parameters.rope_type` 필드와 레거시 `type=mrope` 가
-    # 동시 존재하는 config 를 vllm<=0.11.0 의 pydantic validator 가 거부하므로 상한 해제.
-    "vllm>=0.11.0",
+    # vllm 0.11.0 은 Qwen2.5-VL config 의 `rope_parameters.rope_type` (modern) +
+    # `type=mrope` (legacy) 동시 존재 케이스에서 pydantic ValidationError 를 던지므로
+    # 0.11.2 이상 사용. 단 `transformers<5` 제약 때문에 0.11.x 대 안에서만 검증됨.
+    "vllm>=0.11.2",
     # LlamaFactory scripts/vllm_infer.py 가 비디오 처리용으로 `import av`, CLI 진입점으로 `import fire`,
     # HF 데이터셋 로더로 `from datasets import load_dataset` 를 한다.
     "av",
