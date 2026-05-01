@@ -15,8 +15,8 @@ gui-model       gui-model.ipynb     llamafactory-cli train/export    Qwen2-VL ×
                                           stage{1,2}_{full,lora}
 ```
 
-- `pip install -e '.[llamafactory]'` + `pip install -e ./LlamaFactory --no-deps`
-- `transformers==5.5.4` 로 고정 (Qwen2/2.5/3-VL 검증값). 서브프로젝트 (`./LlamaFactory`) 의 transitive 상한 (`<=5.2.0`) 과 충돌하므로 `--no-deps` 로 회피.
+- `pip install -e ./LlamaFactory && pip install -e '.[llamafactory]'`
+- `transformers>=4.56.0,<5` 로 고정 (vllm 0.11.2 의 `transformers<5` 제약 + LlamaFactory 서브프로젝트 `<=5.2.0` 와의 4.56–4.57.x 교집합). 별도 회피 단계 불필요.
 - `deepspeed`, `vllm`, `bitsandbytes` 모두 단일 env 에 설치된다.
 
 평가 파이프라인 (`scripts/stage{1,2}_eval.sh`) 은 `vllm_infer.py` 가 HF 표준 safetensors / PEFT adapter 를 그대로 로드한다.
@@ -26,7 +26,7 @@ gui-model       gui-model.ipynb     llamafactory-cli train/export    Qwen2-VL ×
 ### 핵심 엔트리포인트
 
 - [`gui-model.ipynb`](./gui-model.ipynb) — env `gui-model`, 8개 Qwen 모델
-  - 환경 설치: `pip install -e ./LlamaFactory --no-deps && pip install -e '.[llamafactory]'`
+  - 환경 설치: `pip install -e ./LlamaFactory && pip install -e '.[llamafactory]'`
   - 모델 config (`_MODEL_CONFIG`, 8 models) + 모델 family image-pixel config (`MODEL_FAMILY_CONFIG`) + 데이터셋 config (`_DATASET_CONFIG`) 정의
   - Stage 1/2 YAML 자동 생성
   - `LlamaFactory/data/dataset_info.json` 등록
@@ -299,7 +299,7 @@ Stage 2 스크립트는 `--stage2-mode {full|lora}` (기본 lora) 로 학습 방
 ### Shell script CLI
 
 ```bash
-# 학습/merge — --dataset 는 {AC|MC|all}. MB 는 평가 전용이라 거절.
+# 학습/merge — --dataset 는 {AC|AC_2|MC|all}. MB 는 평가 전용이라 거절.
 bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset AC                        # full (default)
 bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset AC                        # 전 epoch push
 bash scripts/stage1_train.sh --model qwen3-vl-4b --dataset MC --stage1-mode lora
@@ -319,7 +319,7 @@ bash scripts/stage2_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datas
 플래그:
 
 **학습/merge (`stage{1,2}_{train,merge}.sh`)**:
-- `--dataset DS`: `AC|MC|all` (기본 all=AC,MC). **MB 는 거절됨**.
+- `--dataset DS`: `AC|AC_2|MC|all` (기본 all=AC,AC_2,MC). **MB 는 거절됨**.
 - `--stage1-mode {full|lora}` (기본 full)
 - `--stage2-mode {full|lora}` (기본 lora, stage2 스크립트 전용)
 - `--stage1-epoch N` (stage2 world-model variant 에서 상류 epoch 지정)
@@ -413,7 +413,7 @@ GUI-Model/outputs/{DS}/
 
 - baseline: zero-shot (variant `base`)
 - 변형: `{full|lora}_base`, `{full|lora}_world_model` (world-model 은 `--stage1-epoch` 로 상류 epoch 지정)
-- 평가 파일: `gui-model_stage2_test_id.jsonl` + `gui-model_stage2_test_ood.jsonl` (AC/MB 모두 `split_data.py` 로 생성)
+- 평가 파일: EVAL_DS=AC 는 `gui-model_stage2_test_{id,ood}.jsonl` (`split_data.py` 산출, 3 섹션). EVAL_DS=AC_2 는 사전 분할된 `gui-model_stage2_test.jsonl` 단일 파일 (overall 1 섹션). EVAL_DS=MB 는 `gui-model_stage2.jsonl` 단일 파일 (split 없음, overall 1 섹션).
 - metric (3 섹션): `action_metrics.json` 내부 `overall` / `in_domain` / `out_of_domain` 각각에 `step_accuracy`, `macro_step_accuracy`, `parse_rate`, `type_accuracy`, `cond_{index,dir,app,text}_acc`, `per_type[]` 포함.
 
 #### `action_metrics.json` 스키마 예시
@@ -491,7 +491,7 @@ Reference baselines (해석용):
 - merge/eval 스크립트는 `.env` 또는 환경변수의 `HF_TOKEN` (HF Hub push/pull 용) 과 Python `pyyaml` 을 전제로 한다.
 - shell automation 은 bash 4+ 환경을 요구한다.
 - 모델 추가 시 `gui-model.ipynb` 의 `_MODEL_CONFIG` 와 `_common.sh` `MODEL_ID`/`MODEL_TEMPLATE`/`ALL_MODELS` 를 동시에 동기화해야 한다. 새 family 라면 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에 image budget 도 추가한다.
-- **transformers 버전**: `pyproject.toml` 와 `setup.py::EXTRAS["llamafactory"]` 에서 `transformers==5.5.4` 로 고정. 서브프로젝트(`./LlamaFactory` `<=5.2.0`) transitive 상한과 충돌 시 `pip install -e ./LlamaFactory --no-deps` 로 회피한다. 서브프로젝트 `pyproject.toml` 은 수정하지 않는다.
-- trl 0.24 / transformers 5.x API 매핑: `SFTConfig(max_length=...)`, `SFTTrainer(processing_class=...)` 를 사용한다. 구버전 키(`max_seq_length`, `tokenizer=`, `overwrite_output_dir`) 는 `TypeError` 를 낸다.
+- **transformers 버전**: `pyproject.toml` 와 `setup.py::EXTRAS["llamafactory"]` 에서 `transformers>=4.56.0,<5` 로 고정 (vllm 0.11.2 `<5` 제약 + LlamaFactory `<=5.2.0` 교집합 = 4.56–4.57.x). 두 파일을 함께 변경한다. 서브프로젝트 `pyproject.toml` 은 수정하지 않는다.
+- trl 0.24 / transformers 4.56+ API 매핑: `SFTConfig(max_length=...)`, `SFTTrainer(processing_class=...)` 를 사용한다. 구버전 키(`max_seq_length`, `tokenizer=`, `overwrite_output_dir`) 는 `TypeError` 를 낸다.
   - `gradient_checkpointing` 은 모델 로드 단계에서만 적용하며 `SFTConfig` 에는 전달하지 않는다 (이중 적용 방지).
   - Full FT 분기에서 `freeze_vision_tower: true` 면 `vision_tower|vision_model|visual|image_encoder` 키워드를 포함한 named parameter 의 `requires_grad=False` 처리 후 frozen 텐서 수/파라미터 수를 stderr 로 출력한다.

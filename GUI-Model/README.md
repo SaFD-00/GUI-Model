@@ -71,13 +71,13 @@ GUI-Model/
 
 ## 환경 설치
 
-단일 conda env (`gui-model`) 에 `pyproject.toml` 의 공통 deps + `setup.py::EXTRAS["llamafactory"]` 를 설치한다. 서브프로젝트 (`./LlamaFactory`) 의 `transformers<=5.2.0` transitive 상한이 우리의 `transformers==5.5.4` 와 충돌하므로, 서브프로젝트는 `--no-deps` 로 먼저 editable 설치한 뒤 루트 extras 를 올린다.
+단일 conda env (`gui-model`) 에 `pyproject.toml` 의 공통 deps + `setup.py::EXTRAS["llamafactory"]` (`transformers>=4.56.0,<5` 등) 를 설치한다. 서브프로젝트 (`./LlamaFactory`) 의 transitive 상한 (`transformers<=5.2.0`) 과 우리의 `transformers>=4.56.0,<5` 는 4.56–4.57.x 구간에서 겹치므로 한 번에 풀린다. `--no-deps` 회피 단계는 더 이상 필요 없다.
 
 ```bash
 conda create -n gui-model python=3.12 -y
 conda activate gui-model
 cd /path/to/GUI-Model
-PIP_USER=0 pip install --no-user -e ./LlamaFactory --no-deps
+PIP_USER=0 pip install --no-user -e ./LlamaFactory
 PIP_USER=0 pip install --no-user -e '.[llamafactory]'
 ```
 
@@ -110,7 +110,7 @@ deepspeed 가 기본 포함되며, `llamafactory-cli train` / `llamafactory-cli 
 - `PIP_USER=0` / `--no-user` 는 root 유저 + `PYTHONUSERBASE` 조합에서 pip 가 deps 를 user-site (예: `/root/.local/workspace/python-packages`) 로 흘려 conda env `bin/` 에 `accelerate` 같은 CLI entry point 가 만들어지지 않는 사고를 막는다.
 - Python 3.10 이상, 3.13 미만
 - bash 4+ (`scripts/_common.sh` 기준)
-- `transformers==5.5.4` 로 고정 (Qwen2/2.5/3-VL 검증값). 서브프로젝트 transitive 상한과 충돌하면 `pip install -e ./LlamaFactory --no-deps` 로 회피한다.
+- `transformers>=4.56.0,<5` 로 고정 (vllm 0.11.2 의 `transformers<5` 제약 + LlamaFactory 서브프로젝트 `<=5.2.0` 와의 4.56–4.57.x 교집합). 변경 시 `setup.py::EXTRAS["llamafactory"]` 와 `pyproject.toml` 양쪽을 함께 갱신한다.
 - merge/export 단계에서는 `HF_TOKEN` (HF Hub push 용) 를 `.env` 에 둔다.
 
 ### PATH / user-site 정책
@@ -300,7 +300,7 @@ bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
 **평가 스크립트 (`stage{1,2}_eval.sh`)**: 학습 DS 와 평가 DS 를 분리.
 - `--model MODEL`
 - `--train-dataset DS`: `AC` | `MC` (필수)
-- `--eval-datasets LIST`: 콤마 구분. 허용값 `AC,MC,MB`.
+- `--eval-datasets LIST`: 콤마 구분. 허용값 `AC,AC_2,MC,MB`.
 - `--stage1-mode`, `--stage2-mode`, `--stage1-epoch` (상동)
 - `--epochs LIST`: 콤마 구분 정수 (기본 `1,2,3`).
 - `--variants LIST`: 콤마 구분 평가 변형 목록.
