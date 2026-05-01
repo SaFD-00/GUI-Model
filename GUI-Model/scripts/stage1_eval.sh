@@ -178,10 +178,11 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
       full_world_model|lora_world_model)
         MODE="${VARIANT%_world_model}"    # full | lora
+        VARIANT_PATH="${VARIANT/world_model/world-model}"
         echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT] Sweeping epochs: ${EPOCHS[*]}" >&2
         for EPOCH in "${EPOCHS[@]}"; do
           HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$TRAIN_DS" "$MODE" "$EPOCH")
-          OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT}/epoch-${EPOCH}"
+          OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT_PATH}/epoch-${EPOCH}"
           for EVAL_DS in "${EVAL_DATASETS[@]}"; do
             run_variant_epoch_eval_on "$MODEL_SHORT" "$TRAIN_DS" "$VARIANT" "$EPOCH" "$HUB_ID" \
               "$OUT_REL_BASE" "$TEMPLATE" "$EVAL_DS"

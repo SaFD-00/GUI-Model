@@ -17,7 +17,9 @@
 #   examples/custom/GUI-Model-${DS}/stage2_{MODE}/{MODEL}_{VARIANT}.yaml
 #
 # world-model variant 는 노트북이 생성한 YAML 의 model_name_or_path 를 런타임에
-# Stage 1 local merged 경로로 sed 치환한다 (임시 YAML).
+# Stage 1 local merged 경로로 sed 치환한다 (임시 YAML). 또한 output_dir 의
+# `__STAGE1_EPOCH__` 플레이스홀더를 `$STAGE1_EPOCH` 값으로 치환하여 stage1
+# upstream epoch 별 분리 저장 (`..._world-model_from_${MODE1}-ep${STAGE1_EPOCH}`).
 #
 # NPROC_PER_NODE 은 .env 에서 관리 (기본값 2).
 
@@ -38,7 +40,7 @@ resolve_stage1_base() {
     echo "    먼저 stage1_train.sh + stage1_merge.sh 를 --stage1-mode ${mode} 로 돌리고, epoch-${epoch} 가 로컬에 있는지 확인하세요." >&2
     return 1
   fi
-  echo "../outputs/${ds}/merged/${model_short}_stage1_${mode}/epoch-${epoch}"
+  echo "../outputs/${ds}/merged/${model_short}_stage1_${mode}_world-model/epoch-${epoch}"
 }
 
 for MODEL_SHORT in "${MODELS[@]}"; do
@@ -62,7 +64,8 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       if [[ "$VARIANT" == world-model-* ]]; then
         S1_BASE=$(resolve_stage1_base "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$STAGE1_EPOCH") || exit 1
         TMP_YAML=$(mktemp -t "stage2_train_${MODEL_SHORT}_${DS}_${VARIANT}_${STAGE2_MODE}_XXXXXX.yaml")
-        sed "0,/^model_name_or_path:/{s|^model_name_or_path:.*|model_name_or_path: ${S1_BASE}|}" \
+        sed -e "0,/^model_name_or_path:/{s|^model_name_or_path:.*|model_name_or_path: ${S1_BASE}|}" \
+            -e "s|__STAGE1_EPOCH__|${STAGE1_EPOCH}|g" \
           "$YAML_ABS" > "$TMP_YAML"
         LINK_REL="examples/custom/GUI-Model-${DS}/stage2_${STAGE2_MODE}/.${MODEL_SHORT}_${VARIANT}.runtime.yaml"
         ln -sfn "$TMP_YAML" "$LF_ROOT/$LINK_REL"

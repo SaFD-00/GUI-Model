@@ -3,13 +3,13 @@
 #
 # Variants:
 #   base_${STAGE2_MODE}          - Base model + (full|lora) Stage 2 checkpoint
-#   world_model_from_${STAGE1_MODE}_${STAGE2_MODE}
+#   world-model_from_${STAGE1_MODE}-ep${STAGE1_EPOCH}_${STAGE2_MODE}
 #                                - Stage 1 local merged (epoch = --stage1-epoch) +
 #                                  (full|lora) Stage 2 checkpoint
 #
 # Flags (all required):
 #   --stage1-mode {full|lora}    Stage 1 상류 모델 종류 (world-model variant 전용)
-#   --stage1-epoch N             Stage 1 local merged/{MODEL}_stage1_{MODE}/epoch-N 참조
+#   --stage1-epoch N             Stage 1 local merged/{MODEL}_stage1_{MODE}_world-model/epoch-N
 #                                world-model variant 전용. base variant 에서는 무시.
 #   --stage2-mode {full|lora}    Stage 2 학습 방식 (adapter 디렉토리 + HF suffix 결정)
 #   --model / --dataset          (공통)
@@ -21,7 +21,7 @@
 #     SaFD-00/{short}-{slug}world-model-stage1-{STAGE1_MODE}-epoch{E1}-stage2-{STAGE2_MODE}-epoch{E2}
 #
 # 로컬 산출물 (전부 보존):
-#   outputs/{DS}/merged/{MODEL}_stage2_{STAGE2_MODE}_{base|world_model_from_{STAGE1_MODE}}/epoch-{E2}/
+#   outputs/{DS}/merged/{MODEL}_stage2_{STAGE2_MODE}_{base|world-model_from_{STAGE1_MODE}-ep{E1}}/epoch-{E2}/
 #
 # 임시 merge YAML → llamafactory-cli export
 #   · full:  model_name_or_path=ckpt (adapter 블록 없음)
@@ -49,7 +49,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     S1_WINNER_REL=""
     if [[ -n "$STAGE1_EPOCH" ]]; then
       S1_WINNER_ABS="$(local_merged_epoch_dir stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$STAGE1_EPOCH")"
-      S1_WINNER_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_${STAGE1_MODE}/epoch-${STAGE1_EPOCH}"
+      S1_WINNER_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_${STAGE1_MODE}_world-model/epoch-${STAGE1_EPOCH}"
       if [ -d "$S1_WINNER_ABS" ]; then
         S1_WINNER_AVAILABLE=1
       else
@@ -62,7 +62,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
     # variant key (adapter 디렉토리 suffix 로 사용)
     BASE_VARIANT_KEY="${STAGE2_MODE}_base"
-    WM_VARIANT_KEY="${STAGE2_MODE}_world_model_from_${STAGE1_MODE}"
+    WM_VARIANT_KEY="${STAGE2_MODE}_world-model_from_${STAGE1_MODE}-ep${STAGE1_EPOCH}"
 
     declare -A VARIANT_BASE_LF_REL=(
       [base]="$BASE_MODEL"

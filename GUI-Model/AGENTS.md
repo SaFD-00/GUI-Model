@@ -51,7 +51,7 @@
   - **EVAL_DS=AC_2**: 단일 파일 `gui-model_stage1_test.jsonl` (사전 분할) → single-pair overall.
   - **EVAL_DS=MC**: 단일 파일 `gui-model_stage1_test.jsonl` (random split) → single-pair overall.
   - **EVAL_DS=MB**: 단일 파일 `gui-model_stage1.jsonl` (벤치마크 단일 파일) → single-pair overall.
-- 산출 경로: `outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{variant}[/epoch-{E}]/on-{EVAL_DS}/`. 어떤 epoch 을 쓸지는 사용자가 결과를 보고 수동 결정 (자동 winner 선정 없음).
+- 산출 경로: `outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{variant_path}[/epoch-{E}]/on-{EVAL_DS}/` (variant_path 는 CLI VARIANT 의 `world_model` → `world-model` 치환: 예 `full_world-model`, `lora_world-model`). 어떤 epoch 을 쓸지는 사용자가 결과를 보고 수동 결정 (자동 winner 선정 없음).
 - 재실행 시 marker (`hungarian_metrics.json`) 존재 unit 은 skip. 정본은 노트북 Section 5. 시각 비교는 [`scripts/eval_viewer.py`](./scripts/eval_viewer.py).
 - **without_open_app 자동 산출**: 각 `(variant, EVAL_DS)` 마다 정규 score 직후 추론 재실행 없이 `_hungarian_eval.py score --exclude-action open_app --filtered-test-dir data/{DATADIR} --filtered-pred-dir on-{EVAL_DS}-without-open_app/` 가 한 번 더 호출되어 GT `## Action.type=="open_app"` 행을 양쪽에서 동시 drop 한 메트릭 + 필터된 jsonl + `predict_results.json` 을 sibling `on-{EVAL_DS}-without-open_app/` 에 idempotent 저장. 정규 산출과 동일한 파일 구조 (섹션 수, `_id` / `_ood` 분리) 미러링. 필터 test JSONL 은 `data/{DATADIR}/{prefix}_stage1{,_test{_id,_ood}}_without_open_app.jsonl` 로 영구 저장 (idempotent 재사용). skip marker 별도라 정규/필터 각각 독립 idempotent.
 
@@ -63,8 +63,8 @@
   - **EVAL_DS=AC_2**: 단일 파일 `gui-model_stage2_test.jsonl` 1 회 추론 → single-pair `overall` 1 섹션.
   - **EVAL_DS=MB**: 단일 파일 `gui-model_stage2.jsonl` 1 회 추론 → single-pair `overall` 1 섹션.
 - HF 네이밍: base variant `SaFD-00/{short}-{slug}base-stage2-{MODE2}-epoch{E2}`, world-model variant `SaFD-00/{short}-{slug}world-model-stage1-{MODE1}-epoch{E1}-stage2-{MODE2}-epoch{E2}`.
-- 산출 경로: `outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant}[/epoch-{E2}]/on-{EVAL_DS}/`.
-- Stage 2 world-model train/merge 는 `--stage1-epoch N` 으로 지정된 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE1}/epoch-${N}/` 를 base 로 사용.
+- 산출 경로: `outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant_path}[_from_{M1}-ep{E1}][/epoch-{E2}]/on-{EVAL_DS}/` (variant_path 는 CLI VARIANT 의 `world_model` → `world-model` 치환).
+- Stage 2 world-model train/merge 는 `--stage1-epoch N` 으로 지정된 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE1}_world-model/epoch-${N}/` 를 base 로 사용. 학습 결과는 `outputs/{DS}/{adapters,merged}/{MODEL}_stage2_${MODE2}_world-model_from_${MODE1}-ep${N}/` 에 stage1 epoch 별 분리 저장 (stage2_train.sh 가 YAML `__STAGE1_EPOCH__` 플레이스홀더 sed 치환).
 - 재실행 시 marker (`action_metrics.json`) 존재 unit 은 variant × EVAL_DS 조합 별로 독립 skip.
 - 회귀 테스트: [`tests/test_action_eval.py`](./tests/test_action_eval.py) 48 케이스. 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6.
 
@@ -79,7 +79,7 @@
 
 - `LlamaFactory/` 내부 파일은 마지막 수단으로만 수정한다. 가능하면 노트북, local shell script, custom YAML (`LlamaFactory/examples/custom/...`), 평가 helper 로 해결.
 - transformers 버전을 바꿀 때는 [`pyproject.toml`](./pyproject.toml) 의 주석과 [`setup.py`](./setup.py) `EXTRAS["llamafactory"]` 의 transformers pin 을 함께 수정한다. 현재 `>=4.56.0,<4.57` 로 고정. 서브프로젝트 (`LlamaFactory/pyproject.toml`) 는 건드리지 않는다.
-- 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `AC` / `AC_2` / `MC`, `{category}` 는 `adapters | eval | merged`. `adapters/` 는 flat 네이밍 `{MODEL}_{detail}/` (Stage2 는 `{MODEL}_stage2_{MODE2}_{base|world_model_from_{MODE1}}/`). `merged/` 는 `{MODEL}_{detail}/epoch-{E}/` 로 epoch 별 서브디렉토리 분리. `eval/` 은 `{MODEL}/stage{1,2}_eval/.../epoch-{E}/` 중첩. `BEST_CHECKPOINT` 파일은 더 이상 생성되지 않는다.
+- 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `AC` / `AC_2` / `MC`, `{category}` 는 `adapters | eval | merged`. `adapters/` 는 flat 네이밍 `{MODEL}_{detail}/` (Stage1: `{MODEL}_stage1_{MODE}_world-model/`, Stage2: `{MODEL}_stage2_{MODE2}_{base|world-model_from_{MODE1}-ep{E1}}/`). `merged/` 는 `{MODEL}_{detail}/epoch-{E}/` 로 epoch 별 서브디렉토리 분리. `eval/` 은 `{MODEL}/stage{1,2}_eval/.../epoch-{E}/` 중첩. `BEST_CHECKPOINT` 파일은 더 이상 생성되지 않는다.
 - `data/` 아래 실제 디렉토리명은 `AndroidControl`, `AndroidControl_2`, `MonkeyCollection`, `MobiBench` (평가 전용). MobiBench 는 `gui-model_stage{1,2}.jsonl` 두 단일 파일만. AndroidControl_2 는 `images/` 디렉토리 없이 AC 의 `images/` 를 JSONL `images` 필드로 참조 (canonical prefix `AndroidControl/images/...`).
 - eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.
 - **MobiBench dataset_info 자동 보장**: `_common.sh::ensure_eval_only_dataset_info()` 가 source 시점에 `dataset_info.json` 에 `GUI-Model-MB_stage{1,2}` 단일 파일 엔트리를 idempotent 하게 추가한다.

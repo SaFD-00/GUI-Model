@@ -163,11 +163,12 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           exit 2
         fi
         MODE2="${VARIANT%_world_model}"
+        VARIANT_PATH="${VARIANT/world_model/world-model}"
         echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT] stage1=${STAGE1_MODE}ep${STAGE1_EPOCH} stage2 epochs: ${EPOCHS[*]}" >&2
         for EPOCH in "${EPOCHS[@]}"; do
           HUB_ID=$(hf_repo_id_stage2_world_model "$MODEL_SHORT" "$TRAIN_DS" \
             "$STAGE1_MODE" "$STAGE1_EPOCH" "$MODE2" "$EPOCH")
-          OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT}_from_${STAGE1_MODE}_ep${STAGE1_EPOCH}/epoch-${EPOCH}"
+          OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT_PATH}_from_${STAGE1_MODE}-ep${STAGE1_EPOCH}/epoch-${EPOCH}"
           for EVAL_DS in "${EVAL_DATASETS[@]}"; do
             run_variant_epoch_eval_on "$MODEL_SHORT" "$TRAIN_DS" "$VARIANT" "$EPOCH" "$HUB_ID" \
               "$OUT_REL_BASE" "$TEMPLATE" "$EVAL_DS"

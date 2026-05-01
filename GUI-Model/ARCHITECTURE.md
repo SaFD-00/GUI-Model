@@ -258,14 +258,14 @@ data/
   - 실행: `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=${NPROC_PER_NODE}` + `llamafactory-cli train`
   - full YAML 은 `finetuning_type: full`, lora YAML 은 `finetuning_type: lora` + `lora_rank/alpha/target/dropout` 블록 포함
 - **`scripts/stage1_merge.sh`**
-  - `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}/checkpoint-*` 전수 loop. 각 ckpt 에서 `trainer_state.json.epoch` 을 `int(round(...))` 로 추출
+  - `outputs/{DS}/adapters/{MODEL}_stage1_${MODE}_world-model/checkpoint-*` 전수 loop. 각 ckpt 에서 `trainer_state.json.epoch` 을 `int(round(...))` 로 추출
   - 임시 merge YAML 생성 → `llamafactory-cli export`
-  - 산출 (epoch 별): `outputs/{DS}/merged/{MODEL}_stage1_${MODE}/epoch-{E}/` + HF Hub push `SaFD-00/...stage1-{MODE}-world-model-epoch{E}` (헬퍼: `_common.sh::hf_repo_id_stage1`)
+  - 산출 (epoch 별): `outputs/{DS}/merged/{MODEL}_stage1_${MODE}_world-model/epoch-{E}/` + HF Hub push `SaFD-00/...stage1-{MODE}-world-model-epoch{E}` (헬퍼: `_common.sh::hf_repo_id_stage1`)
   - **Skip 동작**: checkpoint 가 없는 슬롯은 `[WARN]` SKIP, 다음 슬롯 진행. 요약에 `merged / skipped / failed` 카운트.
 - **`scripts/stage1_eval.sh`**
   - Phase A (baseline zero-shot) + Phase B (`--epochs` 정수 리스트로 **HF Hub merged repo sweep**, 기본 `1,2,3`)
   - `vllm_infer.py --model_name_or_path <HF repo id>` 만 전달 (merged 이므로 adapter 인자 / `max_lora_rank` 불필요)
-  - 결과: `outputs/{DS}/eval/{MODEL}/stage1_eval/{base, ${MODE}_world_model/epoch-{E}}/{on-{EVAL_DS}, on-{EVAL_DS}-without-open_app}/`
+  - 결과: `outputs/{DS}/eval/{MODEL}/stage1_eval/{base, ${MODE}_world-model/epoch-{E}}/{on-{EVAL_DS}, on-{EVAL_DS}-without-open_app}/`
   - 각 sweep 결과에 `_hungarian_eval.py score` → `hungarian_metrics.json` 저장
   - **without_open_app 자동 산출**: 정규 score 직후 추론 재실행 없이 `_hungarian_eval.py score --exclude-action open_app --filtered-test-dir data/{DATADIR} --filtered-pred-dir on-{EVAL_DS}-without-open_app/` 가 한 번 더 호출되어 GT `open_app` 행을 양쪽에서 동시 drop 한 메트릭 + 필터된 jsonl + `predict_results.json` 을 sibling 디렉토리에 idempotent 저장. 필터 test JSONL 은 `data/{DATADIR}/{prefix}_stage1{,_test{_id,_ood}}_without_open_app.jsonl` 에 영구 보존.
   - **재실행 시 skip**: marker `hungarian_metrics.json` 존재 unit 은 정규/필터 각각 독립 skip.
@@ -278,21 +278,21 @@ data/
 - **`scripts/stage2_train.sh`**
   - YAML: `examples/custom/GUI-Model-${DS}/stage2_${STAGE2_MODE}/{MODEL}_{base,world-model-full,world-model-lora}.yaml` (Cell 10 자동 생성)
   - **`FORCE_TORCHRUN` 미사용** (Stage 1 과 의도적으로 다름)
-  - world-model variant: `--stage1-epoch N` 으로 지정된 local `merged/{M}_stage1_${STAGE1_MODE}/epoch-${N}/` 을 base 로 사용 (YAML `model_name_or_path` 런타임 sed 치환). 디렉토리 미존재 시 hard-fail.
+  - world-model variant: `--stage1-epoch N` 으로 지정된 local `merged/{M}_stage1_${STAGE1_MODE}_world-model/epoch-${N}/` 을 base 로 사용 (YAML `model_name_or_path` 런타임 sed 치환). 동시에 YAML `output_dir` 의 `__STAGE1_EPOCH__` 플레이스홀더가 `${N}` 으로 치환되어 stage2 결과가 `..._world-model_from_${STAGE1_MODE}-ep${N}/` 으로 분리 저장. 디렉토리 미존재 시 hard-fail.
 - **`scripts/stage2_merge.sh`**
-  - 각 variant 의 `adapters/{M}_stage2_${STAGE2_MODE}_{base|world_model_from_${STAGE1_MODE}}/checkpoint-*` 전수 loop
+  - 각 variant 의 `adapters/{M}_stage2_${STAGE2_MODE}_{base|world-model_from_${STAGE1_MODE}-ep${STAGE1_EPOCH}}/checkpoint-*` 전수 loop
   - Full FT: checkpoint 자체가 전체 모델 → merge YAML 의 `model_name_or_path` 에 직접 전달 (adapter 블록 없음)
   - LoRA: `model_name_or_path: {base}` + `adapter_name_or_path: {ckpt}` + `finetuning_type: lora`
   - HF 네이밍 (`_common.sh`):
     - base: `hf_repo_id_stage2_base(MODEL, DS, STAGE2_MODE, E2)` → `...base-stage2-{M2}-epoch{E2}`
     - world: `hf_repo_id_stage2_world_model(MODEL, DS, STAGE1_MODE, STAGE1_EPOCH, STAGE2_MODE, E2)` → `...world-model-stage1-{M1}-epoch{E1}-stage2-{M2}-epoch{E2}`
 - **`scripts/stage2_eval.sh`**
-  - `--variants` 로 `base`, `{full|lora}_base`, `{full|lora}_world_model` 중 선택 평가. world-model variant 는 `--stage1-epoch` 로 HF 레포 계보 번호 주입.
+  - `--variants` 로 `base`, `{full|lora}_base`, `{full|lora}_world_model` (CLI 토큰) 중 선택 평가. world-model variant 는 `--stage1-epoch` 로 HF 레포 계보 번호 주입. 출력 경로는 `..._world-model_from_{M1}-ep{E1}/epoch-{E2}/` (path 표기는 hyphen 정규화).
   - `--train-dataset {AC|AC_2}` (MC 거절) + `--eval-datasets LIST` (`AC, AC_2, MB`). EVAL_DS 별 분기:
     - **AC**: ID + OOD 두 test 파일 함께 추론 → `_action_eval.py score --test-id ... --pred-id ... --test-ood ... --pred-ood ...` 가 **overall / in_domain / out_of_domain** 3 섹션 기록.
     - **AC_2**: 단일 파일 1 회 추론 → `_action_eval.py score --test ... --pred ...` single-pair `overall` 1 섹션.
     - **MB**: 단일 파일 1 회 추론 → single-pair `overall` 1 섹션.
-  - 결과: `outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant}[_from_{M1}_ep{E1}]/epoch-{E2}/on-{EVAL_DS}/`
+  - 결과: `outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant_path}[_from_{M1}-ep{E1}]/epoch-{E2}/on-{EVAL_DS}/` (variant_path 는 CLI VARIANT 의 `world_model` → `world-model` 치환).
   - **재실행 시 skip**: marker `action_metrics.json` 존재 unit 은 variant × EVAL_DS 조합 별로 독립 skip.
 
 ### Shell script CLI
@@ -337,12 +337,12 @@ raw JSONL + screenshots  (AC: train+eval, AC_2: train+eval 사전분할, MC: Sta
   -> [per model] Stage 1 merge (모든 epoch 각각)
        → merged/{M}_stage1_{mode1}/epoch-{E1}/  +  HF Hub ...world-model-stage1-{mode1}-epoch{E1}
   -> [per model] Stage 1 eval (HF Hub sweep × cross-dataset)
-       → eval/{TRAIN_DS}/{M}/stage1_eval/{mode1}_world_model/epoch-{E1}/on-{EVAL_DS}/hungarian_metrics.json
+       → eval/{TRAIN_DS}/{M}/stage1_eval/{mode1}_world-model/epoch-{E1}/on-{EVAL_DS}/hungarian_metrics.json
        (EVAL_DS ∈ {AC, AC_2, MC, MB} — AC 는 ID/OOD 두 파일, AC_2/MC/MB 는 단일 파일)
        (user picks an epoch E1 → passes as --stage1-epoch to Stage 2)
   -> [per model] Stage 2 train  (mode2 ∈ {full, lora},  variant ∈ {base, world-model-{mode1}}, 학습 DS ∈ {AC, AC_2})
-       world-model base = merged/{M}_stage1_{mode1}/epoch-{E1}/   (local)
-       → adapters/{M}_stage2_{mode2}_{base|world_model_from_{mode1}}/checkpoint-*/
+       world-model base = merged/{M}_stage1_{mode1}_world-model/epoch-{E1}/   (local)
+       → adapters/{M}_stage2_{mode2}_{base|world-model_from_{mode1}-ep{E1}}/checkpoint-*/
   -> [per model] Stage 2 merge (variant × 전 epoch)
        → merged/{M}_stage2_{mode2}_{variant}/epoch-{E2}/
        + HF Hub:
@@ -362,22 +362,22 @@ raw JSONL + screenshots  (AC: train+eval, AC_2: train+eval 사전분할, MC: Sta
 ```
 GUI-Model/outputs/{DS}/
 ├── adapters/
-│   ├── {model}_stage1_{full,lora}/
+│   ├── {model}_stage1_{full,lora}_world-model/
 │   ├── {model}_stage2_{full,lora}_base/
-│   └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/
+│   └── {model}_stage2_{full,lora}_world-model_from_{full,lora}-ep{E1}/
 ├── eval/{model}/
 │   ├── stage1_eval/                                              # 각 variant 안에 on-{EVAL_DS}/ + on-{EVAL_DS}-without-open_app/ 쌍
 │   │   ├── base/
-│   │   ├── full_world_model/epoch-{E}/
-│   │   └── lora_world_model/epoch-{E}/
+│   │   ├── full_world-model/epoch-{E}/
+│   │   └── lora_world-model/epoch-{E}/
 │   └── stage2_eval/
 │       ├── base/
 │       ├── {full,lora}_base/epoch-{E}/
-│       └── {full,lora}_world_model_from_{full,lora}_ep{E1}/epoch-{E2}/
+│       └── {full,lora}_world-model_from_{full,lora}-ep{E1}/epoch-{E2}/
 └── merged/
-    ├── {model}_stage1_{full,lora}/epoch-{E}/
+    ├── {model}_stage1_{full,lora}_world-model/epoch-{E}/
     ├── {model}_stage2_{full,lora}_base/epoch-{E}/
-    └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/epoch-{E}/
+    └── {model}_stage2_{full,lora}_world-model_from_{full,lora}-ep{E1}/epoch-{E2}/
 ```
 
 `BEST_CHECKPOINT` / `BEST_CHECKPOINT.json` 파일은 더 이상 생성되지 않는다.

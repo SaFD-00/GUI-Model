@@ -264,18 +264,18 @@ python scripts/eval_viewer.py --stages 1 --variants base full_world_model/epoch-
 ```
 GUI-Model/outputs/{AC|AC_2|MC}/
 ├── adapters/
-│   ├── {model}_stage1_{full,lora}/                                       # Stage 1 체크포인트
-│   ├── {model}_stage2_{full,lora}_base/                                  # Stage 2 base
-│   └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/          # Stage 2 world-model
+│   ├── {model}_stage1_{full,lora}_world-model/                                  # Stage 1 체크포인트
+│   ├── {model}_stage2_{full,lora}_base/                                         # Stage 2 base
+│   └── {model}_stage2_{full,lora}_world-model_from_{full,lora}-ep{E1}/          # Stage 2 world-model (E1=stage1 upstream epoch)
 ├── eval/{model}/
-│   ├── stage1_eval/{base, {full,lora}_world_model/epoch-{E}}/   # 각 variant 안에 on-{EVAL_DS}/ + on-{EVAL_DS}-without-open_app/
+│   ├── stage1_eval/{base, {full,lora}_world-model/epoch-{E}}/   # 각 variant 안에 on-{EVAL_DS}/ + on-{EVAL_DS}-without-open_app/
 │   └── stage2_eval/{base,
 │                    {full,lora}_base/epoch-{E},
-│                    {full,lora}_world_model_from_{full,lora}_ep{E1}/epoch-{E2}}/
+│                    {full,lora}_world-model_from_{full,lora}-ep{E1}/epoch-{E2}}/
 └── merged/
-    ├── {model}_stage1_{full,lora}/epoch-{E}/
+    ├── {model}_stage1_{full,lora}_world-model/epoch-{E}/
     ├── {model}_stage2_{full,lora}_base/epoch-{E}/
-    └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/epoch-{E}/
+    └── {model}_stage2_{full,lora}_world-model_from_{full,lora}-ep{E1}/epoch-{E2}/
 ```
 
 `BEST_CHECKPOINT` 파일은 더 이상 생성되지 않는다 — `trainer_state.json.epoch` 으로 epoch 번호를 결정하고, 어떤 epoch 을 Stage 2 에 쓸지는 사용자가 결과를 보고 `--stage1-epoch` 로 직접 지정한다.

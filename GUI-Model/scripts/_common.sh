@@ -523,13 +523,15 @@ hf_repo_id_stage2_world_model() {
 }
 
 # --- Local merged 디렉토리 경로 ---------------------------------------------
-# stage1: merged/{MODEL}_stage1_{MODE}/epoch-{E}
+# stage1: merged/{MODEL}_stage1_{MODE}_world-model/epoch-{E}
+#   variant_key = MODE (full|lora). Stage 1 은 항상 world-model 학습이므로 접미 고정.
 # stage2: merged/{MODEL}_stage2_{variant_key}/epoch-{E}
-#   variant_key 예: "{full|lora}_base", "{full|lora}_world_model_from_{full|lora}".
+#   variant_key 예: "{full|lora}_base",
+#                   "{full|lora}_world-model_from_{full|lora}-ep{E1}".
 local_merged_epoch_dir() {
   local stage="$1" model_short="$2" ds="$3" variant_key="$4" epoch="$5"
   case "$stage" in
-    stage1) printf '%s/outputs/%s/merged/%s_stage1_%s/epoch-%s' \
+    stage1) printf '%s/outputs/%s/merged/%s_stage1_%s_world-model/epoch-%s' \
               "$BASE_DIR" "$ds" "$model_short" "$variant_key" "$epoch" ;;
     stage2) printf '%s/outputs/%s/merged/%s_stage2_%s/epoch-%s' \
               "$BASE_DIR" "$ds" "$model_short" "$variant_key" "$epoch" ;;
@@ -563,7 +565,7 @@ resolve_stage1_variants() {
 }
 
 # --- Inference 커맨드 조립 (backend 분기) ------------------------------------
-# stage{1,2}_eval.sh 의 base / world_model variant 블록이 generated_predictions.jsonl
+# stage{1,2}_eval.sh 의 base / world-model variant 블록이 generated_predictions.jsonl
 # 을 만드는 핵심 커맨드. backend 에 따라 다른 runner 를 호출하지만 호출부의
 # dispatch 로직을 중복시키지 않기 위해 여기에 모은다.
 #

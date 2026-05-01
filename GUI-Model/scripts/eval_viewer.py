@@ -383,7 +383,7 @@ def parse_args() -> argparse.Namespace:
         "--variants",
         nargs="+",
         default=None,
-        help="Variant dirs (e.g. base full_world_model/epoch-3). Default: auto-discover.",
+        help="Variant dirs (e.g. base full_world-model/epoch-3). Default: auto-discover.",
     )
     return p.parse_args()
 

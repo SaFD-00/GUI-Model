@@ -2,7 +2,7 @@
 # Stage 1 Merge — 전체 epoch checkpoint 를 각각 merge + HF Hub push.
 #
 # train → merge → eval 흐름 전환: BEST_CHECKPOINT 의존 제거. 모든
-# outputs/{DS}/adapters/{MODEL}_stage1_{MODE}/checkpoint-*/ 를 순회하며
+# outputs/{DS}/adapters/{MODEL}_stage1_{MODE}_world-model/checkpoint-*/ 를 순회하며
 # epoch 별로 local merge + 개별 HF repo push 한다.
 #
 # --stage1-mode full (default) | lora.
@@ -14,7 +14,7 @@
 #   SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}
 #
 # 로컬 산출물 (사용자 정책: 전부 보존):
-#   outputs/{DS}/merged/{MODEL}_stage1_{MODE}/epoch-{E}/
+#   outputs/{DS}/merged/{MODEL}_stage1_{MODE}_world-model/epoch-{E}/
 #
 # 요구: HF_TOKEN (.env 또는 환경변수)
 
@@ -32,7 +32,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
   BASE_MODEL="${MODEL_ID[$MODEL_SHORT]}"
   for DS in "${DATASETS[@]}"; do
     # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/...").
-    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage1_${STAGE1_MODE}"
+    TRAIN_DIR_REL="../outputs/${DS}/adapters/${MODEL_SHORT}_stage1_${STAGE1_MODE}_world-model"
     TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
 
     shopt -s nullglob
@@ -54,7 +54,7 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       }
 
       HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH")
-      MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_${STAGE1_MODE}/epoch-${EPOCH}"
+      MERGED_REL="../outputs/${DS}/merged/${MODEL_SHORT}_stage1_${STAGE1_MODE}_world-model/epoch-${EPOCH}"
       LOCAL_DIR="$(local_merged_epoch_dir stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH")"
       CKPT_REL="./${TRAIN_DIR_REL}/${CKPT_NAME}"
 
