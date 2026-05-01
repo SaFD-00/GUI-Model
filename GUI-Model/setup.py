@@ -35,6 +35,11 @@ COMMON = [
     # accelerate 는 `accelerate launch` 로 직접 호출되므로 transitive 에 맡기지
     # 않고 명시적으로 고정한다 (CLI 보장).
     "accelerate>=1.3.0,<=1.11.0",
+    # torch 2.9.x + Qwen2.5-VL `Conv3D` (visual.patch_embed) 조합은 심각한 학습 성능
+    # 회귀 (pytorch/pytorch#166122) 가 있어 LlamaFactory loader 가 ValueError 로 차단한다.
+    # LlamaFactory 의 `torch>=2.4.0` 은 상한이 없으므로 여기서 명시적으로 상한을 건다.
+    "torch>=2.4.0,<2.9",
+    "torchvision>=0.19.0,<0.24",
 ]
 
 # LlamaFactory 전용 (Qwen2/2.5/3-VL 계열).
@@ -42,7 +47,11 @@ COMMON = [
 LLAMAFACTORY = [
     # vllm 0.11.2 가 `transformers<5,>=4.56.0` 을 강제하므로 5.x 는 사용 불가.
     # LlamaFactory 서브프로젝트 pin (`>=4.55.0,<=5.2.0,!=4.57.0`) 과의 교집합 = 4.56–4.57.x.
-    "transformers>=4.56.0,<5",
+    # 단 4.57.x 는 Qwen2.5-VL `get_placeholder_mask` 가 image token vs feature
+    # count 를 strict 비교하면서, `qwen-vl-utils` smart_resize 와 processor 의
+    # `<|image_pad|>` expansion 이 일부 종횡비에서 1–2 token 어긋나는 케이스를
+    # ValueError 로 raise 한다 (학습 mid-step 에서 죽음). 4.56.x 로 상한.
+    "transformers>=4.56.0,<4.57",
     "deepspeed>=0.10.0,<=0.18.4",
     # vllm 0.11.0 은 Qwen2.5-VL config 의 `rope_parameters.rope_type` (modern) +
     # `type=mrope` (legacy) 동시 존재 케이스에서 pydantic ValidationError 를 던지므로
