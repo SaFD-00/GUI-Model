@@ -25,6 +25,7 @@ export DISABLE_VERSION_CHECK=1
 
 SCRIPT_TAG="stage1_merge_${STAGE1_MODE}"
 MERGED_COUNT=0
+SKIPPED_COUNT=0
 FAILED_COUNT=0
 
 for MODEL_SHORT in "${MODELS[@]}"; do
@@ -38,8 +39,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     CKPTS=("$TRAIN_DIR"/checkpoint-*/)
     shopt -u nullglob
     if [ "${#CKPTS[@]}" -eq 0 ]; then
-      echo "[!] [$MODEL_SHORT][$DS][$STAGE1_MODE] No checkpoints under $TRAIN_DIR — run stage1_train.sh --stage1-mode ${STAGE1_MODE} first." >&2
-      exit 1
+      echo "[WARN] [$MODEL_SHORT][$DS][$STAGE1_MODE] No checkpoints under $TRAIN_DIR — skipping. Run stage1_train.sh --stage1-mode ${STAGE1_MODE} first." >&2
+      SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+      continue
     fi
     echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] Merging ${#CKPTS[@]} checkpoints" >&2
 
@@ -111,12 +113,12 @@ EOF
   done
 done
 
-echo "--- Stage 1 Merge (${STAGE1_MODE}): $MERGED_COUNT merged, $FAILED_COUNT failed ---" >&2
+echo "--- Stage 1 Merge (${STAGE1_MODE}): $MERGED_COUNT merged, $SKIPPED_COUNT skipped, $FAILED_COUNT failed ---" >&2
 if [ "$FAILED_COUNT" -gt 0 ]; then
   echo "[!] Some epochs failed. Re-run after fixing." >&2
   exit 1
 fi
-if [ "$MERGED_COUNT" -eq 0 ]; then
+if [ "$MERGED_COUNT" -eq 0 ] && [ "$SKIPPED_COUNT" -eq 0 ]; then
   echo "[!] No models were merged." >&2
   exit 1
 fi

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Stage 2 Evaluation — HF Hub merged repo sweep × 교차 데이터셋.
 #
-# 학습 DS (TRAIN_DATASET, 현재 AC 만 지원) 에서 얻은 merged 모델을
-# 여러 평가 DS 에서 sweep. EVAL_DS 별 섹션 구성:
+# 학습 DS (TRAIN_DATASET ∈ {AC, AC_2}) 에서 얻은 merged 모델을
+# 여러 평가 DS 에서 sweep. MC 는 Stage 2 학습 데이터/YAML 부재로 미지원.
+# EVAL_DS 별 섹션 구성:
 #   AC : test_id + test_ood 2-회 inference → action_metrics.json
 #        (overall / in_domain / out_of_domain 3-섹션)
 #   MB : 단일 파일 gui-model_stage2.jsonl 1-회 inference → action_metrics.json
@@ -32,11 +33,16 @@ export DISABLE_VERSION_CHECK=1
 SCRIPT_TAG="stage2_eval"
 TRAIN_DS="$TRAIN_DATASET"
 
-if [[ "$TRAIN_DS" != "AC" ]]; then
-  echo "[!] Stage 2 는 현재 TRAIN_DATASET=AC 만 지원합니다 (got '$TRAIN_DS')." >&2
-  echo "    MonkeyCollection(MC) 은 Stage 2 학습 데이터가 없습니다." >&2
-  exit 2
-fi
+case "$TRAIN_DS" in
+  AC|AC_2) ;;
+  MC)
+    echo "[!] Stage 2 는 MonkeyCollection(MC) 학습 데이터를 갖지 않습니다 (got '$TRAIN_DS')." >&2
+    echo "    --train-dataset 는 AC | AC_2 만 사용하세요." >&2
+    exit 2 ;;
+  *)
+    echo "[!] Stage 2 eval --train-dataset 는 AC | AC_2 만 지원합니다 (got '$TRAIN_DS')." >&2
+    exit 2 ;;
+esac
 
 # 한 (MODEL, TRAIN_DS, VARIANT, EPOCH, HUB_ID, EVAL_DS) 조합 평가 실행.
 # - EVAL_DS=AC : test_id + test_ood → 3-섹션 action_metrics.
@@ -58,9 +64,17 @@ run_variant_epoch_eval_on() {
   local datadir="${DS_DATADIR[$eval_ds]}"
   local eval_prefix="${DS_PREFIX[$eval_ds]}"
 
-  if [[ "$eval_ds" == "MB" ]]; then
-    local test_jsonl="$BASE_DIR/data/${datadir}/gui-model_stage2.jsonl"
-    local ds_test="${eval_prefix}_stage2"
+  # Single-test 데이터셋 (overall only): MB, AC_2.
+  # AC_2 는 데이터셋 자체가 단일 _test.jsonl 만 갖는다 (_common.sh::_SINGLE_TEST 와 정합).
+  if [[ "$eval_ds" == "MB" || "$eval_ds" == "AC_2" ]]; then
+    local test_jsonl ds_test
+    if [[ "$eval_ds" == "MB" ]]; then
+      test_jsonl="$BASE_DIR/data/${datadir}/gui-model_stage2.jsonl"
+      ds_test="${eval_prefix}_stage2"
+    else  # AC_2
+      test_jsonl="$BASE_DIR/data/${datadir}/gui-model_stage2_test.jsonl"
+      ds_test="${eval_prefix}_stage2_test"
+    fi
     if [ ! -f "$test_jsonl" ]; then
       echo "[!] [$model_short][train=$train_ds][eval=$eval_ds] Missing test file: $test_jsonl" >&2
       exit 1

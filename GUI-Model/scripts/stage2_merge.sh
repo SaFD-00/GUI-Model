@@ -87,8 +87,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       CKPTS=("$TRAIN_DIR"/checkpoint-*/)
       shopt -u nullglob
       if [ "${#CKPTS[@]}" -eq 0 ]; then
-        echo "[!] [$MODEL_SHORT][$DS][stage2_${ADAPTER_SUFFIX}] No checkpoints under $TRAIN_DIR — run stage2_train.sh first." >&2
-        exit 1
+        echo "[WARN] [$MODEL_SHORT][$DS][stage2_${ADAPTER_SUFFIX}] No checkpoints under $TRAIN_DIR — skipping. Run stage2_train.sh first." >&2
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+        continue
       fi
       echo "[+] [$MODEL_SHORT][$DS][stage2_${ADAPTER_SUFFIX}] Merging ${#CKPTS[@]} checkpoints" >&2
 
@@ -171,7 +172,7 @@ if [ "$FAILED_COUNT" -gt 0 ]; then
   echo "[!] Some epochs failed. Re-run after fixing." >&2
   exit 1
 fi
-if [ "$MERGED_COUNT" -eq 0 ]; then
+if [ "$MERGED_COUNT" -eq 0 ] && [ "$SKIPPED_COUNT" -eq 0 ]; then
   echo "[!] No variants were merged." >&2
   exit 1
 fi

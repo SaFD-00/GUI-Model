@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Train / Test split builder for GUI-Model datasets.
 
-학습 대상 DS 는 {AC (AndroidControl), MC (MonkeyCollection)} 만 지원한다.
+학습 대상 DS 는 {AC (AndroidControl), AC_2 (AndroidControl_2), MC (MonkeyCollection)} 를 지원한다.
+AC_2 는 AC 와 동일한 episodes_meta 기반 app-level split 규칙을 따른다.
 MobiBench(MB) 는 평가 전용 벤치마크이므로 split 하지 않는다 —
 ``data/MobiBench/gui-model_stage{1,2}.jsonl`` 두 단일 파일이 eval 입력.
 
@@ -44,10 +45,12 @@ from pathlib import Path
 
 
 DATASET_DIRS = {
-    "AndroidControl": "AndroidControl",
-    "AC": "AndroidControl",
+    "AndroidControl":   "AndroidControl",
+    "AC":               "AndroidControl",
+    "AndroidControl_2": "AndroidControl_2",
+    "AC_2":             "AndroidControl_2",
     "MonkeyCollection": "MonkeyCollection",
-    "MC": "MonkeyCollection",
+    "MC":               "MonkeyCollection",
 }
 
 # Stage 2 분할을 지원하지 않는 데이터셋 (Stage 1 전용).

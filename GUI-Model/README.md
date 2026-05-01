@@ -241,11 +241,11 @@ data/MonkeyCollection/
 
 1. Section 0: 환경 설정, dataset config, 모델 config (`_MODEL_CONFIG`), YAML 생성 (Stage 1 full · lora 학습용 + Stage 2 base · world-model-full · world-model-lora 학습용 · merge 용). **Stage 1 eval YAML 은 더 이상 생성하지 않는다** (쉘 스크립트가 HF Hub merged 모델을 직접 sweep).
 2. Section 1-2: `dataset_info.json` 등록
-3. Section 3: Stage 1 학습 (노트북 셀은 default=full. LoRA 는 쉘 스크립트 `--stage1-mode lora`)
-4. Section 4: **Stage 1 merge (모든 epoch 을 각각 merge + HF Hub push)**
+3. Section 3: Stage 1 학습 — 노트북 매트릭스: 8 모델 × 3 데이터셋 ({AC, AC_2, MC}) × 2 모드 ({full, lora}) (§3.1 Full FT, §3.2 LoRA)
+4. Section 4: **Stage 1 merge (모든 epoch 을 각각 merge + HF Hub push)** — 동일 매트릭스 (§4.1 Full, §4.2 LoRA). 누락 checkpoint 슬롯은 SKIP+경고
 5. Section 5: **Stage 1 평가 (HF Hub 에서 `--epochs` 지정 merged 모델 pull). winner 자동 선정 없음 — 사용자가 결과를 보고 Stage 2 에 사용할 epoch 을 수동 결정.**
-6. Section 6: Stage 2 학습 (world-model variant 는 `--stage1-epoch N` 으로 상류 Stage 1 epoch 의 local merged 를 base 로 사용)
-7. Section 7: **Stage 2 merge (variant × 모든 epoch 각각 merge + HF Hub push)**
+6. Section 6: Stage 2 학습 (LoRA) — 8 모델 × 2 데이터셋 ({AC, AC_2}). MC 는 Stage 2 데이터/YAML 부재로 제외. world-model variant 는 `--stage1-epoch N` 으로 상류 Stage 1 epoch 의 local merged 를 base 로 사용
+7. Section 7: **Stage 2 merge (variant × 모든 epoch 각각 merge + HF Hub push)** — 동일 매트릭스, 누락 슬롯은 SKIP+경고
 8. Section 8: **Stage 2 평가 (HF Hub pull sweep, ID+OOD 동시. `action_metrics.json` 에 overall/in_domain/out_of_domain 3 섹션)**
 
 ### 2. shell script 경로
@@ -257,10 +257,10 @@ shell script 는 notebook 으로 한 번 생성된 **학습/merge YAML** 과 `Ll
 Stage 1 은 `--stage1-mode full|lora` (기본 `full`), Stage 2 는 `--stage2-mode full|lora` (기본 `lora`) 로 finetuning 방식을 선택한다. world-model variant 학습·머지·평가는 `--stage1-epoch N` 으로 사용할 Stage 1 epoch 을 직접 지정한다 (자동 winner 선정은 없다).
 
 ```bash
-# Stage 1 Full FT — train → merge → eval (AC 학습, AC/MC/MB 교차 평가)
+# Stage 1 Full FT — train → merge → eval (AC 학습, AC/AC_2/MC/MB 교차 평가)
 bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset AC
 bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset AC                                # 모든 epoch push
-bash scripts/stage1_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,MC,MB \
+bash scripts/stage1_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,AC_2,MC,MB \
      --variants base,full_world_model --epochs 1,2,3                                         # HF Hub sweep
 
 # Stage 1 LoRA — MC 학습
@@ -269,7 +269,17 @@ bash scripts/stage1_merge.sh --model qwen3-vl-4b --dataset MC --stage1-mode lora
 bash scripts/stage1_eval.sh  --model qwen3-vl-4b --train-dataset MC --eval-datasets AC,MC,MB \
      --stage1-mode lora --variants base,lora_world_model --epochs 1,2,3
 
-# Stage 2 — AC 전용 (MC 는 Stage 2 데이터 없음). AC 학습 모델을 AC + MB 에서 평가.
+# Stage 1 — AC_2 학습 (token budget 5400 자동 적용)
+bash scripts/stage1_train.sh --model qwen3-vl-8b --dataset AC_2 --stage1-mode lora
+bash scripts/stage1_merge.sh --model qwen3-vl-8b --dataset AC_2 --stage1-mode lora
+bash scripts/stage1_eval.sh  --model qwen3-vl-8b --train-dataset AC_2 --eval-datasets AC_2,MB \
+     --stage1-mode lora --variants base,lora_world_model --epochs 1,2,3
+
+# 전체 모델 × 전체 데이터셋 일괄 sweep (--model / --dataset 생략)
+bash scripts/stage1_train.sh --stage1-mode full   # 8 모델 × {AC, AC_2, MC}
+bash scripts/stage1_merge.sh --stage1-mode full   # 학습 안 된 슬롯은 [WARN] 출력 후 SKIP
+
+# Stage 2 — AC, AC_2 지원 (MC 는 Stage 2 데이터/YAML 없음)
 bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
      --stage1-mode full --stage1-epoch 3 --stage2-mode lora
 bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset AC \
@@ -277,6 +287,12 @@ bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset AC \
 bash scripts/stage2_eval.sh  --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,MB \
      --stage1-mode full --stage1-epoch 3 --stage2-mode lora \
      --variants base,lora_base,lora_world_model --epochs 1,2,3
+
+# Stage 2 — AC_2 (train-dataset AC_2 도 동일하게 지원)
+bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC_2 \
+     --stage1-mode full --stage1-epoch 3 --stage2-mode lora
+bash scripts/stage2_merge.sh --model qwen3-vl-8b --dataset AC_2 \
+     --stage1-mode full --stage1-epoch 3 --stage2-mode lora
 
 # Stage 2 Full FT
 bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
@@ -292,14 +308,14 @@ bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
 
 **학습/merge 스크립트 (`stage{1,2}_{train,merge}.sh`)**:
 - `--model MODEL`: 모델 short_name 또는 `all` (기본: `all`)
-- `--dataset DS`: `AC` | `MC` | `all` (기본: `all`) — 학습 대상 DS. **MB 는 평가 전용이므로 거절**.
+- `--dataset DS`: `AC` | `AC_2` | `MC` | `all` (기본: `all`) — Stage 1 학습 대상 DS. **MB 는 평가 전용이므로 거절**. **Stage 2 는 MC 미지원** (Stage 2 데이터/YAML 없음 → `--dataset MC` 시 stage2_train.sh 가 YAML 부재로 중단, stage2_eval.sh 는 `--train-dataset MC` 거절).
 - `--stage1-mode MODE`: `full` | `lora` (기본: `full`)
 - `--stage2-mode MODE`: `full` | `lora` (기본: `lora`) — stage2 스크립트 전용
 - `--stage1-epoch N`: Stage 2 world-model variant 에서 참조할 상류 Stage 1 epoch (stage2 전용)
 
 **평가 스크립트 (`stage{1,2}_eval.sh`)**: 학습 DS 와 평가 DS 를 분리.
 - `--model MODEL`
-- `--train-dataset DS`: `AC` | `MC` (필수)
+- `--train-dataset DS`: stage1_eval = `AC` | `AC_2` | `MC`, stage2_eval = `AC` | `AC_2` (필수)
 - `--eval-datasets LIST`: 콤마 구분. 허용값 `AC,AC_2,MC,MB`.
 - `--stage1-mode`, `--stage2-mode`, `--stage1-epoch` (상동)
 - `--epochs LIST`: 콤마 구분 정수 (기본 `1,2,3`).
@@ -307,10 +323,10 @@ bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
 
 주요 동작:
 
-- `stage1_merge.sh` 는 모든 `checkpoint-*/` 를 돌면서 `trainer_state.json.epoch` 기반으로 `merged/{MODEL}_stage1_${MODE}/epoch-{E}/` 로 local merge + HF 에 `SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}` 푸시.
+- `stage1_merge.sh` 는 모든 `checkpoint-*/` 를 돌면서 `trainer_state.json.epoch` 기반으로 `merged/{MODEL}_stage1_${MODE}/epoch-{E}/` 로 local merge + HF 에 `SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}` 푸시. **Skip 동작**: checkpoint 가 없는 (model, dataset) 슬롯은 `[WARN]` 출력 후 SKIP, 다음 슬롯으로 계속 진행 (`--model all` sweep 친화). 요약 라인에 `merged / skipped / failed` 카운트가 함께 출력된다.
 - `stage1_eval.sh` 는 `--variants` + `--epochs` 로 지정된 HF repo 를 pull 해 `hungarian_metrics.json` 을 산출한다. 각 `(variant, EVAL_DS)` 마다 정규 산출 직후 추론 재실행 없이 `_hungarian_eval.py score --exclude-action open_app` 한 번을 더 호출하여 sibling `on-{EVAL_DS}-without-open_app/` 에 필터된 jsonl + 메트릭 + `predict_results.json` 을 idempotent 저장한다. 필터 test JSONL 은 `data/{DATADIR}/{prefix}_stage1{_test{_id,_ood}}_without_open_app.jsonl` 로 자동 생성/재사용.
 - `stage2_train.sh` 는 `stage2_{full|lora}/{MODEL}_{base,world-model-{full,lora}}.yaml` 을 학습한다. world-model variant 는 `--stage1-epoch N` 으로 지정된 로컬 `merged/{MODEL}_stage1_${STAGE1_MODE}/epoch-${N}/` 를 base 로 사용 (YAML `model_name_or_path` 런타임 sed 치환).
-- `stage2_merge.sh` 는 각 epoch 를 merge + HF push:
+- `stage2_merge.sh` 는 각 epoch 를 merge + HF push. **Skip 동작**은 stage1_merge 와 동일 (누락 슬롯 `[WARN]` 후 SKIP, 요약 라인에 `merged / skipped / failed`):
   - base variant: `SaFD-00/{short}-{slug}base-stage2-{MODE2}-epoch{E2}`
   - world-model: `SaFD-00/{short}-{slug}world-model-stage1-{MODE1}-epoch{E1}-stage2-{MODE2}-epoch{E2}`
 - `stage2_eval.sh` 는 ID + OOD 테스트 파일을 **동시에** 추론하고 `_action_eval.py score` 가 `overall` / `in_domain` / `out_of_domain` 3 섹션을 한 `action_metrics.json` 에 기록한다.
