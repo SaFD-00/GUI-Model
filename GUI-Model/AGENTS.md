@@ -13,10 +13,11 @@
 - 평가 (`scripts/stage{1,2}_eval.sh`) 는 `vllm_infer.py` 가 HF 표준 safetensors / PEFT adapter 를 그대로 로드.
 - [`gui_model/`](./gui_model) 패키지는 사실상 배포용 스텁이며, 핵심 파이프라인 로직은 여기에 없다.
 - **데이터셋 역할 분리**:
-  - 학습 대상 DS 는 `AndroidControl` (AC) 과 `MonkeyCollection` (MC).
+  - 학습 대상 DS 는 `AndroidControl` (AC), `AndroidControl_2` (AC_2), `MonkeyCollection` (MC).
   - `MobiBench` (MB) 는 **평가 전용 벤치마크**. 학습/merge 스크립트에서 `--dataset MB` 는 `scripts/_common.sh::parse_args` 에서 거절된다.
   - MC 는 Stage 1 전용 — Stage 2 파이프라인에서는 `_STAGE1_ONLY` guard 로 skip.
-  - 평가 스크립트는 `--train-dataset {AC|MC}` + `--eval-datasets AC,MC,MB` 로 학습 DS 와 평가 DS 를 분리한다.
+  - AC_2 는 AC 와 schema 동일하나 **단일 test (ID/OOD 분리 없음)** 로 사전 분할 제공. `_SINGLE_TEST` 플래그로 notebook 등록 루프가 분기 (Stage 1 + Stage 2 모두 단일 test). `images/` 디렉토리 없이 JSONL `images` 가 `AndroidControl/images/...` 를 참조 (AC 와 공유).
+  - 평가 스크립트는 `--train-dataset {AC|AC_2|MC}` + `--eval-datasets AC,AC_2,MC,MB` 로 학습 DS 와 평가 DS 를 분리한다 (Stage 2 eval 은 `AC | AC_2` 만 — MC 는 Stage 2 데이터 없음).
 
 ## 어디를 수정해야 하는가
 
@@ -26,14 +27,17 @@
 - **데이터 분할 규칙**: [`scripts/split_data.py`](./scripts/split_data.py) 가 기준. AC 는 Stage 1 / Stage 2 모두 app-level ID/OOD (단일 partition 공유), MC 는 Stage 1 random split (메타 없음, 자동 fallback), MB 는 split 없음.
 - **Stage 1 평가**: [`scripts/_hungarian_eval.py`](./scripts/_hungarian_eval.py) 가 기준 (`score` 서브커맨드만 유지, winner 선정 없음). single-pair (`--test/--pred`) 와 ID/OOD (`--test-id/--pred-id/--test-ood/--pred-ood`) 두 모드 지원 — ID/OOD 모드는 `hungarian_metrics.json` 에 `overall`/`in_domain`/`out_of_domain` 3 섹션 기록. 흐름은 **train → merge → eval** — `stage1_merge.sh` 가 모든 epoch 를 각각 local merge + HF push 하고 (`trainer_state.json.epoch` 파싱), `stage1_eval.sh` 가 `--train-dataset {AC|MC}` / `--eval-datasets {AC,MC,MB}` / `--variants` / `--epochs` 로 지정된 HF Hub merged repo (`SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}`) 를 pull 해 EVAL_DS 별 test JSONL 에 대해 `hungarian_metrics.json` 을 산출한다. EVAL_DS 별 분기:
   - **EVAL_DS=AC**: ID + OOD 두 test 파일 (`gui-model_stage1_test_{id,ood}.jsonl`) 을 함께 추론 → 3 섹션 기록.
+  - **EVAL_DS=AC_2**: 단일 파일 `gui-model_stage1_test.jsonl` (사전 분할, ID/OOD 없음) → single-pair overall.
   - **EVAL_DS=MC**: 단일 파일 `gui-model_stage1_test.jsonl` (random split) → single-pair overall.
   - **EVAL_DS=MB**: 단일 파일 `gui-model_stage1.jsonl` (벤치마크 단일 파일) → single-pair overall.
   산출 경로는 `outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{variant}[/epoch-{E}]/on-{EVAL_DS}/`. 어떤 epoch 을 쓸지는 사용자가 결과를 보고 수동 결정한다. 재실행 시 marker (`hungarian_metrics.json`) 존재 unit 은 skip. 정본은 notebook Section 5. 시각 비교는 [`scripts/eval_viewer.py`](./scripts/eval_viewer.py).
-- **Stage 2 평가**: [`scripts/_action_eval.py`](./scripts/_action_eval.py) 가 기준. `score` 서브커맨드만 유지 (single-pair / ID+OOD 모드 모두 제공), winner/`BEST_CHECKPOINT` 개념 제거. 흐름은 `stage2_train.sh` → `stage2_merge.sh` → `stage2_eval.sh`. TRAIN_DATASET 은 현재 AC 만 지원 (MC 는 Stage 2 데이터 없음). EVAL_DS 별 분기:
+  - **without_open_app 자동 산출**: 각 `(variant, EVAL_DS)` 마다 정규 score 직후 추론 재실행 없이 `_hungarian_eval.py score --exclude-action open_app --filtered-test-dir data/{DATADIR} --filtered-pred-dir on-{EVAL_DS}-without-open_app/` 가 한 번 더 호출되어 GT `## Action.type=="open_app"` 행을 양쪽에서 동시 drop 한 메트릭 + 필터된 jsonl + `predict_results.json` 을 sibling `on-{EVAL_DS}-without-open_app/` 에 idempotent 저장. 정규 산출과 동일한 파일 구조(섹션 수, `_id`/`_ood` 분리)를 미러링하므로 AC=split 인 경우 3-섹션, AC_2/MC/MB 단일 파일은 1-섹션. 필터 test JSONL 은 `data/{DATADIR}/{prefix}_stage1{,_test{_id,_ood}}_without_open_app.jsonl` 로 영구 저장 (idempotent 재사용). skip marker 가 별도라 정규/필터 각각 독립 idempotent.
+- **Stage 2 평가**: [`scripts/_action_eval.py`](./scripts/_action_eval.py) 가 기준. `score` 서브커맨드만 유지 (single-pair / ID+OOD 모드 모두 제공), winner/`BEST_CHECKPOINT` 개념 제거. 흐름은 `stage2_train.sh` → `stage2_merge.sh` → `stage2_eval.sh`. TRAIN_DATASET 은 `AC | AC_2` 지원 (MC 는 Stage 2 데이터 없음). EVAL_DS 별 분기:
   - **EVAL_DS=AC**: ID + OOD 두 test 파일 (`gui-model_stage2_test_{id,ood}.jsonl`) 을 함께 추론 → `action_metrics.json` 에 `overall` / `in_domain` / `out_of_domain` 3 섹션 기록.
+  - **EVAL_DS=AC_2**: 단일 파일 `gui-model_stage2_test.jsonl` 1-회 추론 → single-pair 모드로 `action_metrics.json` 에 `overall` 1 섹션만 기록.
   - **EVAL_DS=MB**: 단일 파일 `gui-model_stage2.jsonl` 1-회 추론 → single-pair 모드로 `action_metrics.json` 에 `overall` 1 섹션만 기록.
   HF 네이밍: base variant `SaFD-00/{short}-{slug}base-stage2-{MODE2}-epoch{E2}`, world-model variant `SaFD-00/{short}-{slug}world-model-stage1-{MODE1}-epoch{E1}-stage2-{MODE2}-epoch{E2}`. 산출 경로는 `outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant}[/epoch-{E2}]/on-{EVAL_DS}/`. Stage 2 world-model train/merge 는 `--stage1-epoch N` 으로 지정된 로컬 `outputs/{DS}/merged/{MODEL}_stage1_${MODE1}/epoch-${N}/` 를 base 로 사용. 재실행 시 marker (`action_metrics.json`) 존재 unit 은 variant × EVAL_DS 조합 별로 독립 skip. 회귀 테스트 [`tests/test_action_eval.py`](./tests/test_action_eval.py) (48 케이스). 메트릭 정의는 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §6 참고.
-- **shell 실행 공통 규약**: `AC`/`MC`/`MB` 매핑 (`DS_PREFIX` / `HF_SLUG` / `DS_DATADIR`), 모델 레지스트리 → [`scripts/_common.sh`](./scripts/_common.sh). 학습/merge 스크립트는 `parse_args`, 평가 스크립트는 `parse_eval_args` (`--train-dataset` + `--eval-datasets`).
+- **shell 실행 공통 규약**: `AC`/`AC_2`/`MC`/`MB` 매핑 (`DS_PREFIX` / `HF_SLUG` / `DS_DATADIR`), 모델 레지스트리 → [`scripts/_common.sh`](./scripts/_common.sh). 학습/merge 스크립트는 `parse_args`, 평가 스크립트는 `parse_eval_args` (`--train-dataset` + `--eval-datasets`).
 - **Python 의존성**: [`setup.py`](./setup.py) 가 실제 설치 기준.
 
 ## 작업 시 주의점
@@ -41,7 +45,7 @@
 - `LlamaFactory/` 내부 파일은 마지막 수단으로만 수정하라. 가능하면 notebook, local shell script, custom YAML (`LlamaFactory/examples/custom/...`), 평가 helper 로 해결한다.
 - transformers 버전을 바꿀 때는 [`pyproject.toml`](./pyproject.toml) 의 deps 와 [`setup.py`](./setup.py) `EXTRAS["llamafactory"]` 의 transformers pin 을 함께 수정한다. 현재는 `transformers==5.5.4` 로 고정 (Qwen2/2.5/3-VL 검증값). 서브프로젝트 (`LlamaFactory/`) 의 `pyproject.toml` 은 건드리지 않는다 — 충돌 시 README 의 `--no-deps` 회피 절차로 처리.
 - 문서나 스크립트에서 `outputs/{DS}/{category}/...` 의 `{DS}` 는 `MB` 또는 `AC`, `{category}` 는 `adapters | eval | merged`. `adapters/` 는 flat 네이밍 `{MODEL}_{detail}/` (Stage2 는 `{MODEL}_stage2_{MODE2}_{base|world_model_from_{MODE1}}/` 패턴). `merged/` 는 `{MODEL}_{detail}/epoch-{E}/` 로 epoch 별 서브디렉토리 분리. `eval/` 은 `{MODEL}/stage{1,2}_eval/.../epoch-{E}/` 중첩 구조. `BEST_CHECKPOINT` 파일은 더 이상 생성되지 않는다.
-- `data/` 아래 실제 디렉토리명은 `AndroidControl`, `MonkeyCollection`, `MobiBench` (평가 전용). MobiBench 는 `gui-model_stage{1,2}.jsonl` 두 단일 파일만 존재한다.
+- `data/` 아래 실제 디렉토리명은 `AndroidControl`, `AndroidControl_2`, `MonkeyCollection`, `MobiBench` (평가 전용). MobiBench 는 `gui-model_stage{1,2}.jsonl` 두 단일 파일만 존재. AndroidControl_2 는 `images/` 디렉토리 없이 AC 의 `images/` 를 JSONL `images` 필드로 참조한다 (canonical prefix `AndroidControl/images/...`).
 - eval script 에서 `vllm_infer.py` 호출 시 `--dataset_dir '$LF_ROOT/data'` (절대 경로) 를 반드시 전달한다. 상대 경로 사용 시 HF datasets 캐시 오염으로 이미지 `FileNotFoundError` 가 발생할 수 있다.
 - **MobiBench dataset_info 자동 보장**: `_common.sh::ensure_eval_only_dataset_info()` 가 source 시점에 `dataset_info.json` 에 `GUI-Model-MB_stage{1,2}` 단일 파일 엔트리를 idempotent 하게 추가한다.
 - **JSONL `images` canonical prefix**: 모든 JSONL 의 `images` 필드는 `{DATASET_NAME}/images/...` 형태여야 한다. 이 contract 는 `LF_ROOT/data/{DATASET_NAME}` symlink + `--dataset_dir $LF_ROOT/data` 조합과 맞물려 있어 prefix 가 없으면 `Image.open()` 이 cwd 기준으로 풀려 실패한다.
@@ -52,8 +56,8 @@
 - [`scripts/split_data.py`](./scripts/split_data.py) 는 Stage 1 + Stage 2 분할을 모두 담당한다. **AC**: Stage 1 / Stage 2 모두 `episodes_meta.jsonl.primary_app` 기반 app-level ID/OOD split 이며, **단일 partition 을 공유**한다. 산출 파일은 `gui-model_stage{1,2}_{train,test_id,test_ood}.jsonl`. **MC**: 메타 없음 → Stage 1 random split (`_train`/`_test`) 자동 fallback. MC 는 `_STAGE1_ONLY` 에 있어 Stage 2 는 자동 skip. **MB**: 평가 전용. AC 메타는 [`scripts/extract_androidcontrol_metadata.py`](./scripts/extract_androidcontrol_metadata.py) 가 생성한다.
 - bash 자동화는 bash 4+ 전제를 가진다.
 - shell script CLI 공통 플래그:
-  - **학습/merge (`stage{1,2}_{train,merge}.sh`)**: `--model MODEL --dataset {AC|MC|all} --stage1-mode {full|lora}`. `--dataset MB` 는 거절됨. `stage2_*`: `--stage2-mode {full|lora}` (기본 lora), `--stage1-epoch N` (world-model variant 전용).
-  - **평가 (`stage{1,2}_eval.sh`)**: `--model MODEL --train-dataset {AC|MC} --eval-datasets LIST --stage1-mode ... --stage2-mode ... --stage1-epoch N --epochs LIST --variants LIST`. `--eval-datasets` 는 콤마 구분, 허용 `AC,MC,MB`, 기본값은 `--train-dataset` 단일값. Stage 2 eval 은 `--train-dataset AC` 만.
+  - **학습/merge (`stage{1,2}_{train,merge}.sh`)**: `--model MODEL --dataset {AC|AC_2|MC|all} --stage1-mode {full|lora}`. `--dataset MB` 는 거절됨. `stage2_*`: `--stage2-mode {full|lora}` (기본 lora), `--stage1-epoch N` (world-model variant 전용). `--dataset all` 은 `(AC, AC_2, MC)` 모두 순회.
+  - **평가 (`stage{1,2}_eval.sh`)**: `--model MODEL --train-dataset {AC|AC_2|MC} --eval-datasets LIST --stage1-mode ... --stage2-mode ... --stage1-epoch N --epochs LIST --variants LIST`. `--eval-datasets` 는 콤마 구분, 허용 `AC,AC_2,MC,MB`, 기본값은 `--train-dataset` 단일값. Stage 2 eval 은 `--train-dataset {AC|AC_2}` 만.
     - Stage 1 variants: `base`, `full_world_model`, `lora_world_model`.
     - Stage 2 variants: `base`, `full_base`, `lora_base`, `full_world_model`, `lora_world_model`.
 
@@ -63,6 +67,8 @@
 - `bash scripts/stage{1,2}_{train,merge,eval}.sh --help` — 모든 플래그 표기 확인
 - `python scripts/split_data.py --dataset MonkeyCollection --help` (MC: Stage 2 자동 skip)
 - `bash scripts/stage1_train.sh --dataset MB 2>&1` — 거절 메시지 확인
+- `bash scripts/stage1_train.sh --dataset AC_2 --model qwen2.5-vl-7b --help 2>&1` — AC_2 인식 확인 (exit 0)
+- HF naming AC_2: `source scripts/_common.sh && parse_args && hf_repo_id_stage1 qwen2.5-vl-7b AC_2 full 3` → `SaFD-00/qwen2.5-vl-7b-ac-2-world-model-stage1-full-epoch3`
 - HF naming 단위 검증:
   ```bash
   source scripts/_common.sh && parse_args

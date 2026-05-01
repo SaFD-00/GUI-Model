@@ -107,11 +107,11 @@ if [ -f "$BASE_DIR/.env" ]; then
 fi
 
 # --- dataset prefix / HF slug / data dir 매핑 (Cell 3 _DATASET_CONFIG 와 일치) -
-# MB 는 평가 전용 벤치마크(학습 파이프라인 미사용). 학습 대상 DS 는 {AC, MC}.
+# MB 는 평가 전용 벤치마크(학습 파이프라인 미사용). 학습 대상 DS 는 {AC, AC_2, MC}.
 # MB entry 는 평가 스크립트가 dataset_info 이름/slug 를 조합하는 데 사용.
-declare -A DS_PREFIX=(  [MB]="GUI-Model-MB" [AC]="GUI-Model-AC" [MC]="GUI-Model-MC" )
-declare -A HF_SLUG=(    [MB]="mb-"          [AC]="ac-"          [MC]="mc-"          )
-declare -A DS_DATADIR=( [MB]="MobiBench"    [AC]="AndroidControl" [MC]="MonkeyCollection" )
+declare -A DS_PREFIX=(  [MB]="GUI-Model-MB" [AC]="GUI-Model-AC" [AC_2]="GUI-Model-AC_2" [MC]="GUI-Model-MC" )
+declare -A HF_SLUG=(    [MB]="mb-"          [AC]="ac-"          [AC_2]="ac-2-"          [MC]="mc-"          )
+declare -A DS_DATADIR=( [MB]="MobiBench"    [AC]="AndroidControl" [AC_2]="AndroidControl_2" [MC]="MonkeyCollection" )
 
 # --- 모델 레지스트리 (Cell 3 _MODEL_CONFIG 와 일치) ---------------------------
 declare -A MODEL_ID=(
@@ -149,7 +149,7 @@ ALL_MODELS=(
 #   bash script.sh --stage1-mode lora           # 전체 모델 LoRA 학습/평가/merge
 #   bash script.sh                               # 기본값: 전체 모델 + 전체 학습 DS + full
 #
-# 학습 대상 DS 는 {AC, MC} 만. MobiBench(MB) 는 평가 전용 벤치마크이므로
+# 학습 대상 DS 는 {AC, AC_2, MC} 만. MobiBench(MB) 는 평가 전용 벤치마크이므로
 # --dataset MB 입력은 거절된다. 교차 평가는 stage{1,2}_eval.sh 가 제공하는
 # parse_eval_args (--train-dataset / --eval-datasets) 를 사용한다.
 parse_args() {
@@ -191,7 +191,7 @@ Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE]
 
 Options:
   --model MODEL        모델 short_name 또는 "all" (기본: all)
-  --dataset DS         AC | MC | all (기본: all) — 학습 대상 DS. MB 는 평가 전용이므로 사용 불가.
+  --dataset DS         AC | AC_2 | MC | all (기본: all) — 학습 대상 DS. MB 는 평가 전용이므로 사용 불가.
   --stage1-mode MODE   full | lora (기본: full) — Stage 1 학습 방식.
   --stage2-mode MODE   full | lora (기본: lora) — Stage 2 학습 방식 (Stage 2 전용).
   --stage1-epoch N     Stage 2 world-model variant 가 상류 base 로 삼을 Stage 1 epoch.
@@ -245,15 +245,16 @@ EOF
   fi
 
   case "$dataset_arg" in
-    AC)  DATASETS=(AC) ;;
-    MC)  DATASETS=(MC) ;;
-    all) DATASETS=(AC MC) ;;
+    AC)   DATASETS=(AC) ;;
+    AC_2) DATASETS=(AC_2) ;;
+    MC)   DATASETS=(MC) ;;
+    all)  DATASETS=(AC AC_2 MC) ;;
     MB)
       echo "Error: MobiBench (MB) 는 평가 전용 벤치마크입니다. 학습/merge 에는 사용할 수 없습니다." >&2
-      echo "       교차 평가는 stage{1,2}_eval.sh --train-dataset {AC|MC} --eval-datasets AC,MC,MB 를 사용하세요." >&2
+      echo "       교차 평가는 stage{1,2}_eval.sh --train-dataset {AC|AC_2|MC} --eval-datasets AC,AC_2,MC,MB 를 사용하세요." >&2
       exit 2
       ;;
-    *) echo "Error: Unknown dataset '$dataset_arg'. Use AC | MC | all." >&2; exit 2 ;;
+    *) echo "Error: Unknown dataset '$dataset_arg'. Use AC | AC_2 | MC | all." >&2; exit 2 ;;
   esac
 
   IFS=',' read -r -a EPOCHS <<< "$epochs_arg"
@@ -278,14 +279,14 @@ EOF
 # 학습 DS (HF Hub merged repo 식별용) 와 평가 DS (test JSONL 경로) 를 분리한다.
 #
 # 사용법:
-#   bash stage1_eval.sh --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,MC,MB
-#   bash stage2_eval.sh --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,MB \
+#   bash stage1_eval.sh --model qwen3-vl-8b --train-dataset AC --eval-datasets AC,AC_2,MC,MB
+#   bash stage2_eval.sh --model qwen3-vl-8b --train-dataset AC_2 --eval-datasets AC_2,MB \
 #        --stage1-mode full --stage1-epoch 3 --stage2-mode lora
 #
 # 생성 변수:
 #   MODELS          ALL_MODELS 또는 단일 모델 배열
-#   TRAIN_DATASET   AC | MC  (필수, 단일)
-#   EVAL_DATASETS   (AC|MC|MB)+ 배열  (기본: 단일값 = TRAIN_DATASET)
+#   TRAIN_DATASET   AC | AC_2 | MC  (필수, 단일)
+#   EVAL_DATASETS   (AC|AC_2|MC|MB)+ 배열  (기본: 단일값 = TRAIN_DATASET)
 #   STAGE1_MODE, STAGE2_MODE, STAGE1_EPOCH, EPOCHS, VARIANTS  (parse_args 와 동일)
 parse_eval_args() {
   local model_arg="all"
@@ -324,15 +325,15 @@ parse_eval_args() {
         variants_arg="$2"; shift 2 ;;
       -h|--help)
         cat <<EOF
-Usage: $(basename "$0") --train-dataset {AC|MC} [--eval-datasets LIST] [--model MODEL]
+Usage: $(basename "$0") --train-dataset {AC|AC_2|MC} [--eval-datasets LIST] [--model MODEL]
                          [--stage1-mode MODE] [--stage2-mode MODE] [--stage1-epoch N]
                          [--epochs LIST] [--variants LIST]
 
 Options:
   --model MODEL           모델 short_name 또는 "all" (기본: all)
-  --train-dataset DS      AC | MC (필수) — HF Hub merged repo 를 해석할 학습 DS
+  --train-dataset DS      AC | AC_2 | MC (필수) — HF Hub merged repo 를 해석할 학습 DS
   --eval-datasets LIST    콤마로 구분된 평가 DS 리스트 (기본: --train-dataset 단일값)
-                          허용값: AC, MC, MB (MB 는 단일 파일 overall 채점)
+                          허용값: AC, AC_2, MC, MB (MB 는 단일 파일 overall 채점)
   --stage1-mode MODE      full | lora (기본: full) — world-model variant 의 상류 Stage1 모드.
   --stage2-mode MODE      full | lora (기본: lora) — Stage 2 merge/eval 전용.
   --stage1-epoch N        Stage 2 world-model variant 의 HF repo 계보 번호.
@@ -355,14 +356,14 @@ EOF
   done
 
   if [[ -z "$train_arg" ]]; then
-    echo "Error: --train-dataset 는 필수입니다 (AC | MC)." >&2; exit 2
+    echo "Error: --train-dataset 는 필수입니다 (AC | AC_2 | MC)." >&2; exit 2
   fi
   case "$train_arg" in
-    AC|MC) TRAIN_DATASET="$train_arg" ;;
+    AC|AC_2|MC) TRAIN_DATASET="$train_arg" ;;
     MB)
       echo "Error: --train-dataset MB 는 허용되지 않습니다 (MobiBench 는 평가 전용)." >&2
       exit 2 ;;
-    *) echo "Error: --train-dataset must be AC | MC (got '$train_arg')." >&2; exit 2 ;;
+    *) echo "Error: --train-dataset must be AC | AC_2 | MC (got '$train_arg')." >&2; exit 2 ;;
   esac
 
   if [[ -z "$eval_arg" ]]; then
@@ -374,8 +375,8 @@ EOF
     fi
     for _d in "${EVAL_DATASETS[@]}"; do
       case "$_d" in
-        AC|MC|MB) ;;
-        *) echo "Error: --eval-datasets item '$_d' invalid (use AC | MC | MB)." >&2; exit 2 ;;
+        AC|AC_2|MC|MB) ;;
+        *) echo "Error: --eval-datasets item '$_d' invalid (use AC | AC_2 | MC | MB)." >&2; exit 2 ;;
       esac
     done
     unset _d

@@ -138,14 +138,22 @@ python -c "import accelerate, torch; print(accelerate.__file__, torch.__version_
 
 ## 데이터 준비
 
-학습 대상 DS 는 **AndroidControl (AC)** 과 **MonkeyCollection (MC)** 두 가지. **MobiBench (MB)** 는 평가 전용 벤치마크이므로 split 하지 않고 단일 파일 두 개만 둔다.
+학습 대상 DS 는 **AndroidControl (AC)**, **AndroidControl_2 (AC_2)**, **MonkeyCollection (MC)** 세 가지. **MobiBench (MB)** 는 평가 전용 벤치마크이므로 split 하지 않고 단일 파일 두 개만 둔다.
 
 ```
 data/
-├── AndroidControl/                 # 학습 + 평가
+├── AndroidControl/                 # 학습 + 평가 (Stage 1 + 2, ID/OOD split)
 │   ├── gui-model_stage1.jsonl
 │   ├── gui-model_stage2.jsonl
 │   └── images/
+├── AndroidControl_2/                # 학습 + 평가 (Stage 1 + 2, 단일 test)
+│   ├── gui-model_stage1.jsonl
+│   ├── gui-model_stage2.jsonl
+│   ├── gui-model_stage{1,2}_{train,test}.jsonl   # 사전 분할 데이터
+│   ├── gui-model_stage1_test_without_open_app.jsonl  # script 전용 변형
+│   └── episodes_meta.jsonl
+│   # NOTE: images/ 디렉토리 없음 — JSONL `images` 경로가 "AndroidControl/images/..." 로
+│   #       AC 의 images 를 그대로 참조한다.
 ├── MonkeyCollection/                # Stage 1 학습 + 평가 (Stage 2 없음)
 │   ├── gui-model_stage1.jsonl       # 약 100K
 │   └── images/
@@ -155,7 +163,7 @@ data/
     └── images/
 ```
 
-AC 는 **앱 도메인 일반화** 평가를 위해 **Stage 1 과 Stage 2 모두 in-domain / out-of-domain** 으로 분리한다 (두 stage 가 동일한 app partition 을 공유 — Stage 2 OOD 앱이 Stage 1 train 에도 포함되지 않도록 보장). MC 는 Stage 2 데이터가 없고 메타도 없으므로 Stage 1 random split 만 수행한다. MB 는 split 하지 않는다.
+AC 는 **앱 도메인 일반화** 평가를 위해 **Stage 1 과 Stage 2 모두 in-domain / out-of-domain** 으로 분리한다 (두 stage 가 동일한 app partition 을 공유 — Stage 2 OOD 앱이 Stage 1 train 에도 포함되지 않도록 보장). AC_2 는 AC 와 schema 가 동일하지만 **단일 test (ID/OOD 분리 없음)** 로 사전 분할되어 제공된다 — `split_data.py` 를 다시 돌릴 필요 없음. MC 는 Stage 2 데이터가 없고 메타도 없으므로 Stage 1 random split 만 수행한다. MB 는 split 하지 않는다.
 
 ```bash
 # 1) AC: 에피소드 메타데이터 (primary_app = 전경 앱 package_name) 추출
@@ -165,10 +173,13 @@ python scripts/extract_androidcontrol_metadata.py \
 # 2) AC: Stage 1 + Stage 2 모두 ID/OOD split (동일 partition 공유).
 python scripts/split_data.py --dataset AndroidControl
 
-# 3) MC: Stage 1 random split 만 (Stage 2 자동 skip).
+# 3) AC_2: 사전 분할 상태로 제공 — split 명령 불필요.
+#         (data/AndroidControl_2/gui-model_stage{1,2}_{train,test}.jsonl 이미 존재)
+
+# 4) MC: Stage 1 random split 만 (Stage 2 자동 skip).
 python scripts/split_data.py --dataset MonkeyCollection
 
-# 4) MB: split 불필요. data/MobiBench/gui-model_stage{1,2}.jsonl 만 있으면 평가 가능.
+# 5) MB: split 불필요. data/MobiBench/gui-model_stage{1,2}.jsonl 만 있으면 평가 가능.
 ```
 
 분할 규칙:
@@ -177,6 +188,7 @@ python scripts/split_data.py --dataset MonkeyCollection
 - **Stage 1 (AC)**: 위 partition 으로 entries 를 라우팅 → ID 풀에서 `test_id_size` 행 random sample → 잔여 + (옵션) null-app 행으로 `train_size` 까지 random sample → OOD 풀에서 `test_ood_size` 행 random sample.
 - **Stage 1 (MC)**: 메타 없음 → random split (`--stage1-ratio`, 기본 0.95).
 - **Stage 2 (AC)**: ID 풀에서 `test_id_size` 행을 action-type stratified 로 샘플 → 나머지 + null-app 행을 합쳐 `train_size` 로 stratified subsample. OOD 풀에서 `test_ood_size` 행을 stratified 로 샘플.
+- **AC_2 (Stage 1 + Stage 2)**: 사전 분할 단일 test. 평가는 `_hungarian_eval.py` / `_action_eval.py` 의 single-pair overall 모드로 채점.
 - **MB**: split 없음. `gui-model_stage1.jsonl` 과 `gui-model_stage2.jsonl` 각각이 평가 세트 전체. `_hungarian_eval.py` / `_action_eval.py` 모두 single-pair overall 모드로 채점.
 
 산출물 (학습 DS):
@@ -189,6 +201,16 @@ data/AndroidControl/
 ├── gui-model_stage1_test_ood.jsonl    # 3K  (default, out-of-domain apps)
 ├── episodes_meta.jsonl
 └── gui-model_stage2_{train,test_id,test_ood}.jsonl
+
+data/AndroidControl_2/
+├── gui-model_stage1.jsonl
+├── gui-model_stage1_train.jsonl       # ~67K
+├── gui-model_stage1_test.jsonl        # ~3.5K  (단일 test, ID/OOD 없음)
+├── gui-model_stage1_test_without_open_app.jsonl  # script 전용 변형 (notebook 미등록)
+├── gui-model_stage2.jsonl
+├── gui-model_stage2_train.jsonl       # ~28K
+├── gui-model_stage2_test.jsonl        # ~1.5K
+└── episodes_meta.jsonl
 
 data/MonkeyCollection/
 ├── gui-model_stage1.jsonl
@@ -279,7 +301,7 @@ bash scripts/stage2_train.sh --model qwen3-vl-8b --dataset AC \
 주요 동작:
 
 - `stage1_merge.sh` 는 모든 `checkpoint-*/` 를 돌면서 `trainer_state.json.epoch` 기반으로 `merged/{MODEL}_stage1_${MODE}/epoch-{E}/` 로 local merge + HF 에 `SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}` 푸시.
-- `stage1_eval.sh` 는 `--variants` + `--epochs` 로 지정된 HF repo 를 pull 해 `hungarian_metrics.json` 을 산출한다.
+- `stage1_eval.sh` 는 `--variants` + `--epochs` 로 지정된 HF repo 를 pull 해 `hungarian_metrics.json` 을 산출한다. 각 `(variant, EVAL_DS)` 마다 정규 산출 직후 추론 재실행 없이 `_hungarian_eval.py score --exclude-action open_app` 한 번을 더 호출하여 sibling `on-{EVAL_DS}-without-open_app/` 에 필터된 jsonl + 메트릭 + `predict_results.json` 을 idempotent 저장한다. 필터 test JSONL 은 `data/{DATADIR}/{prefix}_stage1{_test{_id,_ood}}_without_open_app.jsonl` 로 자동 생성/재사용.
 - `stage2_train.sh` 는 `stage2_{full|lora}/{MODEL}_{base,world-model-{full,lora}}.yaml` 을 학습한다. world-model variant 는 `--stage1-epoch N` 으로 지정된 로컬 `merged/{MODEL}_stage1_${STAGE1_MODE}/epoch-${N}/` 를 base 로 사용 (YAML `model_name_or_path` 런타임 sed 치환).
 - `stage2_merge.sh` 는 각 epoch 를 merge + HF push:
   - base variant: `SaFD-00/{short}-{slug}base-stage2-{MODE2}-epoch{E2}`
@@ -295,9 +317,12 @@ python scripts/eval_viewer.py
 python scripts/eval_viewer.py --stages 1 --datasets on-AC
 python scripts/eval_viewer.py --model qwen3-vl-8b
 python scripts/eval_viewer.py --stages 1 --variants base full_world_model/epoch-3
+python scripts/eval_viewer.py --data-dir AC_2 --model qwen3-vl-8b qwen2.5-vl-7b
 ```
 
-산출물 위치: `outputs/{DS}/eval/{MODEL}/stage{1,2}_eval/{pairs_on-AC.html, pairs_on-MB.html, pairs_summary.md}`.
+`--data-dir {AC|AC_2}` 로 데이터/산출물 루트를 선택한다 (기본 `AC`). `AC_2` 는 `data/AndroidControl_2/` + `outputs/AC_2/` 를 사용 (Stage 1/2 모두 split 없는 단일 test 파일). `--model` 은 다중 모델을 받아 모델별로 반복 실행한다.
+
+산출물 위치: `outputs/{AC|AC_2}/eval/{MODEL}/stage{1,2}_eval/{pairs_on-AC.html, pairs_on-MB.html, pairs_summary.md}`. Stage 1 은 정규/필터 4개 dataset (`on-AC`, `on-AC-without-open_app`, `on-MB`, `on-MB-without-open_app`) 에 대해 단일 호출로 4개 HTML 과 통합 `pairs_summary.md` 를 만든다.
 
 ## 산출물
 
@@ -310,7 +335,7 @@ GUI-Model/outputs/{MB|AC}/
 │   ├── {model}_stage2_{full,lora}_base/                                  # Stage 2 base
 │   └── {model}_stage2_{full,lora}_world_model_from_{full,lora}/          # Stage 2 world-model
 ├── eval/{model}/
-│   ├── stage1_eval/{base, {full,lora}_world_model/epoch-{E}}/
+│   ├── stage1_eval/{base, {full,lora}_world_model/epoch-{E}}/   # 각 variant 아래 on-{EVAL_DS}/ + on-{EVAL_DS}-without-open_app/ 쌍
 │   └── stage2_eval/{base,
 │                     {full,lora}_base/epoch-{E},
 │                     {full,lora}_world_model_from_{full,lora}_ep{E1}/epoch-{E2}}/

@@ -20,10 +20,18 @@
 #   MB : 단일 파일 gui-model_stage1.jsonl 1-회 (벤치마크 단일 파일)
 #        → hungarian_metrics.json (overall 1-섹션, single-pair)
 #
+# without_open_app 자동 산출:
+#   각 (variant, EVAL_DS) 마다 정규 eval 직후 추론 재실행 없이
+#   _hungarian_eval.py score --exclude-action open_app 한 번을 더 돌려
+#   sibling on-{EVAL_DS}-without-open_app/ 디렉토리에 필터된 jsonl + 메트릭을 산출.
+#   skip marker 가 별도라서 정규/필터 각각 독립 idempotent.
+#
 # 산출물:
 #   outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{variant}[/epoch-{E}]/on-{EVAL_DS}/
 #     EVAL_DS=AC      : generated_predictions_{id,ood}.jsonl + hungarian_metrics.json
 #     EVAL_DS=MC / MB : generated_predictions.jsonl          + hungarian_metrics.json (overall only)
+#   outputs/{TRAIN_DS}/eval/{MODEL}/stage1_eval/{variant}[/epoch-{E}]/on-{EVAL_DS}-without-open_app/
+#     동일 파일 구조 + predict_results.json (정규 eval 의 schema 와 동일)
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -88,6 +96,24 @@ run_variant_epoch_eval_on() {
           --test-ood '$test_ood' \
           --pred-ood '$out_dir/generated_predictions_ood.jsonl' \
           --output   '$out_dir/hungarian_metrics.json'"
+
+    # without_open_app: 추론 재실행 없이 정규 eval 산출물에서 open_app 행만 drop.
+    local out_rel_woa="${out_rel}-without-open_app"
+    local out_dir_woa="$LF_ROOT/$out_rel_woa"
+    local tag_woa="${tag}_without_open_app"
+    if ! skip_if_done "$tag_woa" "$out_dir_woa/hungarian_metrics.json"; then
+      run_logged "$tag_woa" \
+        bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel_woa' && \
+          python '$BASE_DIR/scripts/_hungarian_eval.py' score \
+            --test-id  '$test_id' \
+            --pred-id  '$out_dir/generated_predictions_id.jsonl' \
+            --test-ood '$test_ood' \
+            --pred-ood '$out_dir/generated_predictions_ood.jsonl' \
+            --exclude-action open_app \
+            --filtered-test-dir '$BASE_DIR/data/${datadir}' \
+            --filtered-pred-dir '$out_dir_woa' \
+            --output   '$out_dir_woa/hungarian_metrics.json'"
+    fi
   else
     local test_jsonl
     local ds_test
@@ -115,6 +141,22 @@ run_variant_epoch_eval_on() {
           --test   '$test_jsonl' \
           --pred   '$out_dir/generated_predictions.jsonl' \
           --output '$out_dir/hungarian_metrics.json'"
+
+    # without_open_app: 추론 재실행 없이 정규 eval 산출물에서 open_app 행만 drop.
+    local out_rel_woa="${out_rel}-without-open_app"
+    local out_dir_woa="$LF_ROOT/$out_rel_woa"
+    local tag_woa="${tag}_without_open_app"
+    if ! skip_if_done "$tag_woa" "$out_dir_woa/hungarian_metrics.json"; then
+      run_logged "$tag_woa" \
+        bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel_woa' && \
+          python '$BASE_DIR/scripts/_hungarian_eval.py' score \
+            --test   '$test_jsonl' \
+            --pred   '$out_dir/generated_predictions.jsonl' \
+            --exclude-action open_app \
+            --filtered-test-dir '$BASE_DIR/data/${datadir}' \
+            --filtered-pred-dir '$out_dir_woa' \
+            --output '$out_dir_woa/hungarian_metrics.json'"
+    fi
   fi
 }
 

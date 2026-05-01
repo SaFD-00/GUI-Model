@@ -9,6 +9,9 @@ Subcommand
 ----------
 score   : prediction.jsonl 의 평균 메트릭 계산 → hungarian_metrics.json 저장.
           ID/OOD 파일이 주어지면 overall/in_domain/out_of_domain 3-섹션 출력.
+          --exclude-action ACTION 으로 GT action.type==ACTION 행을 양쪽에서 동시 drop
+          후 메트릭 계산. 정규 eval 의 generated_predictions*.jsonl 을 그대로 입력으로
+          받아 추론 재실행 없이 필터 산출만 만든다.
 
 Examples
 --------
@@ -25,6 +28,16 @@ Examples
       --test-ood  data/AndroidControl/gui-model_stage1_test_ood.jsonl \\
       --pred-ood  .../generated_predictions_ood.jsonl \\
       --output    .../hungarian_metrics.json
+
+  # 3. 필터 산출 (open_app 행 제외) — 정규 eval 산출물을 재활용해 sibling 디렉토리에
+  #    필터 jsonl + hungarian_metrics + predict_results 를 idempotent 저장
+  python scripts/_hungarian_eval.py score \\
+      --test  data/MobiBench/gui-model_stage1.jsonl \\
+      --pred  on-MB/generated_predictions.jsonl \\
+      --exclude-action open_app \\
+      --filtered-test-dir data/MobiBench \\
+      --filtered-pred-dir on-MB-without-open_app \\
+      --output            on-MB-without-open_app/hungarian_metrics.json
 """
 from __future__ import annotations
 
@@ -213,6 +226,21 @@ def calc_bleu(reference, hypothesis, max_n=4):
     return bp * math.exp(log_avg)
 
 
+def calc_rouge_n(reference, hypothesis, n):
+    ref_tokens = reference.split()
+    hyp_tokens = hypothesis.split()
+    if len(ref_tokens) < n or len(hyp_tokens) < n:
+        return 0.0
+    ref_ng = Counter(tuple(ref_tokens[i:i + n]) for i in range(len(ref_tokens) - n + 1))
+    hyp_ng = Counter(tuple(hyp_tokens[i:i + n]) for i in range(len(hyp_tokens) - n + 1))
+    overlap = sum((ref_ng & hyp_ng).values())
+    if overlap == 0:
+        return 0.0
+    precision = overlap / sum(hyp_ng.values())
+    recall    = overlap / sum(ref_ng.values())
+    return 2 * precision * recall / (precision + recall)
+
+
 def calc_rouge_l(reference, hypothesis):
     ref_tokens = reference.split()
     hyp_tokens = hypothesis.split()
@@ -248,6 +276,8 @@ def evaluate_pairs(gt_entries, pred_entries):
         pred_text = pred_entry.get('predict', pred_entry.get('output', ''))
         results.append({
             'bleu':        calc_bleu(gt_text, pred_text),
+            'rouge_1':     calc_rouge_n(gt_text, pred_text, 1),
+            'rouge_2':     calc_rouge_n(gt_text, pred_text, 2),
             'rouge_l':     calc_rouge_l(gt_text, pred_text),
             'exact_match': 1.0 if gt_text.strip() == pred_text.strip() else 0.0,
             'hungarian':   compute_hungarian_acc(pred_text, gt_text),
@@ -259,6 +289,8 @@ def evaluate_pairs(gt_entries, pred_entries):
     return {
         'total': total,
         'avg_bleu':           round(avg('bleu'), 4),
+        'avg_rouge_1':        round(avg('rouge_1'), 4),
+        'avg_rouge_2':        round(avg('rouge_2'), 4),
         'avg_rouge_l':        round(avg('rouge_l'), 4),
         'exact_match_rate':   round(avg('exact_match'), 4),
         'avg_hungarian_ea':   round(hung_avg('hungarian_ea'), 4),
@@ -267,6 +299,60 @@ def evaluate_pairs(gt_entries, pred_entries):
         'avg_hungarian_rec':  round(hung_avg('hungarian_rec'), 4),
         'avg_hungarian_text': round(hung_avg('hungarian_text'), 4),
         'avg_hungarian_idx':  round(hung_avg('hungarian_idx'), 4),
+    }
+
+
+# ── open_app 등 GT action.type 기준 행 필터링 ────────────────────────────
+ACTION_MARKER = "## Action\n"
+
+
+def _gt_action_type(rec):
+    """GT entry 의 user 메시지에서 ## Action 블록 type 을 추출."""
+    text = rec["messages"][1]["value"]
+    idx = text.find(ACTION_MARKER)
+    if idx < 0:
+        return None
+    raw = text[idx + len(ACTION_MARKER):].strip()
+    try:
+        return json.loads(raw).get("type")
+    except json.JSONDecodeError:
+        return None
+
+
+def _filter_pairs(gts, preds, exclude_action):
+    """exclude_action 과 일치하는 GT 행을 양쪽에서 동시 drop."""
+    if not exclude_action:
+        return list(gts), list(preds)
+    keep = [i for i, gt in enumerate(gts) if _gt_action_type(gt) != exclude_action]
+    return [gts[i] for i in keep], [preds[i] for i in keep]
+
+
+def _write_jsonl_idempotent(records, path):
+    """이미 존재하면 no-op. 없으면 atomic 하게 jsonl 저장."""
+    p = Path(path)
+    if p.exists():
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _filtered_test_name(src_path, exclude_action):
+    """data/MobiBench/gui-model_stage1.jsonl + open_app
+       → gui-model_stage1_without_open_app.jsonl"""
+    p = Path(src_path)
+    return f"{p.stem}_without_{exclude_action}{p.suffix}"
+
+
+def _predict_results_dict(metrics):
+    """vllm_infer.py 가 만들어주는 predict_results.json 과 동일 schema."""
+    return {
+        "predict_bleu-4":  round(metrics["avg_bleu"]    * 100, 4),
+        "predict_rouge-1": round(metrics["avg_rouge_1"] * 100, 4),
+        "predict_rouge-2": round(metrics["avg_rouge_2"] * 100, 4),
+        "predict_rouge-l": round(metrics["avg_rouge_l"] * 100, 4),
+        "predict_total":   metrics["total"],
     }
 
 
@@ -290,6 +376,11 @@ def _cmd_score(args):
     _lazy_deps()
 
     split_mode = bool(args.test_id or args.pred_id or args.test_ood or args.pred_ood)
+    exclude = args.exclude_action or None
+
+    # 필터된 jsonl 산출용 디렉토리 (exclude 가 set 일 때만 사용)
+    test_out_dir = Path(args.filtered_test_dir) if args.filtered_test_dir else None
+    pred_out_dir = Path(args.filtered_pred_dir) if args.filtered_pred_dir else None
 
     if split_mode:
         missing = [
@@ -307,6 +398,16 @@ def _cmd_score(args):
         gt_ood = _load_jsonl(args.test_ood)
         pr_ood = _load_jsonl(args.pred_ood)
 
+        if exclude:
+            gt_id,  pr_id  = _filter_pairs(gt_id,  pr_id,  exclude)
+            gt_ood, pr_ood = _filter_pairs(gt_ood, pr_ood, exclude)
+            if test_out_dir is not None:
+                _write_jsonl_idempotent(gt_id,  test_out_dir / _filtered_test_name(args.test_id,  exclude))
+                _write_jsonl_idempotent(gt_ood, test_out_dir / _filtered_test_name(args.test_ood, exclude))
+            if pred_out_dir is not None:
+                _write_jsonl_idempotent(pr_id,  pred_out_dir / "generated_predictions_id.jsonl")
+                _write_jsonl_idempotent(pr_ood, pred_out_dir / "generated_predictions_ood.jsonl")
+
         m_id      = evaluate_pairs(gt_id, pr_id)
         m_ood     = evaluate_pairs(gt_ood, pr_ood)
         m_overall = evaluate_pairs(gt_id + gt_ood, pr_id + pr_ood)
@@ -319,18 +420,37 @@ def _cmd_score(args):
         _print_metrics_row("overall", m_overall)
         _print_metrics_row("in_domain", m_id)
         _print_metrics_row("out_of_domain", m_ood)
+        predict_results = _predict_results_dict(m_overall)
     else:
         if not (args.test and args.pred):
             print("[score] ERROR: --test and --pred required in single-pair mode",
                   file=sys.stderr)
             return 2
-        metrics = evaluate_stage1_predictions(args.test, args.pred)
+        gts   = _load_jsonl(args.test)
+        preds = _load_jsonl(args.pred)
+        if exclude:
+            gts, preds = _filter_pairs(gts, preds, exclude)
+            if test_out_dir is not None:
+                _write_jsonl_idempotent(gts, test_out_dir / _filtered_test_name(args.test, exclude))
+            if pred_out_dir is not None:
+                _write_jsonl_idempotent(preds, pred_out_dir / "generated_predictions.jsonl")
+        metrics = evaluate_pairs(gts, preds)
         _print_metrics_row("all", metrics)
+        predict_results = _predict_results_dict(metrics)
 
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    with open(args.output, 'w', encoding='utf-8') as f:
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open('w', encoding='utf-8') as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
-    print(f"[score] saved: {args.output}")
+    print(f"[score] saved: {out_path}")
+
+    # vllm_infer.py 가 정규 eval 산출에서 만들어주는 predict_results.json 과 동일 schema
+    # 를 sibling 으로 함께 저장. 정규 eval 산출에 이미 있으면 덮어쓰지 않는다.
+    pr_path = out_path.parent / "predict_results.json"
+    if not pr_path.exists():
+        with pr_path.open('w', encoding='utf-8') as f:
+            json.dump(predict_results, f, ensure_ascii=False, indent=4)
+        print(f"[score] saved: {pr_path}")
     return 0
 
 
@@ -350,6 +470,22 @@ def main():
     p_score.add_argument("--test-ood", default=None, dest="test_ood", help="ID/OOD: out-of-domain GT")
     p_score.add_argument("--pred-ood", default=None, dest="pred_ood", help="ID/OOD: out-of-domain prediction")
     p_score.add_argument("--output", required=True, help="Output metrics.json path")
+    p_score.add_argument(
+        "--exclude-action", default=None, dest="exclude_action",
+        help="GT messages 의 ## Action 블록 type 이 이 값과 일치하는 행을 양쪽에서 동시 drop 후 채점 "
+             "(예: open_app). 정규 eval 의 generated_predictions*.jsonl 을 그대로 입력으로 받아 "
+             "추론 재실행 없이 필터 산출을 만든다.",
+    )
+    p_score.add_argument(
+        "--filtered-test-dir", default=None, dest="filtered_test_dir",
+        help="--exclude-action 과 함께. 필터된 GT jsonl 을 이 디렉토리에 "
+             "{원본 stem}_without_{ACTION}.jsonl 로 idempotent 저장.",
+    )
+    p_score.add_argument(
+        "--filtered-pred-dir", default=None, dest="filtered_pred_dir",
+        help="--exclude-action 과 함께. 필터된 prediction jsonl 을 이 디렉토리에 "
+             "generated_predictions{,_id,_ood}.jsonl 로 idempotent 저장.",
+    )
     p_score.set_defaults(func=_cmd_score)
 
     args = parser.parse_args()

@@ -27,8 +27,10 @@ STAGE_CONFIG: dict[int, dict] = {
             # AC 는 Stage 1 도 ID/OOD split 이라 GT 가 두 파일로 분리됨.
             # 현 viewer 는 단일 GT 파일만 다루므로 ID 파일을 anchor 로 사용.
             # ID/OOD 양쪽을 한 화면에 보려면 viewer 자체 확장이 필요 (TODO).
-            "on-AC": REPO / "data/AndroidControl/gui-model_stage1_test_id.jsonl",
-            "on-MB": REPO / "data/MobiBench/gui-model_stage1.jsonl",
+            "on-AC":                  REPO / "data/AndroidControl/gui-model_stage1_test_id.jsonl",
+            "on-AC-without-open_app": REPO / "data/AndroidControl/gui-model_stage1_test_id_without_open_app.jsonl",
+            "on-MB":                  REPO / "data/MobiBench/gui-model_stage1.jsonl",
+            "on-MB-without-open_app": REPO / "data/MobiBench/gui-model_stage1_without_open_app.jsonl",
         },
         "metric_files": ["predict_results.json", "hungarian_metrics.json"],
         "metric_keys": [
@@ -68,6 +70,36 @@ STAGE_CONFIG: dict[int, dict] = {
         ],
     },
 }
+
+# `--data-dir` 별 STAGE_CONFIG override. AC_2 는 split 없는 단일 test 파일을 사용하므로
+# `data_dir` 와 `datasets` 만 덮어쓰면 됨 (metric_files / metric_keys / eval_subdir 은 동일).
+DATA_DIR_OVERRIDES: dict[str, dict[int, dict]] = {
+    "AC": {},
+    "AC_2": {
+        1: {
+            "data_dir": "AC_2",
+            "datasets": {
+                "on-AC":                  REPO / "data/AndroidControl_2/gui-model_stage1_test.jsonl",
+                "on-AC-without-open_app": REPO / "data/AndroidControl_2/gui-model_stage1_test_without_open_app.jsonl",
+                "on-MB":                  REPO / "data/MobiBench/gui-model_stage1.jsonl",
+                "on-MB-without-open_app": REPO / "data/MobiBench/gui-model_stage1_without_open_app.jsonl",
+            },
+        },
+        2: {
+            "data_dir": "AC_2",
+            "datasets": {
+                "on-AC": REPO / "data/AndroidControl_2/gui-model_stage2_test.jsonl",
+                "on-MB": REPO / "data/MobiBench/gui-model_stage2.jsonl",
+            },
+        },
+    },
+}
+
+
+def resolve_cfg(stage: int, data_dir: str) -> dict:
+    base = STAGE_CONFIG[stage]
+    override = DATA_DIR_OVERRIDES.get(data_dir, {}).get(stage, {})
+    return {**base, **override}
 
 PROMPT_RE = re.compile(
     r"^system\n(?P<sys>.*?)\nuser\n\n## Current State\n(?P<xml>.*?)\n\n## Action\n(?P<act>.*?)\nassistant\n?$",
@@ -327,9 +359,26 @@ def build_summary_md(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--model", default="qwen2.5-vl-7b", help="Model dir under outputs/{data_dir}/eval/")
+    p.add_argument(
+        "--data-dir",
+        choices=list(DATA_DIR_OVERRIDES.keys()),
+        default="AC",
+        help="Output/data directory. AC=AndroidControl (default), AC_2=AndroidControl_2.",
+    )
+    p.add_argument(
+        "--model",
+        nargs="+",
+        default=["qwen2.5-vl-7b"],
+        help="Model dir(s) under outputs/{data_dir}/eval/. Multiple allowed.",
+    )
     p.add_argument("--stages", type=int, nargs="+", choices=[1, 2], default=[1, 2])
-    p.add_argument("--datasets", nargs="+", default=["on-AC", "on-MB"])
+    p.add_argument(
+        "--datasets",
+        nargs="+",
+        default=["on-AC", "on-AC-without-open_app", "on-MB", "on-MB-without-open_app"],
+        help="Stage 1 은 정규/필터 4개가 기본. Stage 2 는 -without-open_app 을 산출하지 않으므로 "
+             "해당 항목은 자동 skip.",
+    )
     p.add_argument(
         "--variants",
         nargs="+",
@@ -341,55 +390,64 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    for stage in args.stages:
-        cfg = STAGE_CONFIG[stage]
-        eval_root = REPO / "outputs" / cfg["data_dir"] / "eval" / args.model / cfg["eval_subdir"]
-        if not eval_root.is_dir():
-            print(f"skip stage{stage}: {eval_root.relative_to(REPO)} not found")
-            continue
-
-        ds_marker = args.datasets[0]
-        discovered = discover_variants(eval_root, ds_marker)
-        if args.variants is not None:
-            unknown = [v for v in args.variants if v not in discovered]
-            if unknown:
-                raise SystemExit(
-                    f"stage{stage}: unknown variant(s) {unknown}. discovered: {discovered}"
-                )
-            variants = list(args.variants)
-        else:
-            variants = discovered
-        if not variants:
-            print(f"skip stage{stage}: no variants found under {eval_root}")
-            continue
-
-        per_ds: dict[str, tuple[dict, int]] = {}
-        for ds_name in args.datasets:
-            test_path = cfg["datasets"][ds_name]
-            ds_variants = [v for v in variants if (eval_root / v / ds_name).is_dir()]
-            if not ds_variants:
-                print(f"skip stage{stage}/{ds_name}: no variants have this DS")
+    for model in args.model:
+        for stage in args.stages:
+            cfg = resolve_cfg(stage, args.data_dir)
+            eval_root = REPO / "outputs" / cfg["data_dir"] / "eval" / model / cfg["eval_subdir"]
+            if not eval_root.is_dir():
+                print(f"skip {model}/stage{stage}: {eval_root.relative_to(REPO)} not found")
                 continue
-            doc, metrics, n = build_dataset(
-                stage,
-                ds_name,
-                test_path,
-                eval_root,
-                ds_variants,
-                cfg["metric_files"],
-                cfg["metric_keys"],
-            )
-            target = eval_root / f"pairs_{ds_name}.html"
-            target.write_text(doc)
-            size_mb = target.stat().st_size / 1024 / 1024
-            print(
-                f"wrote {target.relative_to(REPO)}  rows={n}  variants={len(ds_variants)}  size={size_mb:.1f}MB"
-            )
-            per_ds[ds_name] = (metrics, n)
-        if per_ds:
-            summary_path = eval_root / "pairs_summary.md"
-            summary_path.write_text(build_summary_md(stage, eval_root, cfg["metric_keys"], per_ds))
-            print(f"wrote {summary_path.relative_to(REPO)}")
+
+            # discover_variants 는 단일 ds_marker 가 모든 variant 에 존재한다고 가정.
+            # Stage 1 이면 정규 on-AC 가 anchor, Stage 2 면 첫 stage2 dataset (현재는 on-AC).
+            ds_marker = next((d for d in args.datasets if d in cfg["datasets"]), None)
+            if ds_marker is None:
+                print(f"skip {model}/stage{stage}: no datasets matched stage{stage} config")
+                continue
+            discovered = discover_variants(eval_root, ds_marker)
+            if args.variants is not None:
+                unknown = [v for v in args.variants if v not in discovered]
+                if unknown:
+                    raise SystemExit(
+                        f"{model}/stage{stage}: unknown variant(s) {unknown}. discovered: {discovered}"
+                    )
+                variants = list(args.variants)
+            else:
+                variants = discovered
+            if not variants:
+                print(f"skip {model}/stage{stage}: no variants found under {eval_root}")
+                continue
+
+            per_ds: dict[str, tuple[dict, int]] = {}
+            for ds_name in args.datasets:
+                if ds_name not in cfg["datasets"]:
+                    # Stage 2 에는 -without-open_app 항목이 없음. 자동 skip.
+                    continue
+                test_path = cfg["datasets"][ds_name]
+                ds_variants = [v for v in variants if (eval_root / v / ds_name).is_dir()]
+                if not ds_variants:
+                    print(f"skip {model}/stage{stage}/{ds_name}: no variants have this DS")
+                    continue
+                doc, metrics, n = build_dataset(
+                    stage,
+                    ds_name,
+                    test_path,
+                    eval_root,
+                    ds_variants,
+                    cfg["metric_files"],
+                    cfg["metric_keys"],
+                )
+                target = eval_root / f"pairs_{ds_name}.html"
+                target.write_text(doc)
+                size_mb = target.stat().st_size / 1024 / 1024
+                print(
+                    f"wrote {target.relative_to(REPO)}  rows={n}  variants={len(ds_variants)}  size={size_mb:.1f}MB"
+                )
+                per_ds[ds_name] = (metrics, n)
+            if per_ds:
+                summary_path = eval_root / "pairs_summary.md"
+                summary_path.write_text(build_summary_md(stage, eval_root, cfg["metric_keys"], per_ds))
+                print(f"wrote {summary_path.relative_to(REPO)}")
 
 
 if __name__ == "__main__":
