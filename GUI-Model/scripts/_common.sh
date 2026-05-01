@@ -584,21 +584,34 @@ build_infer_cmd() {
   # mm_processor_kwargs: LlamaFactory 학습 후 저장된 preprocessor_config.json 의
   # max_pixels/min_pixels 가 null 로 덮여 transformers smart_resize 가 터지는 것을
   # 런타임 오버라이드로 회피한다.
-  # max_pixels 는 LF cap (--image_max_pixels=4233600) 과 통일해 vllm processor 가
-  # 추가 다운샘플하지 않도록 한다. min_pixels 는 family 별 기본 (factor² × 4) — README 표 참조.
-  #   Qwen2/2.5-VL  (factor 28): min=4·28²=3,136
-  #   Qwen3-VL/3.5  (factor 32): min=4·32²=4,096
-  local mm_max=4233600 mm_min=3136
+  # max_pixels 는 학습 YAML 의 image_max_pixels (노트북 Cell 5) 와 통일해 vllm
+  # processor 가 추가 다운샘플하지 않도록 한다.
+  #
+  # 정책: token 예산은 학습 데이터셋 (TRAIN_DATASET) 으로 결정한다 — 학습된 모델은
+  # 평가 데이터셋과 무관하게 학습 시 budget 을 그대로 사용해야 mismatch 가 없다.
+  #   TRAIN_DATASET=AC_2  → max_tokens=5400  (AC2 학습 모델, 모든 평가 ds 에 동일)
+  #   TRAIN_DATASET=AC|MC → max_tokens=2048  (family default)
+  # family 별 factor (patch×merge) 에 따라 max_pixels = max_tokens × factor², 그리고
+  # min_pixels = 4 × factor² 로 환산:
+  #   Qwen2/2.5-VL  (factor 28): 2048→1,605,632 / 5400→4,233,600  | min=3,136
+  #   Qwen3-VL/3.5  (factor 32): 2048→2,097,152 / 5400→5,529,600  | min=4,096
+  local mm_max_tokens=2048
+  if [[ "${TRAIN_DATASET:-}" == "AC_2" ]]; then
+    mm_max_tokens=5400
+  fi
+  local _factor=28 mm_min=3136
   if [[ "$template" == qwen3_vl* || "$template" == qwen3_5* ]]; then
+    _factor=32
     mm_min=4096
   fi
+  local mm_max=$(( mm_max_tokens * _factor * _factor ))
   INFER_CMD="python scripts/vllm_infer.py \
       --model_name_or_path '$model_path' \
       --dataset '$ds_name' \
       --dataset_dir '$LF_ROOT/data' \
       --template $template \
       --cutoff_len 8192 \
-      --image_max_pixels 4233600 \
+      --image_max_pixels $mm_max \
       $enable_thinking_flag \
       --vllm_config '{\"gpu_memory_utilization\": 0.80, \"mm_processor_kwargs\": {\"min_pixels\": $mm_min, \"max_pixels\": $mm_max}}' \
       --save_name        '$save_rel' \

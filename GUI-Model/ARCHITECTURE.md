@@ -74,7 +74,14 @@ gui-model       gui-model.ipynb     llamafactory-cli train/export    Qwen2-VL ×
 
 > Qwen3.5-Base 는 LlamaFactory 가 multimodal `hf_model_type=qwen3_5` 로 인식하며 (Qwen3-VL 과 동일 그룹, `LlamaFactory/src/llamafactory/train/mca/workflow.py`), `template=qwen3_5_nothink` 로 학습한다. `vllm_infer.py` 호출 시 `_common.sh::build_infer_cmd` 가 `--enable_thinking False` 를 자동 주입한다.
 
-모델 family 별 image-pixel budget 은 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에서 관리된다 (Qwen2/2.5-VL: factor 28 / 1,605,632 px / 3,136 px, Qwen3-VL & Qwen3.5: factor 32 / 2,097,152 px / 4,096 px). YAML 의 `image_max_pixels` / `image_min_pixels` 는 family config 에서 자동 주입된다.
+모델 family 별 image-pixel budget 은 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` (factor / max_tokens / min_tokens) 와 `_DATASET_CONFIG[ds]["image_overrides"]` 의 token 단위 override 로 관리된다. token 예산은 **학습 데이터셋** 으로 결정된다 — AC1·MC 학습은 family default `max_tokens=2048`, AC2 학습은 dataset override `max_tokens=5400` 을 사용한다. `min_tokens=4` 는 family 공통. family 별 `factor` (Qwen2/2.5-VL=28, Qwen3-VL·Qwen3.5=32) 로 환산된 결과:
+
+| 학습 DS | Qwen2/2.5-VL (factor 28) | Qwen3-VL · Qwen3.5 (factor 32) |
+|---|---|---|
+| AC, MC (2048 tokens) | 1,605,632 / 3,136 | 2,097,152 / 4,096 |
+| AC2 (5400 tokens) | 4,233,600 / 3,136 | 5,529,600 / 4,096 |
+
+YAML 의 `image_max_pixels` / `image_min_pixels` 는 CONFIGS 빌더가 family default 에 dataset override 를 token-aware 로 덮어써 자동 주입한다. 평가측 `scripts/_common.sh::build_infer_cmd` 는 `TRAIN_DATASET` 글로벌 (parse_args 에서 set) 로 학습 DS 를 식별하여 동일 budget 을 적용 — 학습된 모델은 평가 데이터셋과 무관하게 학습 시 budget 으로 추론한다 (학습-추론 mismatch 방지).
 
 ### 하이퍼파라미터
 

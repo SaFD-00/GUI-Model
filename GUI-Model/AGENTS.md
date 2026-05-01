@@ -8,7 +8,7 @@
 - **8개 Vision-Language 모델 (모두 Qwen 계열)** 을 지원한다: Qwen2-VL ×2, Qwen2.5-VL ×2, Qwen3-VL ×2, Qwen3.5-Base ×2 (`template=qwen3_5_nothink`, LlamaFactory `hf_model_type=qwen3_5` multimodal 그룹).
 - **GPU-aware `per_device_train_batch_size`**: `.env` 의 `GPU_TYPE` (`RTX5090` / `A100` / `H100`) 와 모델 size 로 `_PER_DEVICE_BS_BY_SIZE` 표를 조회 (Cell 5 의 `lf_per_device_bs(size)` 헬퍼). `NPROC_PER_NODE ∈ {1,2,4,8}` 만 허용. 4 가지 GPU 수 모두에서 `GLOBAL_BATCH_SIZE=64` 가 정수로 나뉘도록 표 값을 유지해야 한다.
 - 모델 레지스트리는 두 곳에 있다: 노트북 Section 0 의 `_MODEL_CONFIG` 와 `scripts/_common.sh` 의 `MODEL_ID` / `MODEL_TEMPLATE` / `ALL_MODELS`. 두 곳을 동시에 수정해야 한다.
-- 모델 family 별 image budget 은 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에서 관리된다 (Qwen2/2.5-VL: factor 28 / 1,605,632 px, Qwen3-VL & Qwen3.5: factor 32 / 2,097,152 px).
+- 모델 family 별 image budget 은 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` (factor / max_tokens / min_tokens) 와 `_DATASET_CONFIG[ds]["image_overrides"]` 의 token 단위 override 로 관리된다. token 예산은 학습 데이터셋으로 결정 — AC1·MC 학습은 family default `max_tokens=2048` (Qwen2/2.5-VL → 1,605,632 / Qwen3-VL·3.5 → 2,097,152), AC2 학습은 override `max_tokens=5400` (4,233,600 / 5,529,600). 평가는 `TRAIN_DATASET` 으로 동일 budget 을 적용한다.
 - 학습/export 는 `gui-model` env 에 설치된 `LlamaFactory/` clone + `llamafactory-cli` 가 수행한다.
 - 평가 (`scripts/stage{1,2}_eval.sh`) 는 `vllm_infer.py` 가 HF 표준 safetensors / PEFT adapter 를 그대로 로드.
 - [`gui_model/`](./gui_model) 패키지는 사실상 배포용 스텁이며, 핵심 파이프라인 로직은 여기에 없다.
@@ -86,4 +86,5 @@
 - notebook section 순서가 바뀌면 README 와 ARCHITECTURE 의 section mapping 도 같이 갱신한다.
 - shell script 전제조건이 바뀌면 README, ARCHITECTURE, AGENTS 를 함께 수정한다.
 - 모델을 추가하면 notebook `_MODEL_CONFIG`, `_common.sh` 모델 레지스트리, README 모델 테이블, ARCHITECTURE 모델 레지스트리 테이블을 모두 갱신한다.
-- 새 family 추가 시 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에 image budget (factor / max_pixels / min_pixels) 을 추가한다.
+- 새 family 추가 시 노트북 Cell 5 의 `MODEL_FAMILY_CONFIG` 에 `factor` / `max_tokens` / `min_tokens` 를 명시한다 (`max_pixels = max_tokens × factor²`, `min_pixels = min_tokens × factor²`). family default 는 `max_tokens=2048`, `min_tokens=4`. `scripts/_common.sh::build_infer_cmd` 의 template 분기 (factor / mm_min) 도 함께 갱신한다.
+- 새 dataset 의 image budget 이 family default 와 달라야 하면 `_DATASET_CONFIG[ds]["image_overrides"]` 에 token 단위로 둔다 (`{"max_tokens": N}`) — 빌더가 family `factor²` 로 환산한다. 평가측은 `scripts/_common.sh::build_infer_cmd` 의 `TRAIN_DATASET` 분기를 갱신해 학습 DS 와 동일 budget 을 사용하도록 한다 (예: AC2 학습 → `max_tokens=5400`, family 별 4,233,600 / 5,529,600).

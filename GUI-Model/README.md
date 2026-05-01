@@ -30,12 +30,19 @@
 
 ### 모델 계열별 image budget
 
-학습 YAML 의 `image_max_pixels` / `image_min_pixels` 는 vision encoder patch-size (factor) 에 맞춰 family 별 자동 주입된다 (`gui-model.ipynb` Cell 5 의 `MODEL_FAMILY_CONFIG`).
+학습 YAML 의 `image_max_pixels` / `image_min_pixels` 는 vision encoder patch-size (factor) 와 학습 데이터셋에 따라 결정된다 (`gui-model.ipynb` Cell 5 의 `MODEL_FAMILY_CONFIG` + `_DATASET_CONFIG[ds]["image_overrides"]`). token 예산은 **학습 데이터셋** 으로 정해지고, 학습된 모델이 어떤 ds 를 평가하든 학습 시 budget 을 그대로 사용한다 (학습-추론 mismatch 방지).
 
-| family | factor | max_pixels | min_pixels |
-|--------|--------|-----------|------------|
-| Qwen2-VL · Qwen2.5-VL | 28 | 1,605,632 (= 2048 × 28²) | 3,136 (= 4 × 28²) |
-| Qwen3-VL · Qwen3.5 | 32 | 2,097,152 (= 2048 × 32²) | 4,096 (= 4 × 32²) |
+| family | patch | merge | factor | min_tokens | min_pixels |
+|--------|-------|-------|--------|-----------|------------|
+| Qwen2-VL · Qwen2.5-VL | 14 | 2 | 28 | 4 | 3,136 (= 4 × 28²) |
+| Qwen3-VL · Qwen3.5 | 16 | 2 | 32 | 4 | 4,096 (= 4 × 32²) |
+
+| 학습 DS | max_tokens | Qwen2/2.5-VL `max_pixels` | Qwen3-VL/3.5 `max_pixels` |
+|---|---|---|---|
+| AndroidControl (AC), MonkeyCollection (MC) | 2,048 (family default) | 1,605,632 (= 2048 × 28²) | 2,097,152 (= 2048 × 32²) |
+| AndroidControl_2 (AC2) | 5,400 (dataset override) | 4,233,600 (= 5400 × 28²) | 5,529,600 (= 5400 × 32²) |
+
+> 평가측 (`scripts/_common.sh::build_infer_cmd`) 은 `TRAIN_DATASET` 환경변수로 학습 DS 를 식별하여 동일 budget 을 적용한다. 즉 AC2 로 학습한 모델은 AC1·MC·MB 평가에도 5400-tokens 예산을 사용한다.
 
 ## 디렉토리 구조
 
