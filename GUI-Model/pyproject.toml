@@ -8,13 +8,14 @@ version = "0.1.0"
 description = "Training and evaluation pipeline for GUI world modeling and action prediction."
 requires-python = ">=3.10,<3.13"
 # 공통 deps. transformers / 서브프로젝트 / deepspeed / vllm 등은 extras 에서 선언한다.
-# 설치는 단일 env (`gui-model`) 에서:
-#     conda activate gui-model
-#     pip install -e ./LlamaFactory
-#     pip install -e '.[llamafactory]'
-# transformers 는 `>=4.56.0,<4.57` 로 고정한다 (vllm 0.11.2 의 `transformers<5` 제약과
-# LlamaFactory 서브프로젝트 pin `<=5.2.0` 의 교집합 안에서, 4.57.x 의 Qwen2.5-VL
-# image token/feature strict mismatch 회귀를 피하기 위해 4.56.x 까지만 허용).
+# 설치는 단일 .venv (uv) 에서:
+#     uv venv --python 3.12
+#     uv sync --extra llamafactory
+#     source .venv/bin/activate
+# transformers 는 `>=4.57.1,<4.58` 로 고정한다 (Qwen3-VL processor 가 4.57+ 에서
+# 도입됐고, vllm 0.11.2 의 `transformers<5` 와 LlamaFactory pin `!=4.57.0,<=5.2.0`
+# 의 교집합. Qwen2.5-VL 학습은 4.57.x 의 token/feature strict mismatch 회귀 영향을
+# 받을 수 있으므로 별도 env 또는 재검증 필요).
 # 두 pin 이 겹치므로 `--no-deps` 우회는 더 이상 필요 없다.
 # 서브프로젝트의 `pyproject.toml` 은 수정하지 않는다.
 dependencies = [
@@ -32,6 +33,8 @@ dependencies = [
   "jieba",
   "rouge-chinese",
   "huggingface_hub>=0.34.0",
+  # accelerate 는 `accelerate launch` 로 직접 호출되므로 transitive 에 맡기지
+  # 않고 명시적으로 고정한다 (CLI 보장).
   "accelerate>=1.3.0,<=1.11.0",
   # torch 2.9.x + Qwen2.5-VL `Conv3D` (visual.patch_embed) 조합은 심각한 학습 성능
   # 회귀 (pytorch/pytorch#166122) 가 있어 LlamaFactory loader 가 ValueError 로 차단한다.
@@ -40,7 +43,42 @@ dependencies = [
   "torchvision>=0.19.0,<0.24",
 ]
 
-# optional-dependencies 는 setup.py 의 EXTRAS 에서 동적으로 채운다 —
-# local subproject (`./LlamaFactory`) 를 PEP 508 `file://` 절대 경로로
-# 끌어와야 해서 선언적 테이블로는 표현할 수 없다. 여기서는 dynamic 만 선언한다.
-dynamic = ["optional-dependencies"]
+# LlamaFactory 전용 (Qwen2/2.5/3-VL 계열). 서브프로젝트는 [tool.uv.sources] 가
+# editable path 로 묶어 함께 해소한다 (별도 `pip install -e ./LlamaFactory` 불필요).
+[project.optional-dependencies]
+llamafactory = [
+  "llamafactory",
+  # vllm 0.11.2 가 `transformers<5,>=4.56.0` 을 강제하므로 5.x 는 사용 불가.
+  # LlamaFactory 서브프로젝트 pin (`>=4.55.0,<=5.2.0,!=4.57.0`) 과의 교집합 = 4.56–4.57.x.
+  # Qwen3-VL processor 는 4.57+ 에서 추가됐으므로 4.57.1 이상 필요.
+  # 4.57.x 는 Qwen2.5-VL `get_placeholder_mask` strict mismatch 회귀가 있으니
+  # Qwen2.5-VL 학습 시 별도 env 또는 재검증이 필요하다.
+  "transformers>=4.57.1,<4.58",
+  "deepspeed>=0.10.0,<=0.18.4",
+  # vllm 0.11.0 은 Qwen2.5-VL config 의 `rope_parameters.rope_type` (modern) +
+  # `type=mrope` (legacy) 동시 존재 케이스에서 pydantic ValidationError 를 던지므로
+  # 0.11.2 이상 사용. 단 `transformers<5` 제약 때문에 0.11.x 대 안에서만 검증됨.
+  "vllm>=0.11.2",
+  # LlamaFactory scripts/vllm_infer.py 가 비디오 처리용으로 `import av`, CLI 진입점으로 `import fire`,
+  # HF 데이터셋 로더로 `from datasets import load_dataset` 를 한다.
+  "av",
+  "fire",
+  "datasets",
+  # LlamaFactory 서브프로젝트의 런타임 import 체인에서 필요한 deps 를
+  # 우리 쪽에서 명시 (서브프로젝트 pyproject 는 건드리지 않으므로).
+  "peft>=0.18.0,<=0.18.1",
+  "trl>=0.18.0,<=0.24.0",
+  "torchdata>=0.10.0,<=0.11.0",
+  "einops",
+  "modelscope",
+  "hf-transfer",
+  "omegaconf",
+]
+
+[tool.uv.sources]
+# LlamaFactory 는 vendored 서브프로젝트로 editable 설치한다. 업스트림 sync 보존을
+# 위해 서브프로젝트의 pyproject.toml 은 건드리지 않고 path source 만 잡는다.
+llamafactory = { path = "./LlamaFactory", editable = true }
+
+[tool.setuptools.packages.find]
+include = ["gui_model*"]

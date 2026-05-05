@@ -21,6 +21,9 @@ dependencies = [
 where = ["src"]
 include = ["monkey_collector*"]
 
+[tool.uv]
+package = true
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
