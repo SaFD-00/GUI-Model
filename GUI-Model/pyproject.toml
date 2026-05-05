@@ -58,7 +58,7 @@ llamafactory = [
   # vllm 0.11.0 은 Qwen2.5-VL config 의 `rope_parameters.rope_type` (modern) +
   # `type=mrope` (legacy) 동시 존재 케이스에서 pydantic ValidationError 를 던지므로
   # 0.11.2 이상 사용. 단 `transformers<5` 제약 때문에 0.11.x 대 안에서만 검증됨.
-  "vllm>=0.11.2",
+  "vllm>=0.11.2,<0.12",
   # LlamaFactory scripts/vllm_infer.py 가 비디오 처리용으로 `import av`, CLI 진입점으로 `import fire`,
   # HF 데이터셋 로더로 `from datasets import load_dataset` 를 한다.
   "av",
@@ -81,11 +81,15 @@ llamafactory = [
 llamafactory = { path = "./LlamaFactory", editable = true }
 
 [tool.uv]
-# vLLM 0.11.2 의 transitive 제약 (torchvision==0.24.0 → torch==2.9) 을 우리 가드 (torch<2.9 — Qwen2.5-VL Conv3D 회귀)
-# 가 깨면 안 되므로 override 한다. pip 시절에는 pip 가 silent 하게 우리 pin 을 우선했으나 uv 는 strict 라 명시 필요.
+# vLLM 0.11.x 의 transitive 제약 (torchvision==0.24.0 → torch==2.9 / torchaudio 신버전 등)
+# 을 우리 가드 (torch<2.9 — Qwen2.5-VL Conv3D 회귀) 가 깨면 안 되므로 override 한다.
+# pip 시절에는 pip 가 silent 하게 우리 pin 을 우선했으나 uv 는 strict 라 명시 필요.
+# torchaudio 도 함께 — LlamaFactory mm_plugin.py 가 import 하므로 torch 와 ABI 가 맞아야 한다
+# (mismatch 시 libcudart.so.NN 누락으로 OSError).
 override-dependencies = [
   "torch>=2.4.0,<2.9",
   "torchvision>=0.19.0,<0.24",
+  "torchaudio>=2.4.0,<2.9",
 ]
 
 [tool.setuptools.packages.find]
