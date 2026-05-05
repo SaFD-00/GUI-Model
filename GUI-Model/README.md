@@ -117,7 +117,7 @@ deepspeed · vllm · bitsandbytes 모두 단일 `.venv` 에 설치된다. 학습
 
 ### 전제
 
-- Python 3.10 이상, 3.13 미만 (`.python-version` 은 3.12 고정)
+- Python 3.11 이상, 3.13 미만 (`.python-version` 은 3.12 고정 — LlamaFactory 서브프로젝트가 `>=3.11.0` 을 요구하므로 우리도 동일 하한)
 - bash 4+ (`scripts/_common.sh` 기준)
 - `transformers>=4.57.1,<4.58` 로 고정 — 변경 시 [`pyproject.toml`](./pyproject.toml) 의 `dependencies` / `[project.optional-dependencies] llamafactory` 와 주석을 함께 갱신한다. **서브프로젝트 `LlamaFactory/pyproject.toml` 은 건드리지 않는다.**
 

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gui-model"
 version = "0.1.0"
 description = "Training and evaluation pipeline for GUI world modeling and action prediction."
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 # 공통 deps. transformers / 서브프로젝트 / deepspeed / vllm 등은 extras 에서 선언한다.
 # 설치는 단일 .venv (uv) 에서:
 #     uv venv --python 3.12
@@ -79,6 +79,14 @@ llamafactory = [
 # LlamaFactory 는 vendored 서브프로젝트로 editable 설치한다. 업스트림 sync 보존을
 # 위해 서브프로젝트의 pyproject.toml 은 건드리지 않고 path source 만 잡는다.
 llamafactory = { path = "./LlamaFactory", editable = true }
+
+[tool.uv]
+# vLLM 0.11.2 의 transitive 제약 (torchvision==0.24.0 → torch==2.9) 을 우리 가드 (torch<2.9 — Qwen2.5-VL Conv3D 회귀)
+# 가 깨면 안 되므로 override 한다. pip 시절에는 pip 가 silent 하게 우리 pin 을 우선했으나 uv 는 strict 라 명시 필요.
+override-dependencies = [
+  "torch>=2.4.0,<2.9",
+  "torchvision>=0.19.0,<0.24",
+]
 
 [tool.setuptools.packages.find]
 include = ["gui_model*"]
