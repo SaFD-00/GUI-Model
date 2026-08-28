@@ -30,7 +30,6 @@ if TYPE_CHECKING:  # imported for typing only; the runtime imports stay local
 # Milestones that are registered but not implemented yet. Keep this table and the
 # docs (README.md / ARCHITECTURE.md / AGENTS.md) in sync.
 UNIMPLEMENTED = {
-    "run": "milestone 4 (collection loop)",
     "export": "milestone 5 (Stage-1 export)",
 }
 
@@ -39,9 +38,8 @@ def _not_implemented(command: str) -> None:
     milestone = UNIMPLEMENTED[command]
     raise NotImplementedError(
         f"`atlas-collect {command}` is not implemented yet — it lands in {milestone}. "
-        f"M1 (scaffold/catalog/config) and M2 (xml encoding) are done, but M2 is a "
-        f"library with no CLI surface, so `atlas-collect catalog` is the one working "
-        f"subcommand. See ARCHITECTURE.md for the milestone plan."
+        f"M1-M4 are done: catalog, sync-installed, provision and run all work. "
+        f"See ARCHITECTURE.md for the milestone plan."
     )
 
 
@@ -258,8 +256,156 @@ def cmd_provision(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Host-pull collection loop over one or more catalog apps."""
-    _not_implemented("run")
-    return 1  # unreachable
+    from atlas_collector.adb import AdbClient
+    from atlas_collector.catalog import load_catalog
+    from atlas_collector.coverage import ActivityCoverage
+    from atlas_collector.explore import Explorer
+    from atlas_collector.loop import CollectionLoop
+    from atlas_collector.pagematch import MergePolicy, PageRegistry
+    from atlas_collector.session import Session
+
+    config = args.run_config
+    collection = config.collection
+    matching = config.page_matching
+
+    rows = load_catalog()
+    wanted = set(args.apps) - {"all"}
+    targets = [
+        row
+        for row in rows
+        if row.is_collectable and (not wanted or row.package_id in wanted)
+    ]
+    if not args.include_auth:
+        skipped = [r for r in targets if r.needs_auth]
+        targets = [r for r in targets if not r.needs_auth]
+        if skipped:
+            print(
+                f"skipping {len(skipped)} account_required app(s); "
+                f"pass --include-auth to include them"
+            )
+    if not targets:
+        print("no collectable apps matched — nothing to do")
+        return 0
+
+    budget_mode = args.budget_mode or collection.budget_mode
+    if args.max_duration:
+        from atlas_collector.config import parse_duration
+
+        duration = float(parse_duration(args.max_duration))
+    else:
+        duration = float(collection.max_duration_sec)
+    max_steps = args.max_steps if args.max_steps else collection.max_steps
+    # The inactive budget must not also stop the run: `time` means time.
+    if budget_mode == "time":
+        max_steps = 0
+    else:
+        duration = float("inf")
+
+    adb = AdbClient(serial=args.serial or config.device.serial)
+    print(f"device {adb.serial}: {len(targets)} app(s), budget {budget_mode}")
+
+    failures = 0
+    for position, row in enumerate(targets, start=1):
+        session = Session(
+            row.package_id, args.data_dir, args.runtime_dir, episode=row.package_id
+        )
+        if session.is_complete and not args.force:
+            print(f"[{position}/{len(targets)}] {row.package_id}: already complete, skipping")
+            continue
+
+        session.open(resume=not args.force)
+        declared = _declared_activities(adb, row.package_id)
+        coverage = ActivityCoverage(
+            package=row.package_id,
+            declared=declared,
+            source="dumpsys (incomplete — resolver table only)",
+            # ALWAYS dynamic with this source. dumpsys cannot see an activity
+            # that has no intent filter, so a fixed denominator built from it
+            # scores a perfectly healthy run at 0%. A fixed denominator is only
+            # honest when it comes from the manifest.
+            allow_dynamic_total=True,
+        )
+        coverage.open(session.runtime / "activity_coverage.csv")
+
+        loop = CollectionLoop(
+            adb,
+            session,
+            registry=PageRegistry(
+                policy=MergePolicy(matching.merge_policy),
+                max_diff_elements=matching.max_diff_elements,
+                same_activity_only=matching.same_activity_only,
+            ),
+            explorer=Explorer(),
+            coverage=coverage,
+            max_duration_sec=duration,
+            max_steps=max_steps,
+            action_delay_ms=collection.action_delay_ms,
+            stabilize={
+                "max_wait_sec": collection.stabilize_max_wait_sec,
+                "poll_ms": collection.stabilize_poll_ms,
+                "pixel_threshold": collection.stabilize_pixel_threshold,
+                "luma_delta": collection.stabilize_luma_delta,
+                "low_res_width": collection.stabilize_low_res_width,
+            },
+        )
+        print(f"[{position}/{len(targets)}] {row.app_name} ({row.package_id})")
+        try:
+            stats = loop.run()
+        except KeyboardInterrupt:
+            # Metadata is written by run()'s own exit path only on a clean end,
+            # so record the interruption here — otherwise the session looks
+            # untouched and a resume would restart its numbering.
+            session.write_metadata(completed=False, extra={"stop_reason": "interrupted"})
+            print("interrupted — session left resumable")
+            raise
+        except Exception as error:  # noqa: BLE001 - one bad app must not end the sweep
+            failures += 1
+            session.write_metadata(completed=False, extra={"stop_reason": f"error: {error}"})
+            print(f"    FAILED: {error}")
+            continue
+
+        coverage.log_summary()
+        print(
+            f"    {stats.triples} triples / {stats.observations} observations / "
+            f"{stats.pages} pages / {coverage.unique_visited}"
+            f"{'/' + str(coverage.total) if coverage.total else ''} activities "
+            f"— {stats.stop_reason}"
+        )
+    return 1 if failures else 0
+
+
+def _declared_activities(adb: object, package: str) -> set[str]:
+    """Activities `dumpsys` will admit to, scraped from the Activity Resolver Table.
+
+    THIS IS STRUCTURALLY INCOMPLETE and the caller must treat it as such. The
+    resolver table lists only activities carrying an intent filter; one launched
+    internally has no filter and never appears. Measured on the target device,
+    Markor declares 11 components here — none of which is the `IntroActivity`
+    that was actually on screen for the whole session. Scoring against it as a
+    fixed denominator reported 0% while the app ran perfectly.
+
+    So this returns a HINT, not ground truth, and `cmd_run` pairs it with
+    `allow_dynamic_total=True`. A fixed denominator needs the APK manifest
+    (androguard, cached in `catalog/activities.json`), which is the only source
+    that is complete and stable across devices.
+
+    Scoped to the resolver table rather than the whole dump because the whole
+    dump also yields providers and receivers — `androidx.startup.
+    InitializationProvider` is not an Activity, and counting it inflates the
+    denominator with things no exploration can ever reach.
+    """
+    import re
+
+    try:
+        out = adb.shell(f"dumpsys package {package}")  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - an unmeasurable denominator is not fatal
+        return set()
+    start = out.find("Activity Resolver Table:")
+    if start < 0:
+        return set()
+    end = out.find("Receiver Resolver Table:", start)
+    section = out[start : end if end > 0 else len(out)]
+    return set(re.findall(rf"({re.escape(package)}/[\w.$]+)", section))
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -404,7 +550,7 @@ def build_parser() -> argparse.ArgumentParser:
     # -- run (NOT IMPLEMENTED) ------------------------------------------------
     p_run = sub.add_parser(
         "run",
-        help="[NOT IMPLEMENTED - M4] Run the host-pull collection loop.",
+        help="Run the host-pull collection loop over the catalog.",
     )
     p_run.add_argument("--apps", nargs="+", default=["all"], help="Package ids, or 'all'.")
     p_run.add_argument("--serial", default=None, help="Device serial (default: autodetect).")
@@ -433,6 +579,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["api", "random"],
         default=None,
         help="Input-text generation mode. The LLM is used for input text ONLY.",
+    )
+    p_run.add_argument(
+        "--data-dir", default="data/raw", help="Persistent corpus root (default: data/raw)."
+    )
+    p_run.add_argument(
+        "--runtime-dir", default="runtime", help="Volatile run-state root (default: runtime)."
+    )
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-collect apps already marked complete, restarting their numbering.",
     )
     p_run.add_argument(
         "--include-auth",
