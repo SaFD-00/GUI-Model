@@ -500,6 +500,36 @@ def test_a_sibling_targets_screen_is_recovered_from_at_once(tmp_path):
     assert stats.steps_outside == 0, "a sibling is never counted as a tolerated excursion"
 
 
+def test_the_first_sibling_handoff_is_backed_out_of_not_restarted(tmp_path):
+    """A cold restart throws away the state exploration reached. org.tasks handed
+    off to Joplin 298 times in one session; restarting each time left it
+    re-exploring its opening screens (last 100 triples: 15 changed, down from
+    65%). BACK pops the sibling off our task and keeps the depth."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            Script(screen(package=SIBLING, tag="x"), f"{SIBLING}/.Main"),
+            Script(screen(tag="back")),
+        ]
+    )
+    build(tmp_path, adb, max_steps=3, sibling_packages={SIBLING}).run()
+    assert ("key", ("KEYCODE_BACK",)) in adb.actions
+    assert adb.clean_launches == 1, "only the session start was cold"
+
+
+def test_a_sibling_that_survives_back_is_restarted_cold(tmp_path):
+    """Joplin hands off to Markor's IntroActivity, which does not honour BACK."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            *[Script(screen(package=SIBLING, tag=str(i)), f"{SIBLING}/.Main") for i in range(3)],
+            Script(screen(tag="back")),
+        ]
+    )
+    build(tmp_path, adb, max_steps=5, sibling_packages={SIBLING}).run()
+    assert adb.clean_launches >= 2, "the start, then the escalation"
+
+
 def test_a_sibling_targets_screen_never_enters_the_corpus(tmp_path):
     """The tolerated-foreign branch persists its first frame before the count is
     checked. An exported record carries no package and `split_apps` holds OOD

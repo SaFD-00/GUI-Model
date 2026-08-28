@@ -328,6 +328,28 @@ class CollectionLoop:
         package = frame.package
         return bool(package) and package != self.session.package
 
+    def _leave_sibling(self, package: str, *, hard: bool) -> None:
+        """Get out of another target app, preferring BACK over a restart.
+
+        BACK first because the handoff usually pushed the sibling onto OUR task,
+        so popping it leaves this app exactly where exploration had reached.
+        Restarting throws that away, and it showed: org.tasks handed off to
+        Joplin 298 times in one session, and cold-restarting every time meant the
+        run kept re-exploring its opening screens -- its last 100 triples
+        produced 15 changed, down from 65% earlier in the same session.
+
+        `hard` is for a sibling that is STILL there on the next observation.
+        Measured why that case is needed: Joplin hands off to Markor's
+        IntroActivity, which does not honour BACK at all.
+        """
+        if hard:
+            self._recover(f"handed off to {package} again", clean=True)
+            return
+        self.stats.recoveries += 1
+        self.explorer.abandon_pending()
+        logger.info("recovering (handed off to {}) — pressing back", package)
+        self.adb.key("KEYCODE_BACK")
+
     def _recover(self, reason: str, *, clean: bool = False) -> None:
         """Return to the app and forget the pending action.
 
@@ -394,6 +416,7 @@ class CollectionLoop:
         consecutive_recoveries = 0
         steps_outside = 0
         stalled = 0
+        consecutive_siblings = 0
 
         while True:
             reason = self._budget_left()
@@ -444,8 +467,9 @@ class CollectionLoop:
             # foreign frame is still written before the count is checked.
             if self._is_sibling(frame):
                 steps_outside = 0
+                consecutive_siblings += 1
                 consecutive_recoveries += 1
-                self._recover(f"handed off to {frame.package}", clean=True)
+                self._leave_sibling(frame.package, hard=consecutive_siblings > 1)
                 previous = None
                 if consecutive_recoveries >= MAX_CONSECUTIVE_RECOVERIES:
                     self.stats.stop_reason = "could not stay in the app"
@@ -473,6 +497,7 @@ class CollectionLoop:
             else:
                 steps_outside = 0
                 consecutive_recoveries = 0
+                consecutive_siblings = 0
 
             current = self._persist(frame)
             self.explorer.observe(current.page_key)
