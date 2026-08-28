@@ -314,6 +314,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     adb = AdbClient(serial=args.serial or config.device.serial)
     print(f"device {adb.serial}: {len(targets)} app(s), budget {budget_mode}")
 
+    # Every app the catalog collects, not just this invocation's targets: a
+    # screen of app B is not app A's data whether or not B is being collected
+    # today, and `--apps A` must behave the same as a full sweep.
+    catalog_packages = {row.package_id for row in rows if row.is_collectable}
+
     failures = 0
     for position, row in enumerate(targets, start=1):
         session = Session(
@@ -351,6 +356,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             max_duration_sec=duration,
             max_steps=max_steps,
             action_delay_ms=collection.action_delay_ms,
+            sibling_packages=catalog_packages,
             stabilize={
                 "max_wait_sec": collection.stabilize_max_wait_sec,
                 "poll_ms": collection.stabilize_poll_ms,

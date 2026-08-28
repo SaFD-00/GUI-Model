@@ -175,6 +175,7 @@ class CollectionLoop:
         action_delay_ms: int = 1500,
         stabilize: dict[str, Any] | None = None,
         launch_settle_sec: float = 2.0,
+        sibling_packages: set[str] | None = None,
     ) -> None:
         self.adb = adb
         self.session = session
@@ -191,6 +192,10 @@ class CollectionLoop:
         #: How long to wait after a launch or relaunch before the first
         #: observation. An app needs a moment to draw; tests set it to 0.
         self.launch_settle_sec = launch_settle_sec
+        #: The OTHER apps in the collection catalog. Their screens are never this
+        #: app's, however the run reached them -- see the sibling branch in
+        #: `run` for why they are treated harder than any other foreign package.
+        self.sibling_packages = (sibling_packages or set()) - {session.package}
         self.stats = LoopStats()
 
         self._width = 1080
@@ -314,6 +319,10 @@ class CollectionLoop:
 
     # -- recovery ------------------------------------------------------------
 
+    def _is_sibling(self, frame: _Frame) -> bool:
+        """Whether this screen belongs to another app the catalog collects."""
+        return frame.package in self.sibling_packages
+
     def _is_outside(self, frame: _Frame) -> bool:
         """Whether this screen belongs to a package other than the target's."""
         package = frame.package
@@ -416,6 +425,27 @@ class CollectionLoop:
                 steps_outside = 0
                 consecutive_recoveries += 1
                 self._recover("drifted to the launcher")
+                previous = None
+                if consecutive_recoveries >= MAX_CONSECUTIVE_RECOVERIES:
+                    self.stats.stop_reason = "could not stay in the app"
+                    break
+                continue
+
+            # Another TARGET app is not a helper this app hands off to; it is a
+            # whole other app, and its screens must never be attributed to this
+            # one. Measured: Joplin reached Markor 84 times through a file-open
+            # handoff, and 95 of its 136 changed triples had a Markor screen on
+            # one side. Because `split_apps` holds OOD out by app and an exported
+            # record carries no package, those would be an undetectable leak of a
+            # held-out app into train.
+            #
+            # So this recovers at once AND skips the persist, which the tolerated
+            # branch below deliberately does not: at MAX_STEPS_OUTSIDE the first
+            # foreign frame is still written before the count is checked.
+            if self._is_sibling(frame):
+                steps_outside = 0
+                consecutive_recoveries += 1
+                self._recover(f"handed off to {frame.package}", clean=True)
                 previous = None
                 if consecutive_recoveries >= MAX_CONSECUTIVE_RECOVERIES:
                     self.stats.stop_reason = "could not stay in the app"

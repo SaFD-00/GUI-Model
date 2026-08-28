@@ -474,3 +474,63 @@ def test_dead_ends_that_still_move_the_screen_do_not_count_as_stalled(tmp_path):
     adb = FakeAdb(scripts)
     stats = build(tmp_path, adb, max_steps=MAX_STALLED_STEPS + 5).run()
     assert stats.stop_reason != "made no progress"
+
+
+# ---------------------------------------------------------------------------
+# Another app the catalog also collects
+# ---------------------------------------------------------------------------
+
+SIBLING = "com.other.target"
+
+
+def test_a_sibling_targets_screen_is_recovered_from_at_once(tmp_path):
+    """Not tolerated like a helper package: Joplin reached Markor -- itself one
+    of the 48 targets -- 84 times through a file-open handoff."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            *[Script(screen(package=SIBLING, tag=str(i)), f"{SIBLING}/.Main") for i in range(2)],
+            Script(screen(tag="back")),
+        ]
+    )
+    loop = build(tmp_path, adb, max_steps=4, sibling_packages={SIBLING})
+    stats = loop.run()
+    # MAX_STEPS_OUTSIDE would have tolerated three of these before recovering.
+    assert stats.recoveries >= 1
+    assert stats.steps_outside == 0, "a sibling is never counted as a tolerated excursion"
+
+
+def test_a_sibling_targets_screen_never_enters_the_corpus(tmp_path):
+    """The tolerated-foreign branch persists its first frame before the count is
+    checked. An exported record carries no package and `split_apps` holds OOD
+    out by app, so one leaked frame is undetectable downstream."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            Script(screen(package=SIBLING, tag="x"), f"{SIBLING}/.Main"),
+            Script(screen(tag="back")),
+        ]
+    )
+    loop = build(tmp_path, adb, max_steps=3, sibling_packages={SIBLING})
+    loop.run()
+    written = [
+        (loop.session.observation_path(i) / "raw.xml").read_text()
+        for i in range(loop.session.observation_count)
+    ]
+    assert not any(SIBLING in raw for raw in written), "a sibling screen was persisted"
+
+
+def test_a_non_catalog_helper_package_is_still_tolerated(tmp_path):
+    """The tolerance exists for a reason: the Settings search screen really is
+    `com.google.android.settings.intelligence` and belongs in the corpus."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            Script(screen(package="com.helper.sheet", tag="h"), "com.helper.sheet/.Share"),
+            Script(screen(tag="back")),
+        ]
+    )
+    loop = build(tmp_path, adb, max_steps=3, sibling_packages={SIBLING})
+    stats = loop.run()
+    assert stats.steps_outside >= 1
+    assert stats.recoveries == 0

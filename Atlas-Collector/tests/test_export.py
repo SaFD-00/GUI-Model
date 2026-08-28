@@ -42,8 +42,18 @@ def png_bytes(size=DEVICE) -> bytes:
     return buffer.getvalue()
 
 
-def dump(name: str = "settings_root") -> str:
-    return (FIXTURES / f"{name}.xml").read_text(encoding="utf-8")
+def dump(name: str = "settings_root", package: str | None = None) -> str:
+    """A real device dump, optionally re-attributed to *package*.
+
+    The fixtures come off `com.android.settings`, while these tests use
+    synthetic package names. Export drops a screen that belongs to another app,
+    so a session's dumps have to actually claim that session's package —
+    otherwise the fixtures are foreign screens and every record is dropped.
+    """
+    raw = (FIXTURES / f"{name}.xml").read_text(encoding="utf-8")
+    if package is None:
+        return raw
+    return re.sub(r'package="[^"]*"', f'package="{package}"', raw)
 
 
 def make_session(tmp_path, package: str, steps: int, *, changed: bool = True) -> Session:
@@ -55,7 +65,7 @@ def make_session(tmp_path, package: str, steps: int, *, changed: bool = True) ->
         source = names[index % len(names)] if changed else names[0]
         observation = session.write_observation(
             png=png_bytes(),
-            raw_xml=dump(source),
+            raw_xml=dump(source, package),
             page_key=str(index if changed else 0),
             activity=f"{package}/.Main",
             state_str=f"s{index}" if changed else "same",
@@ -359,3 +369,79 @@ def test_export_meta_records_the_split_parameters(tmp_path):
 def test_an_empty_corpus_reports_rather_than_crashes(tmp_path):
     stats = Exporter(tmp_path / "nothing", tmp_path / "runtime", tmp_path / "out").run()
     assert stats.total_written == 0
+
+
+# ---------------------------------------------------------------------------
+# Screens that belong to another app
+# ---------------------------------------------------------------------------
+
+
+def test_a_screen_belonging_to_another_app_is_never_exported(tmp_path):
+    """Measured on the live run: 95 of Joplin's 136 changed triples had a MARKOR
+    screen on one side, reached through a file-open handoff. `split_apps` holds
+    OOD out by app and an exported record carries no package, so such a record
+    is an undetectable leak of a held-out app into train."""
+    session = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+    session.open(resume=False)
+    previous = None
+    for index, owner in enumerate(["com.a", "com.a", "com.other", "com.a"]):
+        observation = session.write_observation(
+            png=png_bytes(),
+            raw_xml=dump("settings_root" if index % 2 else "subsettings_a", owner),
+            page_key=str(index),
+            activity="com.a/.Main",
+            state_str=f"s{index}",
+            is_new_page=True,
+            match_kind="new",
+        )
+        if previous is not None:
+            session.write_triple(
+                before=previous,
+                after=observation,
+                action={"action": "click", "coordinate": [1, 2]},
+            )
+        previous = observation
+    session.write_metadata(
+        completed=True, extra={"device_width": DEVICE[0], "device_height": DEVICE[1]}
+    )
+
+    stats = Exporter(
+        tmp_path / "data", tmp_path / "runtime", tmp_path / "out", ood_apps=0.0, id_ratio=0.0
+    ).run()
+
+    # The foreign screen sits on BOTH sides of a triple in turn, so two of the
+    # three go.
+    assert stats.dropped_foreign == 2
+    assert stats.total_written == 1
+
+
+def test_an_untagged_dump_is_not_treated_as_foreign(tmp_path):
+    """A dump with no `package` attribute says nothing about ownership, and
+    dropping it would silently discard screens over a missing attribute."""
+    session = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+    session.open(resume=False)
+    bare = '<hierarchy rotation="0"><node class="A" bounds="[0,0][100,100]"/></hierarchy>'
+    previous = None
+    for index in range(2):
+        observation = session.write_observation(
+            png=png_bytes(),
+            raw_xml=bare,
+            page_key=str(index),
+            activity="com.a/.Main",
+            state_str=f"s{index}",
+            is_new_page=True,
+            match_kind="new",
+        )
+        if previous is not None:
+            session.write_triple(
+                before=previous, after=observation, action={"action": "navigate_back"}
+            )
+        previous = observation
+    session.write_metadata(
+        completed=True, extra={"device_width": DEVICE[0], "device_height": DEVICE[1]}
+    )
+
+    stats = Exporter(
+        tmp_path / "data", tmp_path / "runtime", tmp_path / "out", ood_apps=0.0, id_ratio=0.0
+    ).run()
+    assert stats.dropped_foreign == 0

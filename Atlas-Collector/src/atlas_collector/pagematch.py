@@ -227,6 +227,15 @@ class ScreenState:
         )
 
 
+def dominant_package(raw_xml: str) -> str:
+    """The package most of *raw_xml*'s views belong to, or "" if it has none.
+
+    The same rule :meth:`ScreenState.from_dump` uses, exposed because export must
+    ask the question of a dump on disk without rebuilding a whole ScreenState.
+    """
+    return _dominant_package(_iter_views(raw_xml))
+
+
 def _dominant_package(views: list[ET.Element]) -> str:
     counts: dict[str, int] = {}
     for view in views:
@@ -359,5 +368,6 @@ __all__ = [
     "PageRegistry",
     "ScreenState",
     "content_free_signature",
+    "dominant_package",
     "view_signature",
 ]

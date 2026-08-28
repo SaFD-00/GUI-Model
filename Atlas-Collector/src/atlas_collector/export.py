@@ -71,6 +71,7 @@ from xml.etree import ElementTree as ET
 from loguru import logger
 
 from atlas_collector._exp08_prompt import SYSTEM_PROMPT
+from atlas_collector.pagematch import dominant_package
 from atlas_collector.session import DUMP_NAME, SCREENSHOT_NAME, Session, image_name
 from atlas_collector.xml import parse_device_xml
 
@@ -107,6 +108,8 @@ class ExportStats:
     dropped_unchanged: int = 0
     dropped_unparsable: int = 0
     dropped_missing_files: int = 0
+    #: Records whose screen belonged to a DIFFERENT app than the session's.
+    dropped_foreign: int = 0
     ood_apps: list[str] = field(default_factory=list)
 
     @property
@@ -122,6 +125,7 @@ class ExportStats:
             "dropped_unchanged": self.dropped_unchanged,
             "dropped_unparsable": self.dropped_unparsable,
             "dropped_missing_files": self.dropped_missing_files,
+            "dropped_foreign": self.dropped_foreign,
             "ood_apps": sorted(self.ood_apps),
         }
 
@@ -420,13 +424,31 @@ class Exporter:
             self.stats.dropped_missing_files += 1
             return None
 
+        # A screen that belongs to ANOTHER app must not be exported as this
+        # app's. The loop deliberately tolerates a few foreign frames because an
+        # app's flow spans packages (a share sheet, an account picker), and it
+        # persists them. That is right for a helper the app hands off to, and
+        # wrong for a whole other app: measured on the live run, 255 of Joplin's
+        # 562 observations were MARKOR screens, reached 84 times through a
+        # file-open handoff.
+        #
+        # The reason this is a hard filter and not a quality nicety is
+        # `split_apps`: OOD is held out by APP, and its own docstring says a
+        # single leaked triple makes "unseen app" false for the whole app with
+        # nothing downstream able to detect it. An exported record carries no
+        # package, so a Markor screen inside Joplin's train split is exactly that
+        # undetectable leak -- and Markor is itself one of the 48 targets.
+        before_raw = before_dump.read_text(encoding="utf-8")
+        after_raw = after_dump.read_text(encoding="utf-8")
+        for raw in (before_raw, after_raw):
+            observed = dominant_package(raw)
+            if observed and observed != package:
+                self.stats.dropped_foreign += 1
+                return None
+
         try:
-            before_xml = encode_screen(
-                before_dump.read_text(encoding="utf-8"), *device_size
-            )
-            after_xml = encode_screen(
-                after_dump.read_text(encoding="utf-8"), *device_size
-            )
+            before_xml = encode_screen(before_raw, *device_size)
+            after_xml = encode_screen(after_raw, *device_size)
         except Exception as error:  # noqa: BLE001 - one bad dump must not stop the export
             logger.warning("{} step {}: could not encode ({})", package, triple.step, error)
             self.stats.dropped_unparsable += 1
