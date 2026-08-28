@@ -109,6 +109,27 @@ uv run atlas-collect --help
 > ⚠️ **USB 링크가 세션 중 끊어진다.** 실제로 probing 중 두 번 끊겼고, `adb kill-server && adb start-server` 로
 > 복구됐다. 이 복구는 `AdbClient.reconnect()` 에 들어 있다(kill-server → start-server → wait-for-device → serial 재탐색).
 
+### 수집 전 기기 전제 — 안 걸면 앱이 통째로 날아간다
+
+파일럿 두 번이 같은 증상으로 죽었다: 앱당 `10 triples / 15 observations`, `could not stay
+in the app`. 원인은 수집기가 아니라 **화면에 앱이 없었던 것**이다. 둘 다 `uiautomator dump`
+가 앱이 아닌 것을 반환하게 만든다.
+
+| 전제 | 안 걸었을 때 dump 가 잡는 것 | 거는 법 |
+|---|---|---|
+| 화면이 안 꺼져야 한다 | `com.android.systemui` (잠금화면) | `adb shell svc power stayon true` |
+| OTA 나그가 없어야 한다 | `com.google.android.gms` (업데이트 모달) | `adb shell settings put global ota_disable_automatic_update 1` |
+
+- 기본 `screen_off_timeout` 은 30분이다. 유휴 30분이면 잠기고, 그 뒤 모든 관측이 "앱 밖"이 된다.
+  `svc power stayon` 은 **USB 를 뽑았다 꽂으면 풀리므로** `data/collect.sh` 가 재개할 때마다 다시 건다.
+- GMS "System update needed" 모달은 버튼이 **`Download & install now` 하나뿐**이다. action guard 가
+  없으므로(아래 경고 참조) 탐색기가 실기기에서 그걸 누를 수 있다 — 1.35GB 다운로드와 재부팅이다.
+- **로그만으로는 진단이 안 된다.** 업데이트 모달과 정상적인 Google 설정 화면(`OctarineActivity`)은
+  `stuck outside the app (in com.google.android.gms)` 라는 **같은 줄**을 남긴다. 판별은 raw XML 본문이다:
+  `grep -rl "System update needed" data/AtlasCollection/raw/`
+- 시작 전에 `adb shell dumpsys window | grep mCurrentFocus` 를 한 번 본다. `PopupDialog` 나
+  `NotificationShade` 가 보이면 그대로 시작하면 안 된다. 이 한 줄이면 갈렸을 진단에 실패 실행 두 번을 썼다.
+
 ### LLM (선택)
 
 ```bash

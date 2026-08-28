@@ -172,13 +172,27 @@ default group 으로 재동기화하며 extra 를 밀어낼 수 있다).
   "UI hierarchy dumped to:" 배너가 XML 에 섞인다.
 - `input text` 는 공백에서 잘린다. `escape_text_for_adb()` 의 `" " → "%s"` 치환은 **load-bearing** 이다.
 
-## 6. auth-gated 앱
+## 6. 기기 전제 — "stuck outside the app" 을 코드 버그로 읽지 마라
+
+파일럿 두 번이 `10 triples / 15 observations / could not stay in the app` 으로 죽었고, 둘 다
+원인은 **화면에 앱이 없었던 것**이었다. 로그는 수집기 버그처럼 보이게 찍힌다.
+
+- 화면이 꺼져 잠기면 dump 가 `com.android.systemui` 를 반환한다 → `svc power stayon true`.
+- GMS "System update needed" 모달이 뜨면 dump 가 통째로 `com.google.android.gms` 다
+  → `settings put global ota_disable_automatic_update 1`.
+- **그 모달과 정상적인 Google 설정 화면(`OctarineActivity`)은 로그 줄이 같다.** 판별은 raw XML 뿐이다:
+  `grep -rl "System update needed" data/AtlasCollection/raw/`.
+
+"stuck outside the app" 이 연속으로 나오면 **코드를 고치기 전에** `dumpsys window | grep mCurrentFocus`
+와 스크린샷을 먼저 본다. 자세한 표는 README 의 "수집 전 기기 전제" 절에 있다.
+
+## 7. auth-gated 앱
 
 `auth_required == "account_required"` 인 앱은 러너가 **기본적으로 건너뛴다**. `--include-auth` 를
 줬을 때만 포함한다. 카탈로그 기준 현재 **15개**가 여기 해당한다.
 이 기본값을 뒤집지 마라 — 로그인 벽에 갇힌 세션은 수집 예산만 태운다.
 
-## 7. 문서 규칙
+## 8. 문서 규칙
 
 - 이 리포의 문서는 **한국어**다. 기술 용어와 식별자(`data-bbox`, `smart_resize`, package id 등)는 영어로 둔다.
 - README.md = 무엇/설치/카탈로그/CLI/레이아웃, ARCHITECTURE.md = 설계 + export contract,
