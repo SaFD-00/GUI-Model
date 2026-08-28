@@ -282,12 +282,13 @@ ds_score_mode_flag() {
   if [[ "$task" == state ]]; then echo "--match-mode pos"; else echo "--coord-mode xy"; fi
 }
 
-# DS 키 → state 채점기(_hungarian_eval / _state_diff_eval)에 넘길 XML 스키마 플래그.
+# DS 키 → 채점기(_hungarian_eval / _state_diff_eval / _action_eval)에 넘길 XML 스키마 플래그.
 # AC_EXP08 데이터는 Cerebra 파서 산출이라 위치축이 `data-bbox="x1 y1 x2 y2"`,
 # 텍스트축이 `aria-label` 계열이다. 채점기 기본값은 `android`(bounds/description)라
 # 기본값으로 EXP08 을 채점하면 **에러 없이** 지표가 무너진다 (하드 제약 15f).
 # 반대로 기존 실험군에는 절대 붙이지 않는다 — 빈 문자열을 반환해 채점 결과를 불변으로 둔다.
-# action 채점기(_action_eval.py)는 이 플래그를 받지 않으므로 state 경로에서만 쓴다.
+# state 경로(위치·텍스트 양축)와 action 경로(xy bbox 채점의 위치축) 둘 다에서 쓴다 —
+# `_action_eval.py` 도 2026-08-28 부터 같은 이름·같은 의미의 `--xml-schema` 를 받는다.
 ds_xml_schema_flag() {
   case "$1" in
     AC_EXP08) echo "--xml-schema cerebra" ;;
@@ -400,6 +401,7 @@ parse_args() {
   local epochs_arg="1,2,3"
   local variants_arg=""
   local exp01_ratios_arg=""
+  local stage1_variant_arg=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model)
@@ -411,6 +413,9 @@ parse_args() {
       --stage1-mode)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-mode requires a value." >&2; exit 2; fi
         stage1_mode_arg="$2"; shift 2 ;;
+      --stage1-variant)
+        if [[ -z "${2:-}" ]]; then echo "Error: --stage1-variant requires a value." >&2; exit 2; fi
+        stage1_variant_arg="$2"; shift 2 ;;
       --stage2-mode)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage2-mode requires a value." >&2; exit 2; fi
         stage2_mode_arg="$2"; shift 2 ;;
@@ -431,7 +436,8 @@ parse_args() {
       -h|--help)
         cat <<EOF
 Usage: $(basename "$0") [--model MODEL] [--dataset DS] [--stage1-mode MODE]
-                         [--stage2-mode MODE] [--stage1-epoch N] [--epochs LIST]
+                         [--stage1-variant VARIANT] [--stage2-mode MODE]
+                         [--stage1-epoch N] [--epochs LIST]
                          [--variants LIST] [--exp01-ratios LIST] [--no-hf-upload]
 
 Options:
@@ -443,6 +449,11 @@ Options:
                        diff loss 실험군. AC_EXP03 은 AC_EXP01 ratio73 멤버십을 좌표(point)
                        표현으로 미러한 실험군 (index→x,y).
   --stage1-mode MODE   full | lora (기본: full) — Stage 1 학습 방식.
+  --stage1-variant V   AC_EXP08 stage1 ablation 변형 (기본: 없음 = 메인 stage1).
+                       action-only 만 지원 — state 40K 없이 같은 action 10K 만으로
+                       학습하는 stage1 full FT 대조군 (World Modeling 순효과 측정).
+                       stage1_train.sh 전용, --dataset AC_EXP08 --stage1-mode full 과
+                       함께 써야 한다 (lf_registry.py::stage1_extra_variants 가 정본).
   --stage2-mode MODE   full | lora (기본: lora) — Stage 2 학습 방식 (Stage 2 전용).
   --no-hf-upload       Hugging Face 업로드를 생략하고 local merge/export 만 수행.
                        merge 스크립트에서만 의미가 있다.
@@ -479,6 +490,14 @@ EOF
     *) echo "Error: --stage2-mode must be full | lora (got '$stage2_mode_arg')." >&2; exit 2 ;;
   esac
   HF_UPLOAD="$hf_upload_arg"
+
+  # --stage1-variant: AC_EXP08::stage1_extra_variants (lf_registry.py) 가 정본이다.
+  # 빈 값(기본)이면 기존 stage1 경로 불변 — YAML 파일명에 variant 세그먼트가 붙지 않는다.
+  case "$stage1_variant_arg" in
+    "") STAGE1_VARIANT="" ;;
+    action-only) STAGE1_VARIANT="$stage1_variant_arg" ;;
+    *) echo "Error: --stage1-variant must be action-only (got '$stage1_variant_arg')." >&2; exit 2 ;;
+  esac
 
   # --stage1-epoch 는 ckpt_epoch_from_dir 가 만든 라벨과 문자열로 대조되고 그대로
   # 디렉토리명(epoch-{E})·HF repo id 에 박힌다. EXP07 stage1 은 save_steps=0.25 라
