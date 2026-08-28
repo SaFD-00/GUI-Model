@@ -23,6 +23,13 @@ to forget its pending action, because the alternative is an edge in the graph
 ("tapping X leads to the launcher") that only a mis-tap can reproduce and that
 the router will then dutifully plan routes over.
 
+Recovery comes in two strengths. The default RESUMES the app's task, keeping the
+deep state exploration had reached -- right when the app is simply in the
+background. Some drift survives that: a foreign activity can sit on top of our
+own task (measured: GMS's OctarineActivity inside the Settings task), and then a
+LAUNCHER intent resumes the task and lands back on the foreign screen, forever.
+Those callers restart the app cold instead.
+
 WHY A TIME BUDGET RATHER THAN A STEP BUDGET
 ===========================================
 
@@ -296,23 +303,34 @@ class CollectionLoop:
         package = frame.package
         return bool(package) and package != self.session.package
 
-    def _recover(self, reason: str) -> None:
+    def _recover(self, reason: str, *, clean: bool = False) -> None:
         """Return to the app and forget the pending action.
 
         Forgetting matters more than the relaunch: an un-attributed action would
         otherwise be recorded as an edge to wherever recovery landed, and the
         router would plan routes over a transition only a mis-tap can reproduce.
+
+        ``clean`` decides between resuming the app's task and restarting it cold
+        (see :meth:`AdbClient.launch_app`). The default is to resume, because a
+        recovery that keeps the app's deep state keeps exploring where it left
+        off; the callers that pass ``clean=True`` are the ones where resuming is
+        provably a no-op.
         """
         self.stats.recoveries += 1
         self.explorer.abandon_pending()
-        logger.info("recovering ({}) — relaunching {}", reason, self.session.package)
+        logger.info(
+            "recovering ({}) — {} {}",
+            reason,
+            "restarting" if clean else "relaunching",
+            self.session.package,
+        )
         try:
-            self.adb.launch_app(self.session.package)
+            self.adb.launch_app(self.session.package, clean=clean)
         except Exception as error:  # noqa: BLE001 - try a reconnect before giving up
             logger.warning("relaunch failed ({}), reconnecting", error)
             self.adb.reconnect()
             try:
-                self.adb.launch_app(self.session.package)
+                self.adb.launch_app(self.session.package, clean=clean)
             except Exception as second:  # noqa: BLE001
                 logger.error("relaunch failed again: {}", second)
         if self.launch_settle_sec:
@@ -338,7 +356,11 @@ class CollectionLoop:
             logger.warning("could not read wm size ({}), assuming {}x{}",
                            error, self._width, self._height)
 
-        self.adb.launch_app(self.session.package)
+        # Cold, not resumed. A LAUNCHER intent resumes whatever task the app
+        # already had, so a session would otherwise inherit wherever the last
+        # run -- or a person -- left the app, and the first screen of the corpus
+        # would depend on the device's history rather than on the app.
+        self.adb.launch_app(self.session.package, clean=True)
         if self.launch_settle_sec:
             time.sleep(self.launch_settle_sec)
 
@@ -360,7 +382,9 @@ class CollectionLoop:
                 if failures >= MAX_OBSERVE_FAILURES:
                     failures = 0
                     consecutive_recoveries += 1
-                    self._recover("observation kept failing")
+                    self._recover(
+                        "observation kept failing", clean=consecutive_recoveries > 1
+                    )
                     previous = None
                     if consecutive_recoveries >= MAX_CONSECUTIVE_RECOVERIES:
                         self.stats.stop_reason = "could not stay in the app"
@@ -386,7 +410,13 @@ class CollectionLoop:
                 if steps_outside > MAX_STEPS_OUTSIDE:
                     steps_outside = 0
                     consecutive_recoveries += 1
-                    self._recover(f"stuck outside the app (in {frame.package})")
+                    # Cold at once, not after a wasted soft attempt: when the
+                    # foreign activity sits in OUR task (measured: GMS's
+                    # OctarineActivity inside the Settings task), a LAUNCHER
+                    # intent resumes that task and lands right back on it.
+                    self._recover(
+                        f"stuck outside the app (in {frame.package})", clean=True
+                    )
                     previous = None
                     if consecutive_recoveries >= MAX_CONSECUTIVE_RECOVERIES:
                         self.stats.stop_reason = "could not stay in the app"

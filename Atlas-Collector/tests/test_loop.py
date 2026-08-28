@@ -57,6 +57,7 @@ class FakeAdb:
         self.scripts = scripts
         self.actions: list[tuple[str, tuple]] = []
         self.launches = 0
+        self.clean_launches = 0
         self.reconnects = 0
         self._dumps = 0
         self._fail_dumps = fail_dumps
@@ -111,9 +112,10 @@ class FakeAdb:
         self.actions.append(("key", (keycode,)))
         self._advance()
 
-    def launch_app(self, package):
+    def launch_app(self, package, *, clean=False):
         self.launches += 1
-        self.actions.append(("launch", (package,)))
+        self.clean_launches += int(clean)
+        self.actions.append(("launch", (package, clean)))
 
     def reconnect(self):
         self.reconnects += 1
@@ -318,6 +320,58 @@ def test_the_launcher_counts_as_leaving_the_app(tmp_path):
     )
     loop = build(tmp_path, adb, max_steps=2)
     assert loop.run().recoveries >= 1
+
+
+# ---------------------------------------------------------------------------
+# Cold vs resumed launches
+# ---------------------------------------------------------------------------
+
+
+def test_a_session_starts_the_app_cold(tmp_path):
+    """A LAUNCHER intent resumes the app's existing task. Measured consequence:
+    a session inherited Settings sitting on GMS's OctarineActivity, read every
+    observation as "outside the app", and collected 10 triples before giving up.
+    """
+    adb = FakeAdb([Script(screen())])
+    build(tmp_path, adb, max_steps=1).run()
+    assert adb.actions[0] == ("launch", (PKG, True))
+
+
+def test_recovering_from_persistent_drift_restarts_cold(tmp_path):
+    """Soft is provably a no-op here: the foreign activity can be sitting on top
+    of OUR task, and a LAUNCHER intent then resumes it straight back."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            *[
+                Script(screen(package="com.android.chrome", tag=str(i)), "com.android.chrome/.Main")
+                for i in range(MAX_STEPS_OUTSIDE + 3)
+            ],
+        ]
+    )
+    stats = build(tmp_path, adb, max_steps=MAX_STEPS_OUTSIDE + 3).run()
+    assert stats.recoveries >= 1
+    assert adb.clean_launches >= 2, "the start plus every drift recovery"
+    assert ("launch", (PKG, True)) in adb.actions[1:]
+
+
+def test_recovering_from_the_launcher_resumes_rather_than_restarts(tmp_path):
+    """The app's task is intact in the background, so resuming keeps the deep
+    state exploration reached. Restarting would throw it away for nothing."""
+    adb = FakeAdb(
+        [
+            Script(screen()),
+            Script(
+                screen(package="com.google.android.apps.nexuslauncher"),
+                "com.google.android.apps.nexuslauncher/.Home",
+            ),
+            Script(screen(tag="back")),
+        ]
+    )
+    stats = build(tmp_path, adb, max_steps=3).run()
+    assert stats.recoveries >= 1
+    assert ("launch", (PKG, False)) in adb.actions[1:], "the launcher recovery is soft"
+    assert adb.clean_launches == 1, "only the session start was cold"
 
 
 def test_repeated_dump_failures_relaunch_rather_than_crash(tmp_path):

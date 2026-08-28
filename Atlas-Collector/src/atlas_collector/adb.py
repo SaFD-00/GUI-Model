@@ -35,6 +35,10 @@ DEFAULT_TIMEOUT = 30.0
 #: On-device scratch path for `uiautomator dump` output.
 REMOTE_DUMP_PATH = "/sdcard/window_dump.xml"
 
+#: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK, for `launch_app(clean=True)`.
+#: CLEAR_TASK is the half that matters and it is only legal alongside NEW_TASK.
+CLEAN_LAUNCH_FLAGS = "0x10008000"
+
 #: Control characters (C0 + DEL). `input text` has no representation for any of
 #: them, so they are rejected rather than escaped -- see `escape_text_for_adb`.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -200,6 +204,10 @@ class AdbClient:
         #: different, and a stale one silently addresses nothing).
         self._pinned = serial is not None
         self._resolved = self._pinned  # a pinned serial needs no probe
+        #: package -> its launcher component (or None when it has none). The
+        #: answer cannot change while the app stays installed, and a clean
+        #: relaunch would otherwise pay a `cmd package` round-trip every time.
+        self._launcher_components: dict[str, str | None] = {}
 
     # -- serial resolution --------------------------------------------------
 
@@ -426,8 +434,73 @@ class AdbClient:
         """Send a keyevent, e.g. ``"KEYCODE_BACK"``, ``"KEYCODE_HOME"``, or ``4``."""
         self.shell(f"input keyevent {keycode}")
 
-    def launch_app(self, package: str) -> None:
-        """Launch *package*'s LAUNCHER activity via ``monkey``."""
+    def resolve_launcher_activity(self, package: str) -> str | None:
+        """The ``package/activity`` component that *package*'s icon opens.
+
+        ``None`` when the package has no launcher activity. Cached per package.
+        """
+        if package in self._launcher_components:
+            return self._launcher_components[package]
+        component: str | None = None
+        try:
+            out = self.shell(
+                "cmd package resolve-activity --brief "
+                f"-c android.intent.category.LAUNCHER {package}"
+            )
+        except AdbError as error:
+            logger.warning(f"[adb] could not resolve {package}'s launcher: {error}")
+        else:
+            # The command also prints a `priority=... isDefault=...` line, and a
+            # package with no launcher icon resolves to the *resolver* activity,
+            # which belongs to another package. Only a component under
+            # `package` is ours.
+            for line in reversed(out.splitlines()):
+                candidate = line.strip()
+                if candidate.startswith(f"{package}/"):
+                    component = candidate
+                    break
+        self._launcher_components[package] = component
+        return component
+
+    def launch_app(self, package: str, *, clean: bool = False) -> None:
+        """Launch *package*'s LAUNCHER activity.
+
+        ``clean=False`` sends the intent the launcher icon sends, via ``monkey``.
+        That RESUMES an existing task at whatever sits on top of it rather than
+        starting the app fresh -- usually what you want, because a recovery that
+        preserves the app's deep state keeps exploring where it left off.
+
+        ``clean=True`` is for when that resumption is the failure. Measured on
+        the target device: Settings had been left on
+        ``com.google.android.gms/.octarine.ui.OctarineActivity`` in task t69, and
+        BOTH monkey and ``am force-stop com.android.settings`` followed by monkey
+        landed straight back on it -- force-stopping Settings cannot touch an
+        activity running in GMS's process. The collection loop read every
+        observation as "outside the app", recovered five times and abandoned the
+        session after 10 triples. Force-stop plus a ``CLEAR_TASK`` start cleared
+        the task and resumed ``com.android.settings/.Settings``.
+
+        The force-stop is not redundant with the flags: ``CLEAR_TASK`` empties
+        the back stack, force-stop kills the process behind it. Only together is
+        the start cold.
+        """
+        if clean:
+            self.force_stop(package)
+            component = self.resolve_launcher_activity(package)
+            if component is None:
+                logger.warning(f"[adb] {package} has no launcher activity; using monkey")
+            else:
+                out = self.shell(
+                    "am start -a android.intent.action.MAIN "
+                    f"-c android.intent.category.LAUNCHER -n {component} "
+                    f"-f {CLEAN_LAUNCH_FLAGS}",
+                    timeout=60,
+                )
+                if "Error" not in out:
+                    return
+                logger.warning(
+                    f"[adb] clean launch of {package} failed ({out.strip()}); using monkey"
+                )
         out = self.shell(
             f"monkey -p {package} -c android.intent.category.LAUNCHER 1", timeout=60
         )
@@ -449,6 +522,7 @@ class AdbClient:
 
 
 __all__ = [
+    "CLEAN_LAUNCH_FLAGS",
     "DEFAULT_TIMEOUT",
     "REMOTE_DUMP_PATH",
     "AdbClient",

@@ -28,6 +28,7 @@ import pytest
 
 from atlas_collector import adb
 from atlas_collector.adb import (
+    CLEAN_LAUNCH_FLAGS,
     REMOTE_DUMP_PATH,
     AdbClient,
     AdbError,
@@ -81,6 +82,13 @@ class FakeDevice:
         self.file_dump_timeout: bool = False
         #: False models an `rm -f` that reports success but removes nothing.
         self.rm_works: bool = True
+        #: What `cmd package resolve-activity --brief` prints for the launcher
+        #: query. None models a package with no launcher icon, which resolves to
+        #: ANOTHER package's resolver activity rather than to nothing.
+        self.launcher_component: str | None = "com.test.app/.Main"
+        #: Non-empty models `am start` refusing (it reports failure on stdout,
+        #: with returncode 0).
+        self.am_start_error: str = ""
 
     # -- plumbing ------------------------------------------------------------
 
@@ -145,6 +153,15 @@ class FakeDevice:
             return 0, self.file_dump_output
         if cmd == "wm size":
             return 0, "Physical size: 1080x2400\n"
+        if cmd.startswith("cmd package resolve-activity"):
+            component = self.launcher_component or "android/com.android.internal.app.ResolverActivity"
+            return 0, f"priority=0 preferredOrder=0 match=0x108000 isDefault=true\n{component}\n"
+        if cmd.startswith("am start "):
+            if self.am_start_error:
+                return 0, f"Starting: Intent {{ ... }}\nError: {self.am_start_error}\n"
+            return 0, "Starting: Intent { ... }\n"
+        if cmd.startswith("monkey -p "):
+            return 0, "Events injected: 1\n"
         return 0, ""
 
     def _exec_out(
@@ -495,3 +512,75 @@ def test_text_propagates_the_escape_error_without_touching_the_device(client, de
     with pytest.raises(TextEscapeError):
         client.text("line1\nline2")
     assert device.commands == []
+
+
+# ---------------------------------------------------------------------------
+# Launching: resumed (monkey) vs cold (force-stop + CLEAR_TASK)
+# ---------------------------------------------------------------------------
+
+
+def _shell_commands(device: FakeDevice) -> list[str]:
+    return [c[len("shell ") :] for c in device.commands if c.startswith("shell ")]
+
+
+def test_a_plain_launch_is_monkey_and_stops_nothing(client, device):
+    client.launch_app("com.test.app")
+    commands = _shell_commands(device)
+    assert commands == ["monkey -p com.test.app -c android.intent.category.LAUNCHER 1"]
+
+
+def test_a_clean_launch_force_stops_then_starts_with_clear_task(client, device):
+    client.launch_app("com.test.app", clean=True)
+    commands = _shell_commands(device)
+    assert commands[0] == "am force-stop com.test.app"
+    start = commands[-1]
+    assert start.startswith("am start -a android.intent.action.MAIN")
+    assert "-n com.test.app/.Main" in start
+    # CLEAR_TASK is the half that fixes the reproduced failure, and it is only
+    # legal alongside NEW_TASK. Assert the value, not merely that a flag exists.
+    assert f"-f {CLEAN_LAUNCH_FLAGS}" in start
+    assert int(CLEAN_LAUNCH_FLAGS, 16) == 0x10000000 | 0x00008000
+    # force-stop alone was measured to be insufficient (a foreign activity on
+    # top of our task survives it), so the start must not be skipped -- and
+    # monkey, which merely RESUMES that task, must not be what runs.
+    assert not any(c.startswith("monkey") for c in commands)
+
+
+def test_a_clean_launch_falls_back_to_monkey_when_there_is_no_launcher_activity(client, device):
+    device.launcher_component = None
+    client.launch_app("com.test.app", clean=True)
+    commands = _shell_commands(device)
+    assert commands[0] == "am force-stop com.test.app"
+    # The resolver activity belongs to another package; adopting it would start
+    # a chooser dialog and call it the app.
+    assert not any(c.startswith("am start") for c in commands)
+    assert commands[-1].startswith("monkey -p com.test.app")
+
+
+def test_a_clean_launch_falls_back_to_monkey_when_am_start_reports_an_error(client, device):
+    device.am_start_error = "Activity not started"
+    client.launch_app("com.test.app", clean=True)
+    commands = _shell_commands(device)
+    assert any(c.startswith("am start") for c in commands)
+    assert commands[-1].startswith("monkey -p com.test.app")
+
+
+def test_the_launcher_component_is_resolved_once_per_package(client, device):
+    for _ in range(3):
+        client.launch_app("com.test.app", clean=True)
+    resolves = [c for c in _shell_commands(device) if c.startswith("cmd package resolve-activity")]
+    assert len(resolves) == 1
+
+
+def test_a_failed_launch_still_raises(client, device):
+    device.launcher_component = None
+    device.file_dump_output = ""
+
+    def no_such_package(cmd):
+        if cmd.startswith("monkey"):
+            return 0, "Error: Unable to find package"
+        return FakeDevice._shell(device, cmd)
+
+    device._shell = no_such_package  # type: ignore[method-assign]
+    with pytest.raises(AdbError):
+        client.launch_app("com.test.app", clean=True)
