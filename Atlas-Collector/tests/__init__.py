@@ -1,0 +1,1 @@
+"""Atlas-Collector test suite."""

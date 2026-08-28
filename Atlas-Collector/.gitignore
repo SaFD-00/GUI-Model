@@ -1,0 +1,24 @@
+# Atlas-Collector local artifacts.
+# 대부분의 규칙은 monorepo 루트 .gitignore 가 이미 덮는다 (**/data*/, **/runtime*/,
+# **/.venv/, __pycache__/ 등). 여기에는 이 서브프로젝트 고유의 항목만 둔다.
+
+# 수집 산출물 (host-pull 로 디바이스에서 끌어온 raw / 변환된 export)
+data/
+runtime/
+exports/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment — uv.lock 은 커밋 대상(재현성 단일 진실원)이라 무시하지 않는다.
+.venv/
+.env
+.secrets.local
+
+# OS
+.DS_Store

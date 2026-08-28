@@ -1,0 +1,73 @@
+# Atlas-Collector — 수집 파라미터.
+#
+# Resolution order (later wins):
+#   builtin defaults (src/atlas_collector/config.py) → config/run.yaml → AC_* env vars → CLI flags
+#
+# CLI flags take highest precedence. 이 파일이 없어도 builtin defaults 로 동작한다
+# (`atlas-collect --help` 가 환경에 의존하지 않도록).
+#
+# builtin defaults 는 이 파일의 값과 **정확히 같아야** 한다 (config.py 의 _BUILTIN_DEFAULTS).
+
+device:
+  # 대상 디바이스 serial. null = `adb devices` 에서 자동 탐색.
+  # 실측 타깃: Pixel 6 (oriole), serial 19101FDF6004EH, Android 16 / SDK 36.
+  # Env: AC_DEVICE_SERIAL
+  serial: null
+  # 디바이스 논리 해상도 (`adb shell wm size`). export 좌표 변환의 소스 프레임이다.
+  # Env: AC_DEVICE_WIDTH / AC_DEVICE_HEIGHT
+  width: 1080
+  height: 2400
+
+collection:
+  # 앱당 최대 step 수 (budget_mode=steps 일 때 종료 조건). Env: AC_COLLECTION_MAX_STEPS
+  max_steps: 1500
+  # 세션 종료 조건. Options: steps | time
+  #   steps: max_steps 만큼 action 을 수행하면 종료
+  #   time:  벽시계 예산 소진 시 종료 (milestone 4 에서 max_duration 추가 예정)
+  # Env: AC_COLLECTION_BUDGET_MODE
+  budget_mode: steps
+  # explorer 난수 시드. Env: AC_COLLECTION_SEED
+  seed: 42
+  # action 실행 후 다음 관측까지의 기본 지연(ms). Env: AC_COLLECTION_ACTION_DELAY_MS
+  action_delay_ms: 1500
+  # --- host-pull 전용: 화면 안정화(stabilization) ---
+  # device-push 설계와 달리 디바이스가 "화면이 바뀌었다" 는 신호를 보내주지 않는다.
+  # 호스트가 직접 `uiautomator dump` 를 반복해 연속 두 dump 가 같아질 때까지 폴링한다.
+  # 폴링 간격(ms). Env: AC_COLLECTION_STABILIZE_POLL_MS
+  stabilize_poll_ms: 300
+  # 안정화 최대 대기(초). 초과하면 마지막 dump 를 그대로 채택하고 진행한다.
+  # Env: AC_COLLECTION_STABILIZE_MAX_WAIT_SEC
+  stabilize_max_wait_sec: 8.0
+
+screen_matching:
+  # page 식별은 항상 LLM-free 다 (BM25 + element diff + pixel gate, LLM-Explorer / Mobile3M 계열).
+  # 같은 page 로 볼 최대 element-line 차이 수 (|A △ B| < element_diff_max).
+  # Env: AC_SCREEN_MATCHING_ELEMENT_DIFF_MAX
+  element_diff_max: 5
+  # element_criterion=jaccard 로 쓸 때의 최소 Jaccard 유사도.
+  # Env: AC_SCREEN_MATCHING_ELEMENT_JACCARD_MIN
+  element_jaccard_min: 0.5
+  # page 병합을 확정하는 pixel gate: 변경 픽셀 비율이 이 값보다 작아야 같은 page.
+  # Env: AC_SCREEN_MATCHING_PAGE_PIXEL_DIFF_THRESHOLD
+  page_pixel_diff_threshold: 0.3
+
+llm:
+  # LLM 은 **입력 텍스트 생성 단 하나**에만 쓰인다. page 식별에는 절대 쓰지 않는다.
+  # OpenRouter Chat Completions 모델 id. Env: AC_LLM_MODEL
+  model: qwen/qwen3.8-flash
+  # 입력 텍스트 생성 모드. Options: api | random
+  #   api    = OpenRouter LLM (OPENROUTER_API_KEY 필요)
+  #   random = hardcoded fallback (API 비용 없음)
+  # Env: AC_LLM_INPUT_MODE
+  input_mode: api
+
+export:
+  # Stage-1 export 좌표 프레임 [width, height]. 840x1876 = smart_resize_dims(2400, 1080).
+  # 이 값은 EXP08 export contract 의 일부라 임의로 바꾸면 안 된다 (ARCHITECTURE.md 참조).
+  # Env: AC_EXPORT_TARGET_SIZE ("840x1876" 형식)
+  target_size: [840, 1876]
+  # OOD eval: train 에서 통째로 제외할 **앱**의 비율. Env: AC_EXPORT_OOD_APPS
+  ood_apps: 0.3
+  # ID eval: train 에 포함된(seen) 앱들의 triple 중 eval 로 떼어낼 비율.
+  # ood_apps 와 완전히 독립적인 knob 이다. Env: AC_EXPORT_ID_RATIO
+  id_ratio: 0.1
