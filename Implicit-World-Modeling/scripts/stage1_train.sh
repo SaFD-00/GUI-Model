@@ -11,6 +11,12 @@
 # --exp01-ratios ratio55 처럼 부분 sweep 도 가능.
 #
 # NPROC_PER_NODE 은 .env 에서 관리 (기본값 2).
+#
+# --stage1-variant VARIANT: AC_EXP08 stage1 ablation 변형 선택 (기본: 없음 = 메인 stage1).
+# 현재 action-only 하나뿐 — state 40K 없이 메인 stage1 이 본 것과 같은 action 10K 만으로
+# 학습하는 stage1 full FT 대조군 (World Modeling 순효과 측정, lf_registry.py 의
+# AndroidControl_EXP08::stage1_extra_variants 가 정본). 미지정 시 YAML 경로는 기존과
+# byte-exact 로 동일하다.
 
 # shellcheck source=./_common.sh
 source "$(dirname "$0")/_common.sh"
@@ -25,12 +31,18 @@ _CUDA_LIBS="${_NVIDIA_PKGS}/curand/lib:${_NVIDIA_PKGS}/cuda_runtime/lib"
 export LIBRARY_PATH="${_CUDA_LIBS}:${LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="${_CUDA_LIBS}:${LD_LIBRARY_PATH:-}"
 
-SCRIPT_TAG="stage1_train_${STAGE1_MODE}"
+# variant 세그먼트 — gen_configs.py::generate_all 이 만드는 파일명
+# "{model}_world-model-{variant}{cfg_ver}.yaml" 과 대칭. 미지정(기본)이면 빈 문자열이라
+# 기존 "{model}_world-model{cfg_ver}.yaml" 경로가 byte-exact 로 유지된다.
+_VARIANT_SUFFIX=""
+[[ -n "$STAGE1_VARIANT" ]] && _VARIANT_SUFFIX="-${STAGE1_VARIANT}"
+
+SCRIPT_TAG="stage1_train_${STAGE1_MODE}${STAGE1_VARIANT:+_$STAGE1_VARIANT}"
 
 for MODEL_SHORT in "${MODELS[@]}"; do
   for DS in "${DATASETS[@]}"; do
     # YAML 정본은 repo 가 소유한다 (LF/examples/custom 이 아니라 configs/train).
-    YAML="$BASE_DIR/configs/train/$(ds_config_subfolder "$DS")/stage1_${STAGE1_MODE}/${MODEL_SHORT}_world-model$(ds_version_suffix "$DS").yaml"
+    YAML="$BASE_DIR/configs/train/$(ds_config_subfolder "$DS")/stage1_${STAGE1_MODE}/${MODEL_SHORT}_world-model${_VARIANT_SUFFIX}$(ds_version_suffix "$DS").yaml"
     require_model_eligible "$MODEL_SHORT" "${DS_DATADIR[$DS]}"
     require_yaml "$YAML" "python -m implicit_world_modeling.gen_configs --write 로 생성하세요"
 

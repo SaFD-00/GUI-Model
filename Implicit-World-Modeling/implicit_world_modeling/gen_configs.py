@@ -90,12 +90,25 @@ def _header(ds_name: str) -> str:
 # ============================================================
 # === Stage 1 YAML (노트북 Cell 10) ===
 # ============================================================
-def render_stage1(cfg: dict, mode: str, policy: GpuPolicy) -> str:
-    """Stage 1 (World Modeling) 학습 YAML 본문. full / lora 두 벌."""
+def render_stage1(
+    cfg: dict,
+    mode: str,
+    policy: GpuPolicy,
+    *,
+    ds_train_override: str | None = None,
+    output_dir_suffix: str = "",
+) -> str:
+    """Stage 1 (World Modeling) 학습 YAML 본문. full / lora 두 벌.
+
+    ``ds_train_override``/``output_dir_suffix`` 는 M2 ablation variant
+    (``AndroidControl_EXP08`` 의 ``stage1_extra_variants``, 예: action-only) 전용이다 —
+    기본 호출(둘 다 미지정)은 기존 출력과 byte-exact 하다.
+    """
     s1 = cfg[f"stage1_{mode}"]
     mcfg = cfg["model_config"]
 
     ds_line = f"deepspeed: {_deepspeed_field(policy)}\n"
+    ds_train = ds_train_override or cfg["ds_s1_train"]
 
     # diff loss: stage1 config 에 플래그가 있으면 (AC_EXP02 / AC_EXP05 / AC_EXP07) method 에 주입.
     diff_loss_line = (
@@ -110,7 +123,7 @@ def render_stage1(cfg: dict, mode: str, policy: GpuPolicy) -> str:
         f"save_steps: {s1['save_steps']}\n" if s1.get("save_steps") is not None else ""
     )
 
-    output_dir = cfg[f"save_s1_{mode}"]
+    output_dir = cfg[f"save_s1_{mode}"] + output_dir_suffix
 
     if mode == "full":
         method_block = f"""\
@@ -141,7 +154,7 @@ image_min_pixels: {cfg["image_min_pixels"]}
 {method_block}
 {diff_loss_line}
 ### dataset
-dataset: {cfg["ds_s1_train"]}
+dataset: {ds_train}
 template: {cfg["template"]}
 cutoff_len: {cfg["cutoff_len"]}
 overwrite_cache: false
@@ -318,6 +331,25 @@ def generate_all(
                 if ds_name not in _STAGE2_ONLY:
                     rel = f"{subfolder}/stage1_{mode}/{model_key}_world-model{cfg_ver}.yaml"
                     out[rel] = render_stage1(cfg, mode, policy)
+
+                    # M2 ablation variants (AndroidControl_EXP08::stage1_extra_variants) —
+                    # stage1 full FT 만 (브리프 범위: lora/stage2 는 만들지 않는다).
+                    # 하이퍼파라미터는 메인 stage1 full 과 동일, dataset/output_dir 만 다르다.
+                    if mode == "full":
+                        for variant, ds_train_key in cfg.get(
+                            "stage1_extra_variants", {}
+                        ).items():
+                            rel_v = (
+                                f"{subfolder}/stage1_{mode}/"
+                                f"{model_key}_world-model-{variant}{cfg_ver}.yaml"
+                            )
+                            out[rel_v] = render_stage1(
+                                cfg,
+                                mode,
+                                policy,
+                                ds_train_override=ds_train_key,
+                                output_dir_suffix=f"-{variant}",
+                            )
 
                 # Stage 2 를 지원하지 않는 DS (MC / EXP04) 는 skip.
                 if ds_name in _STAGE1_ONLY:
