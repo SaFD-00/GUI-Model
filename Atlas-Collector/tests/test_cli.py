@@ -192,3 +192,73 @@ def test_every_subcommand_is_implemented():
     provision in M3, run in M4, export in M5. Kept so a future subcommand has
     one place to register rather than reinventing the pattern."""
     assert cli.UNIMPLEMENTED == {}
+
+
+# ---------------------------------------------------------------------------
+# reset — one root, one removal
+# ---------------------------------------------------------------------------
+
+
+def _populate(root):
+    """A collection root with all three artifact kinds present."""
+    (root / "raw" / "com.a" / "observations" / "0000").mkdir(parents=True)
+    (root / "raw" / "com.a" / "observations" / "0000" / "screenshot.png").write_bytes(b"x" * 10)
+    (root / "raw" / "com.a" / "triples.jsonl").write_text("{}\n")
+    (root / "runtime" / "apps" / "com.a").mkdir(parents=True)
+    (root / "runtime" / "apps" / "com.a" / "cost.csv").write_text("h\n")
+    (root / "images").mkdir()
+    (root / "images" / "episode_com.a_step_0000.jpg").write_bytes(b"y" * 10)
+    (root / "stage1_train.jsonl").write_text("{}\n")
+    (root / "export_meta.json").write_text("{}")
+
+
+def test_reset_dry_run_deletes_nothing(tmp_path, capsys):
+    root = tmp_path / "AtlasCollection"
+    root.mkdir()
+    _populate(root)
+    assert cli.main(["reset", "--root", str(root), "--all", "--dry-run"]) == 0
+    assert "dry-run" in capsys.readouterr().out
+    assert (root / "raw" / "com.a" / "triples.jsonl").exists()
+    assert (root / "stage1_train.jsonl").exists()
+
+
+def test_reset_all_clears_every_artifact_kind(tmp_path):
+    """Throwing a pilot away must be ONE action.
+
+    Three roots meant three removals that all had to be remembered, and a
+    forgotten `raw/` beside a fresh export is indistinguishable from a
+    consistent one — while a resumed session would silently continue the old
+    observation numbering.
+    """
+    root = tmp_path / "AtlasCollection"
+    root.mkdir()
+    _populate(root)
+    assert cli.main(["reset", "--root", str(root), "--all"]) == 0
+    assert not (root / "raw").exists()
+    assert not (root / "runtime").exists()
+    assert not (root / "images").exists()
+    assert list(root.glob("stage1_*.jsonl")) == []
+    assert not (root / "export_meta.json").exists()
+
+
+def test_reset_scopes_are_independent(tmp_path):
+    root = tmp_path / "AtlasCollection"
+    root.mkdir()
+    _populate(root)
+    assert cli.main(["reset", "--root", str(root), "--export"]) == 0
+    assert list(root.glob("stage1_*.jsonl")) == []
+    assert not (root / "images").exists()
+    assert (root / "raw" / "com.a" / "triples.jsonl").exists(), "raw is a separate scope"
+    assert (root / "runtime" / "apps" / "com.a").exists()
+
+
+def test_reset_without_a_scope_refuses_rather_than_guessing(tmp_path):
+    root = tmp_path / "AtlasCollection"
+    root.mkdir()
+    _populate(root)
+    assert cli.main(["reset", "--root", str(root)]) == 2
+    assert (root / "raw").exists(), "a scopeless reset must delete nothing"
+
+
+def test_reset_on_a_missing_root_is_not_an_error(tmp_path):
+    assert cli.main(["reset", "--root", str(tmp_path / "absent"), "--all"]) == 0

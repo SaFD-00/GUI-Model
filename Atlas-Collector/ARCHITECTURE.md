@@ -81,7 +81,7 @@ host-pull 은 호스트가 폴링으로 알아내야 한다. 대신 기다릴 �
 (before_xml, before_screenshot, action, after_xml, after_screenshot)
 ```
 
-이 다섯이 한 덩어리로 `data/raw/{package}/` 아래 저장된다. Stage-1 학습 레코드는 이 triple 에서
+이 다섯이 한 덩어리로 `{root}/raw/{package}/` 아래 저장된다 (root 기본값 `data/AtlasCollection`). Stage-1 학습 레코드는 이 triple 에서
 직접 파생된다 — `before_*` 와 `action` 이 human turn 을, `after_xml` 이 gpt turn 을 만든다
 (`after_screenshot` 은 Stage-1 레코드에 들어가지 않지만, 검증과 후속 stage 를 위해 보관한다).
 
@@ -91,8 +91,8 @@ host-pull 은 호스트가 폴링으로 알아내야 한다. 대신 기다릴 �
 
 | 이름 | 위치 | 소유자 |
 |---|---|---|
-| **triple record** (내부) | `data/raw/{package}/` | Atlas-Collector 자신 |
-| **export record** (jsonl) | `data/export/` → ubuntu1.fclab | §4 의 export contract |
+| **triple record** (내부) | `{root}/raw/{package}/` | Atlas-Collector 자신 |
+| **export record** (jsonl) | `{root}/stage1_*.jsonl` → ubuntu1.fclab | §4 의 export contract |
 
 **triple record** 는 Atlas 내부 포맷이라 우리가 자유롭게 정한다. 여기에 **optional `task` 필드를
 예약해 둔다** — Stage 2 는 이번 범위 밖이지만, 나중에 task 라벨을 붙일 자리를 지금 열어 두기 위함이다.
@@ -269,7 +269,7 @@ export 시 축별로 변환한 뒤 `data-bbox="x1 y1 x2 y2"` (공백 구분 int 
 |---|---|---|
 | `cli.py` | argparse CLI, 서브커맨드 등록, dispatch 전 config 해석 | M1 (`catalog` 만 동작) |
 | `config.py` | builtin defaults → `run.yaml` → `AC_*` env → CLI, + 검증 | M1 |
-| `paths.py` | `data/` (영속) · `runtime/` (휘발성) root 해석 | M1 |
+| `paths.py` | 하나의 수집 root 와 그 안의 `raw/`·`runtime/` 서브트리 해석 | M1 |
 | `catalog.py` | `apps.csv` read/write/filter. **stdlib only** | M1 |
 | `adb.py` | `AdbClient` — host-pull 의 유일한 디바이스 채널 | M1 (M4 가 소비) |
 | `llm/client.py` | OpenRouter Chat Completions, 입력 텍스트 전용 | M1 (M4 가 소비) |

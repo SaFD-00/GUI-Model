@@ -1,11 +1,32 @@
 """Canonical roots for Atlas-Collector data and runtime artifacts.
 
-Two roots, deliberately separate:
+ONE COLLECTION ROOT
+===================
 
-    data/raw/{package}/       durable — the collected triples (xml + png + action)
-    data/export/              durable — the Stage-1 jsonl + images produced by M5
-    runtime/apps/{package}/   ephemeral — per-app session bookkeeping
-    runtime/logs/             ephemeral — per-run loguru sinks
+Everything a run produces — intermediate and final — lives under a single root,
+by default ``data/AtlasCollection`` (named to sit beside ``data/MonkeyCollection``,
+where the training pipeline reads the sibling collector's corpus from)::
+
+    data/AtlasCollection/
+        raw/{package}/          durable — collected triples (xml + png + action)
+        runtime/apps/{package}/ ephemeral — per-app session bookkeeping
+        runtime/logs/           ephemeral — per-run loguru sinks
+        stage1_train.jsonl      durable — the Stage-1 export
+        stage1_test_id.jsonl
+        stage1_test_ood.jsonl
+        images/
+
+One root because a run's intermediate and final artifacts are one dataset: split
+across ``data/raw``, ``runtime`` and ``data/AtlasCollection`` they can be deleted,
+copied or archived out of step, and a stale ``raw/`` beside a fresh export is
+indistinguishable from a consistent one. It also makes "throw this pilot away"
+a single removal instead of three that must all be remembered.
+
+``raw`` and ``runtime`` stay distinct SUBTREES within it: their lifetimes still
+differ (the corpus is the product, the runtime state is scaffolding), and
+:func:`apps_root` / :func:`raw_app_dir` remain the only way to resolve a per-app
+path so a consumer can never write under ``apps/`` while another reads the bare
+runtime root.
 
 Everything that resolves a per-app path goes through :func:`apps_root` /
 :func:`raw_app_dir`, so a consumer can never write under ``apps/`` while another
@@ -22,8 +43,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+#: The single collection root, relative to the project unless absolute.
+DEFAULT_ROOT = "data/AtlasCollection"
+
 RAW_SUBDIR = "raw"
-EXPORT_SUBDIR = "export"
+RUNTIME_SUBDIR = "runtime"
 APPS_SUBDIR = "apps"
 LOGS_SUBDIR = "logs"
 
@@ -49,22 +73,32 @@ def _resolve(base: str | Path) -> Path:
     return path if path.is_absolute() else project_root() / path
 
 
-def raw_root(data_dir: str | Path = "data") -> Path:
-    """Durable collection root: ``{data_dir}/raw``."""
-    return _resolve(data_dir) / RAW_SUBDIR
+def collection_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """The single root holding everything one collection produces."""
+    return _resolve(root)
 
 
-def raw_app_dir(data_dir: str | Path, package: str) -> Path:
-    """Durable per-package collection dir: ``{data_dir}/raw/{package}``."""
-    return raw_root(data_dir) / package
+def raw_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """Durable collection subtree: ``{root}/raw``."""
+    return collection_root(root) / RAW_SUBDIR
 
 
-def export_root(data_dir: str | Path = "data") -> Path:
-    """Stage-1 export root: ``{data_dir}/export``."""
-    return _resolve(data_dir) / EXPORT_SUBDIR
+def raw_app_dir(root: str | Path, package: str) -> Path:
+    """Durable per-package collection dir: ``{root}/raw/{package}``."""
+    return raw_root(root) / package
 
 
-def apps_root(runtime_dir: str | Path = "runtime") -> Path:
+def runtime_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """Ephemeral run-state subtree: ``{root}/runtime``."""
+    return collection_root(root) / RUNTIME_SUBDIR
+
+
+def export_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """Stage-1 export lands at the root itself, beside ``raw`` and ``runtime``."""
+    return collection_root(root)
+
+
+def apps_root(runtime_dir: str | Path) -> Path:
     """Root holding one directory per collected package: ``{runtime_dir}/apps``."""
     return _resolve(runtime_dir) / APPS_SUBDIR
 
@@ -74,17 +108,19 @@ def app_dir(runtime_dir: str | Path, package: str) -> Path:
     return apps_root(runtime_dir) / package
 
 
-def logs_root(runtime_dir: str | Path = "runtime") -> Path:
+def logs_root(runtime_dir: str | Path) -> Path:
     """Root holding per-run log files: ``{runtime_dir}/logs``."""
     return _resolve(runtime_dir) / LOGS_SUBDIR
 
 
 __all__ = [
     "APPS_SUBDIR",
-    "EXPORT_SUBDIR",
+    "DEFAULT_ROOT",
     "LOGS_SUBDIR",
     "RAW_SUBDIR",
+    "RUNTIME_SUBDIR",
     "app_dir",
+    "collection_root",
     "apps_root",
     "catalog_path",
     "config_path",
@@ -93,4 +129,5 @@ __all__ = [
     "project_root",
     "raw_app_dir",
     "raw_root",
+    "runtime_root",
 ]

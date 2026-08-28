@@ -21,8 +21,18 @@ the stdlib plus pyyaml (via ``config``) — never openai or pillow.
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from atlas_collector.paths import (
+    DEFAULT_ROOT,
+    collection_root,
+    export_root,
+    raw_root,
+    runtime_root,
+)
 
 if TYPE_CHECKING:  # imported for typing only; the runtime imports stay local
     from atlas_collector.adb import AdbClient
@@ -307,7 +317,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     failures = 0
     for position, row in enumerate(targets, start=1):
         session = Session(
-            row.package_id, args.data_dir, args.runtime_dir, episode=row.package_id
+            row.package_id, raw_root(args.root), runtime_root(args.root),
+            episode=row.package_id,
         )
         if session.is_complete and not args.force:
             print(f"[{position}/{len(targets)}] {row.package_id}: already complete, skipping")
@@ -408,15 +419,64 @@ def _declared_activities(adb: object, package: str) -> set[str]:
     return set(re.findall(rf"({re.escape(package)}/[\w.$]+)", section))
 
 
+def cmd_reset(args: argparse.Namespace) -> int:
+    """Delete a collection root's artifacts so the next run starts clean.
+
+    Exists because "throw the pilot away before the real run" must be one
+    reliable action. A leftover ``raw/`` beside a fresh export is
+    indistinguishable from a consistent one, and a resumed session would
+    continue the OLD observation numbering — older triples would then reference
+    newer screens with nothing in the data to flag it.
+    """
+    root = collection_root(args.root)
+    if not root.exists():
+        print(f"{root} does not exist — nothing to reset")
+        return 0
+
+    scopes: list[tuple[str, list[Path]]] = []
+    if args.raw or args.all:
+        scopes.append(("raw", [raw_root(args.root)]))
+    if args.runtime or args.all:
+        scopes.append(("runtime", [runtime_root(args.root)]))
+    if args.export or args.all:
+        exports = sorted(export_root(args.root).glob("stage1_*.jsonl"))
+        exports += [p for p in (export_root(args.root) / "images",) if p.exists()]
+        exports += [p for p in (export_root(args.root) / "export_meta.json",) if p.exists()]
+        scopes.append(("export", exports))
+    if not scopes:
+        print("pick a scope: --raw / --runtime / --export / --all")
+        return 2
+
+    targets = [(name, p) for name, paths in scopes for p in paths if p.exists()]
+    if not targets:
+        print(f"{root}: nothing to delete in the selected scope(s)")
+        return 0
+
+    for name, path in targets:
+        size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.is_dir() else path.stat().st_size
+        print(f"  {name:<8} {path}  ({size / 1e6:.1f} MB)")
+    if args.dry_run:
+        print("dry-run: nothing deleted")
+        return 0
+
+    for _, path in targets:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    print(f"deleted {len(targets)} path(s) under {root}")
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     """Convert collected triples into the Stage-1 (NEXT_STATE_PREDICTION) jsonl."""
     from atlas_collector.export import Exporter
 
     config = args.run_config
     exporter = Exporter(
-        args.data_dir,
-        args.runtime_dir,
-        args.out_dir,
+        raw_root(args.root),
+        runtime_root(args.root),
+        export_root(args.root),
         frame=tuple(config.export.target_size),
         device_size=(config.device.width, config.device.height),
         ood_apps=args.ood_apps if args.ood_apps is not None else config.export.ood_apps,
@@ -441,7 +501,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     )
     if stats.ood_apps:
         print(f"  held out for OOD: {', '.join(stats.ood_apps)}")
-    print(f"  -> {args.out_dir}")
+    print(f"  -> {export_root(args.root)}")
     return 0
 
 
@@ -612,10 +672,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Input-text generation mode. The LLM is used for input text ONLY.",
     )
     p_run.add_argument(
-        "--data-dir", default="data/raw", help="Persistent corpus root (default: data/raw)."
-    )
-    p_run.add_argument(
-        "--runtime-dir", default="runtime", help="Volatile run-state root (default: runtime)."
+        "--root",
+        default=DEFAULT_ROOT,
+        help=(
+            f"The single collection root (default: {DEFAULT_ROOT}). Holds raw/, "
+            "runtime/ and the export side by side, so one run is one directory."
+        ),
     )
     p_run.add_argument(
         "--force",
@@ -635,19 +697,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Export collected triples as EXP08 Stage-1 jsonl.",
     )
     p_export.add_argument(
-        "--out-dir",
-        default="data/AtlasCollection",
+        "--root",
+        default=DEFAULT_ROOT,
         help=(
-            "Output directory (default: data/AtlasCollection). Named to sit "
-            "alongside data/MonkeyCollection, which is where the training "
-            "pipeline reads the sibling collector's corpus from."
+            f"The single collection root (default: {DEFAULT_ROOT}). Reads raw/ "
+            "and runtime/ from it and writes the Stage-1 jsonl + images into it."
         ),
-    )
-    p_export.add_argument(
-        "--data-dir", default="data/raw", help="Collected corpus root (default: data/raw)."
-    )
-    p_export.add_argument(
-        "--runtime-dir", default="runtime", help="Volatile run-state root (default: runtime)."
     )
     p_export.add_argument("--seed", type=int, default=None, help="Split seed.")
     p_export.add_argument(
@@ -668,6 +723,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fraction of the SEEN apps' triples reserved as ID eval.",
     )
     p_export.set_defaults(func=cmd_export)
+
+    # -- reset ----------------------------------------------------------------
+    p_reset = sub.add_parser(
+        "reset",
+        help="Delete a collection root's artifacts so the next run starts clean.",
+    )
+    p_reset.add_argument("--root", default=DEFAULT_ROOT, help=f"Collection root (default: {DEFAULT_ROOT}).")
+    p_reset.add_argument("--raw", action="store_true", help="Delete raw/ (the collected corpus).")
+    p_reset.add_argument("--runtime", action="store_true", help="Delete runtime/ (session state).")
+    p_reset.add_argument("--export", action="store_true", help="Delete the Stage-1 jsonl + images.")
+    p_reset.add_argument("--all", action="store_true", help="Delete every artifact under the root.")
+    p_reset.add_argument("--dry-run", action="store_true", help="List what would go, delete nothing.")
+    p_reset.set_defaults(func=cmd_reset)
 
     return parser
 

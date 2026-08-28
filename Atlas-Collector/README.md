@@ -288,17 +288,34 @@ uv run atlas-collect provision --no-download                   # 로컬 소스�
 
 ### export 산출물
 
-`atlas-collect export` 는 `data/AtlasCollection/` 에 쓴다 — 학습 파이프라인이 형제 수집기의
-코퍼스를 읽는 `data/MonkeyCollection/` 옆자리다.
+### 하나의 수집 root
+
+한 실행이 내는 **중간 산출물과 최종 산출물이 한 디렉터리 아래** 있다. 기본값은
+`data/AtlasCollection/` 으로, 학습 파이프라인이 형제 수집기의 코퍼스를 읽는
+`data/MonkeyCollection/` 옆자리다. `run` 과 `export` 모두 `--root` 하나만 받는다.
+
+셋으로 흩어져 있으면 지우거나 복사하거나 보관할 때 어긋날 수 있고, 오래된 `raw/` 가
+새 export 옆에 남아 있어도 일관된 상태와 구분되지 않는다. "이 파일럿은 버린다" 가
+세 번의 삭제가 아니라 **한 번**이 되는 것도 같은 이유다 (`atlas-collect reset --all`).
 
 ```
 data/AtlasCollection/
-├── stage1_train.jsonl       # seen 앱, train
-├── stage1_test_id.jsonl     # seen 앱의 미사용 화면 (ID eval)
-├── stage1_test_ood.jsonl    # 통째로 홀드아웃한 앱 (OOD eval)
+├── raw/{package}/           # 중간: observations, triples.jsonl, metadata.json
+├── runtime/apps/{package}/  # 휘발성: activity_coverage.csv, cost.csv
+├── stage1_train.jsonl       # 최종: seen 앱, train
+├── stage1_test_id.jsonl     # 최종: seen 앱의 미사용 화면 (ID eval)
+├── stage1_test_ood.jsonl    # 최종: 통째로 홀드아웃한 앱 (OOD eval)
 ├── export_meta.json         # split 파라미터·드롭 사유별 집계
 └── images/episode_{package}_step_{NNNN}.jpg
 ```
+
+`raw` 와 `runtime` 은 root 안에서 **별개 서브트리로** 남는다 — 수명이 다르기 때문이다
+(코퍼스는 결과물, runtime 은 발판). `reset` 의 스코프도 그 경계를 따른다:
+`--raw` / `--runtime` / `--export` / `--all`.
+
+> **본수집 전에 파일럿 산출물을 반드시 지운다.** 남은 `raw/` 는 resume 시 **이전 세션의
+> observation 번호를 이어받아**, 예전 triple 이 새 화면을 가리키게 되고 데이터 어디에도
+> 그 사실이 드러나지 않는다. `atlas-collect reset --root <pilot> --all` 한 번이면 된다.
 
 파일명은 `data/AndroidControl_EXP08/` 의 `stage1_train` / `stage1_test_*` 모양을 따른다.
 ID/OOD 분할은 EXP08 이 만들지 못한 부분이다 — EXP08 의 meta 가 직접 적고 있다:
@@ -428,10 +445,15 @@ Atlas-Collector/
 ├── tests/
 ├── README.md · ARCHITECTURE.md · AGENTS.md
 └── (생성됨, gitignore)
-    data/raw/{package}/          # 영속: 수집된 triple
-    data/AtlasCollection/        # 영속: Stage-1 jsonl + images (export 산출물)
-    runtime/apps/{package}/      # 휘발성: 세션 bookkeeping
-    runtime/logs/                # 휘발성: 실행 로그
+    data/AtlasCollection/            # ← 하나의 수집 root
+    ├── raw/{package}/              # 영속: 수집된 triple (xml + png + action)
+    ├── runtime/apps/{package}/     # 휘발성: 세션 bookkeeping
+    ├── runtime/logs/               # 휘발성: 실행 로그
+    ├── stage1_train.jsonl          # 영속: Stage-1 export
+    ├── stage1_test_id.jsonl
+    ├── stage1_test_ood.jsonl
+    ├── export_meta.json
+    └── images/
 ```
 
 `data/` 와 `runtime/` 은 monorepo 루트 `.gitignore` 의 `**/data*/`, `**/runtime*/` 로 이미 제외된다.
