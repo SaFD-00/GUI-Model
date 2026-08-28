@@ -275,6 +275,25 @@ class Session:
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def read_metadata(self) -> dict[str, Any]:
+        """The session's metadata, or an empty dict when it has none yet."""
+        if not self.metadata_path.exists():
+            return {}
+        return dict(json.loads(self.metadata_path.read_text(encoding="utf-8")))
+
+    def device_size(self) -> tuple[int, int] | None:
+        """The resolution this session was collected at, if it was recorded.
+
+        Authoritative for export's coordinate transform. Returns None for a
+        session predating the field, so the caller can fall back explicitly
+        rather than silently assuming a default that may be wrong.
+        """
+        meta = self.read_metadata()
+        width, height = meta.get("device_width"), meta.get("device_height")
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            return (width, height)
+        return None
+
     def observation_path(self, index: int) -> Path:
         return self.observations_dir / f"{index:04d}"
 

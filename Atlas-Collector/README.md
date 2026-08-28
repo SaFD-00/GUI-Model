@@ -57,9 +57,9 @@ Android GUI world model 학습용 **Stage-1 (NEXT_STATE_PREDICTION)** 데이터�
 |---|---|---|
 | M1 | scaffold + catalog + config + docs | **DONE** |
 | M2 | `xml/` — XML 인코딩, actionable element 추출, 좌표 변환 | **DONE** (`src/atlas_collector/xml/`, 테스트 통과) |
-| M3 | coverage-guided exploration | **미구현** |
-| M4 | host-pull collection loop | **미구현** |
-| M5 | Stage-1 export | **미구현** |
+| M3 | coverage-guided exploration + provision | 완료 |
+| M4 | host-pull collection loop | 완료 |
+| M5 | Stage-1 export | 완료 |
 
 M2 는 **라이브러리**이고 자체 CLI 서브커맨드가 없다. 그래서 M1+M2 가 끝난 지금도
 **실제로 동작하는 서브커맨드는 `catalog` 하나**다. 나머지는 `--help` 에 표면을 드러내되
@@ -166,8 +166,8 @@ atlas-collect [--config PATH] <command>
 | `catalog` | **구현됨** | `catalog/apps.csv` 를 필터링해 나열하거나 요약한다 |
 | `sync-installed` | **구현됨** | `adb pm list packages` 로 `installed` 컬럼 갱신 (그 컬럼만) |
 | `provision` | **구현됨** | 수집에 필요한 APK 를 해석·설치하고 실패를 원장에 누적 |
-| `run` | 미구현 (M4) | host-pull 수집 루프 |
-| `export` | 미구현 (M5) | 수집된 triple → Stage-1 jsonl |
+| `run` | 완료 | host-pull 수집 루프 |
+| `export` | 완료 | 수집된 triple → EXP08 Stage-1 jsonl |
 
 
 ### 수집 제외 4행 (`status=excluded`)
@@ -286,21 +286,28 @@ uv run atlas-collect provision --no-download                   # 로컬 소스�
 - JSON 이 깨져 있으면 빈 원장으로 리셋하지 않고 **예외를 낸다**. 조용한 리셋은 이 원장이 막으려는
   바로 그 손실을 재현한다. 복구는 의도적으로 수동이다.
 
-### 미구현 서브커맨드
+### export 산출물
 
-플래그는 이미 등록돼 있어 `--help` 로 표면을 볼 수 있다. 호출하면 다음처럼 실패한다:
+`atlas-collect export` 는 `data/AtlasCollection/` 에 쓴다 — 학습 파이프라인이 형제 수집기의
+코퍼스를 읽는 `data/MonkeyCollection/` 옆자리다.
 
 ```
-NotImplementedError: `atlas-collect run` is not implemented yet — it lands in milestone 4
-(collection loop). M1 (scaffold/catalog/config) and M2 (xml encoding) are done, but M2 is a
-library with no CLI surface, so `atlas-collect catalog` is the one working subcommand.
-See ARCHITECTURE.md for the milestone plan.
+data/AtlasCollection/
+├── stage1_train.jsonl       # seen 앱, train
+├── stage1_test_id.jsonl     # seen 앱의 미사용 화면 (ID eval)
+├── stage1_test_ood.jsonl    # 통째로 홀드아웃한 앱 (OOD eval)
+├── export_meta.json         # split 파라미터·드롭 사유별 집계
+└── images/episode_{package}_step_{NNNN}.jpg
 ```
 
-`export` 에는 서로 **독립적인 두 개의 eval split knob** 이 이미 등록돼 있다:
+파일명은 `data/AndroidControl_EXP08/` 의 `stage1_train` / `stage1_test_*` 모양을 따른다.
+ID/OOD 분할은 EXP08 이 만들지 못한 부분이다 — EXP08 의 meta 가 직접 적고 있다:
+"원본에 앱 파티션 메타가 없어 앱 단위 분할을 재현할 수 없다".
 
-- `--ood-apps <frac>` — train 에서 통째로 제외할 **앱**의 비율 (OOD eval)
-- `--id-ratio <frac>` — train 에 포함된(seen) 앱들의 **triple** 중 eval 로 뗄 비율 (ID eval)
+**화면이 바뀌지 않은 triple 은 기본적으로 제외**한다 (`--keep-unchanged` 로 포함).
+수집기는 사실로 기록하고 무엇을 학습에 쓸지는 export 가 정한다 — 수집 단계에서 거른 것은
+복구할 수 없고 무엇이 빠졌는지 흔적도 남지 않기 때문이다.
+
 
 ## 설정
 
@@ -422,7 +429,7 @@ Atlas-Collector/
 ├── README.md · ARCHITECTURE.md · AGENTS.md
 └── (생성됨, gitignore)
     data/raw/{package}/          # 영속: 수집된 triple
-    data/export/                 # 영속: Stage-1 jsonl + images (M5)
+    data/AtlasCollection/        # 영속: Stage-1 jsonl + images (export 산출물)
     runtime/apps/{package}/      # 휘발성: 세션 bookkeeping
     runtime/logs/                # 휘발성: 실행 로그
 ```

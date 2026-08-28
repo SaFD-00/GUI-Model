@@ -29,9 +29,9 @@ if TYPE_CHECKING:  # imported for typing only; the runtime imports stay local
 
 # Milestones that are registered but not implemented yet. Keep this table and the
 # docs (README.md / ARCHITECTURE.md / AGENTS.md) in sync.
-UNIMPLEMENTED = {
-    "export": "milestone 5 (Stage-1 export)",
-}
+#: Subcommands still to come. Empty since M5 — kept so `_not_implemented` has a
+#: single place to grow from rather than being reinvented per command.
+UNIMPLEMENTED: dict[str, str] = {}
 
 
 def _not_implemented(command: str) -> None:
@@ -410,8 +410,39 @@ def _declared_activities(adb: object, package: str) -> set[str]:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Convert collected triples into the Stage-1 (NEXT_STATE_PREDICTION) jsonl."""
-    _not_implemented("export")
-    return 1  # unreachable
+    from atlas_collector.export import Exporter
+
+    config = args.run_config
+    exporter = Exporter(
+        args.data_dir,
+        args.runtime_dir,
+        args.out_dir,
+        frame=tuple(config.export.target_size),
+        device_size=(config.device.width, config.device.height),
+        ood_apps=args.ood_apps if args.ood_apps is not None else config.export.ood_apps,
+        id_ratio=args.id_ratio if args.id_ratio is not None else config.export.id_ratio,
+        seed=args.seed if args.seed is not None else config.collection.seed,
+        keep_unchanged=args.keep_unchanged,
+    )
+    stats = exporter.run()
+    if not stats.total_written:
+        print("nothing exported — no collected session produced a usable triple")
+        return 1
+
+    print(f"{stats.apps} app(s), {stats.triples_seen} triples seen")
+    from atlas_collector.export import SPLIT_ID, SPLIT_OOD, SPLIT_TRAIN
+
+    for split in (SPLIT_TRAIN, SPLIT_ID, SPLIT_OOD):
+        print(f"  stage1_{split}.jsonl : {stats.written.get(split, 0)}")
+    print(
+        f"  dropped: {stats.dropped_unchanged} unchanged, "
+        f"{stats.dropped_unparsable} unparsable, "
+        f"{stats.dropped_missing_files} missing files"
+    )
+    if stats.ood_apps:
+        print(f"  held out for OOD: {', '.join(stats.ood_apps)}")
+    print(f"  -> {args.out_dir}")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -601,9 +632,29 @@ def build_parser() -> argparse.ArgumentParser:
     # -- export (NOT IMPLEMENTED) ---------------------------------------------
     p_export = sub.add_parser(
         "export",
-        help="[NOT IMPLEMENTED - M5] Export collected triples as Stage-1 jsonl.",
+        help="Export collected triples as EXP08 Stage-1 jsonl.",
     )
-    p_export.add_argument("--out", default=None, help="Output directory (default: data/export).")
+    p_export.add_argument(
+        "--out-dir",
+        default="data/AtlasCollection",
+        help=(
+            "Output directory (default: data/AtlasCollection). Named to sit "
+            "alongside data/MonkeyCollection, which is where the training "
+            "pipeline reads the sibling collector's corpus from."
+        ),
+    )
+    p_export.add_argument(
+        "--data-dir", default="data/raw", help="Collected corpus root (default: data/raw)."
+    )
+    p_export.add_argument(
+        "--runtime-dir", default="runtime", help="Volatile run-state root (default: runtime)."
+    )
+    p_export.add_argument("--seed", type=int, default=None, help="Split seed.")
+    p_export.add_argument(
+        "--keep-unchanged",
+        action="store_true",
+        help="Export triples where the screen did not change (dropped by default).",
+    )
     p_export.add_argument(
         "--ood-apps",
         type=float,

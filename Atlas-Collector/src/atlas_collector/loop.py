@@ -436,7 +436,19 @@ class CollectionLoop:
         self.stats.pages = len(self.registry)
         self.stats.elapsed_sec = self.session.elapsed_sec
         completed = self.stats.stop_reason.endswith("exhausted")
-        self.session.write_metadata(completed=completed, extra=self.stats.as_dict())
+        # The device resolution is recorded with the session, not left for export
+        # to guess. Export must scale every data-bbox from the frame the dump was
+        # actually taken at, and it cannot recover that from the dump: a dialog's
+        # window is legitimately smaller than the display, so deriving the frame
+        # from the largest node confuses "partial window" with "wrong resolution".
+        self.session.write_metadata(
+            completed=completed,
+            extra={
+                **self.stats.as_dict(),
+                "device_width": self._width,
+                "device_height": self._height,
+            },
+        )
         logger.info(
             "{}: {} triples over {} observations, {} pages, {} — {}",
             self.session.package,

@@ -187,6 +187,8 @@ def test_package_docstring_marks_m2_done():
     assert "M2 xml/ encoding + coordinate frame    — DONE" in doc
 
 
-def test_unimplemented_commands_still_name_their_milestone():
-    # `sync-installed` and `provision` left this table in M3, `run` in M4.
-    assert set(cli.UNIMPLEMENTED) == {"export"}
+def test_every_subcommand_is_implemented():
+    """The table emptied out as the milestones landed: sync-installed and
+    provision in M3, run in M4, export in M5. Kept so a future subcommand has
+    one place to register rather than reinventing the pattern."""
+    assert cli.UNIMPLEMENTED == {}
