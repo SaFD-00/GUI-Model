@@ -73,8 +73,11 @@ bare XML gpt turn, 1-element `images`, `myset/images/episode_{EP}_step_{STEP}.jp
 
 ### (b) page 식별은 LLM-free 다
 
-page 정체성은 구조적으로만 결정한다: BM25 후보 검색 → element diff (`|A △ B| < element_diff_max`)
-또는 Jaccard (`> element_jaccard_min`) **AND** pixel gate (`< page_pixel_diff_threshold`).
+page 정체성은 **LLM-Explorer 방법**으로만 결정한다: `state_str` 일치 → `structure_str` 일치 →
+(같은 activity 안에서) content-free signature 대칭차 `≤ max_diff_elements`.
+
+**픽셀을 page 식별에 넣지 마라.** 스크린샷 비교는 화면 안정화 전용이다. Monkey-Collector 의
+Mobile3M BM25+pixel 매처를 다시 끌어오지 않는다 — 이 프로젝트는 의도적으로 그 계보가 아니다.
 
 LLM 을 page 식별 경로에 넣지 않는다. 성능 문제가 아니라 **재현성 계약**이다 — 같은 화면이 API 응답의
 변덕에 따라 다른 page 로 갈리면 page_graph 와 coverage 수치가 통째로 무의미해진다.

@@ -64,17 +64,33 @@ collection:
   # Env: AC_COLLECTION_STABILIZE_LOW_RES_WIDTH
   stabilize_low_res_width: 100
 
-screen_matching:
-  # page 식별은 항상 LLM-free 다 (BM25 + element diff + pixel gate, LLM-Explorer / Mobile3M 계열).
-  # 같은 page 로 볼 최대 element-line 차이 수 (|A △ B| < element_diff_max).
-  # Env: AC_SCREEN_MATCHING_ELEMENT_DIFF_MAX
-  element_diff_max: 5
-  # element_criterion=jaccard 로 쓸 때의 최소 Jaccard 유사도.
-  # Env: AC_SCREEN_MATCHING_ELEMENT_JACCARD_MIN
-  element_jaccard_min: 0.5
-  # page 병합을 확정하는 pixel gate: 변경 픽셀 비율이 이 값보다 작아야 같은 page.
-  # Env: AC_SCREEN_MATCHING_PAGE_PIXEL_DIFF_THRESHOLD
-  page_pixel_diff_threshold: 0.3
+page_matching:
+  # page 식별은 **LLM-Explorer 방법**이고 항상 LLM-free 다.
+  # 픽셀은 page 식별에 쓰지 않는다 — 스크린샷 비교는 화면 **안정화** 전용이다
+  # (collection.stabilize_* / src/atlas_collector/stabilize.py).
+  #
+  # 정체성은 activity 로 스코프된 두 해시다 (device_state.py 이식):
+  #   state_str      = md5("{activity}{sorted(content-aware signature)}")
+  #   structure_str  = md5("{activity}{sorted(content-free signature)}")
+  # 병합은 state_str 일치 -> structure_str 일치 순으로 먼저 시도한다.
+  #
+  # merge_policy: 두 해시가 모두 빗나갔을 때의 처리.
+  #   structure_only    레퍼런스의 **실제** 동작 그대로 (새 page 발급).
+  #                     레퍼런스의 LLM 선택 분기는 dead code 라 실제로는 여기서 멈춘다.
+  #   similar_elements  (기본) 같은 activity 안에서 content-free signature 대칭차가
+  #                     max_diff_elements 이하인 가장 가까운 page 로 병합.
+  #                     dead code 가 비워둔 자리를 LLM 없이 메운다.
+  # Env: AC_PAGE_MATCHING_MERGE_POLICY
+  merge_policy: similar_elements
+  # 대칭차 예산. 레퍼런스의 MAX_NUM_DIFF_ELEMENTS_IN_SIMILAR_STATES = 2 를 그대로 쓴다.
+  # Pixel 6 실측 여유: 같은 page 스크롤 = 2, 가장 가까운 **다른** 화면 = 18.
+  # 넓히지 마라 — 과병합은 시도하지도 않은 action 을 explored 로 표시하고, 그 손상은
+  # 수집된 데이터만 봐서는 복구도 발견도 안 된다. 의심스러우면 structure_only 로 좁혀라.
+  # Env: AC_PAGE_MATCHING_MAX_DIFF_ELEMENTS
+  max_diff_elements: 2
+  # activity 가 다르면 병합하지 않는다 (레퍼런스의 filter_same_activity).
+  # Env: AC_PAGE_MATCHING_SAME_ACTIVITY_ONLY
+  same_activity_only: true
 
 llm:
   # LLM 은 **입력 텍스트 생성 단 하나**에만 쓰인다. page 식별에는 절대 쓰지 않는다.

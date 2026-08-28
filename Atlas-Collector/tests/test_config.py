@@ -175,38 +175,53 @@ def test_missing_explicit_path_is_an_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# (3c) screen_matching thresholds
+# (3c) page_matching — LLM-free page identity, ported from LLM-Explorer
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("page_pixel_diff_threshold", 1.5),
-        ("page_pixel_diff_threshold", -0.1),
-        ("page_pixel_diff_threshold", 42),
-        ("element_jaccard_min", 2.0),
-        ("element_jaccard_min", -1.0),
-        ("element_diff_max", -1),
-        ("element_diff_max", 0.5),
-    ],
-)
-def test_out_of_range_screen_matching_value_is_rejected(tmp_path, key, value):
-    path = write_yaml(tmp_path, f"screen_matching:\n  {key}: {value}\n")
-    with pytest.raises(ConfigError, match=f"screen_matching.{key}"):
+def test_page_matching_defaults_are_the_reference_constants():
+    matching = load_run_config().page_matching
+    assert matching.merge_policy == "similar_elements"
+    # MAX_NUM_DIFF_ELEMENTS_IN_SIMILAR_STATES in input_policy3.py:38
+    assert matching.max_diff_elements == 2
+    assert matching.same_activity_only is True
+
+
+@pytest.mark.parametrize("value", ["structure_only", "similar_elements"])
+def test_both_merge_policies_load(tmp_path, value):
+    path = write_yaml(tmp_path, f"page_matching:\n  merge_policy: {value}\n")
+    assert load_run_config(path).page_matching.merge_policy == value
+
+
+def test_an_unknown_merge_policy_is_rejected(tmp_path):
+    path = write_yaml(tmp_path, "page_matching:\n  merge_policy: bm25_pixel\n")
+    with pytest.raises(ConfigError, match="merge_policy"):
         load_run_config(path)
 
 
-@pytest.mark.parametrize("value", [0.0, 0.5, 1.0])
-def test_threshold_boundaries_are_accepted(tmp_path, value):
-    """[0.0, 1.0] inclusive: the endpoints are degenerate settings, not crashes."""
-    path = write_yaml(tmp_path, f"screen_matching:\n  page_pixel_diff_threshold: {value}\n")
-    assert load_run_config(path).screen_matching.page_pixel_diff_threshold == value
+@pytest.mark.parametrize("value", [-1, 0.5, True])
+def test_an_invalid_diff_budget_is_rejected(tmp_path, value):
+    path = write_yaml(tmp_path, f"page_matching:\n  max_diff_elements: {value}\n")
+    with pytest.raises(ConfigError, match="max_diff_elements"):
+        load_run_config(path)
 
 
-def test_element_diff_max_zero_is_accepted(tmp_path):
-    path = write_yaml(tmp_path, "screen_matching:\n  element_diff_max: 0\n")
-    assert load_run_config(path).screen_matching.element_diff_max == 0
+def test_a_zero_diff_budget_is_accepted(tmp_path):
+    """0 disables similar-element merging without disabling the policy."""
+    path = write_yaml(tmp_path, "page_matching:\n  max_diff_elements: 0\n")
+    assert load_run_config(path).page_matching.max_diff_elements == 0
+
+
+def test_pixels_are_not_a_page_matching_knob():
+    """Screenshot comparison belongs to stabilization ONLY.
+
+    The scaffold inherited Mobile3M's BM25+pixel knobs from Monkey-Collector;
+    they are gone. If one reappears here, page identity has drifted away from
+    the LLM-Explorer method this project committed to.
+    """
+    matching = load_run_config().page_matching
+    for banned in ("page_pixel_diff_threshold", "element_jaccard_min", "element_diff_max"):
+        assert not hasattr(matching, banned), f"{banned} is a Mobile3M knob"
 
 
 # ---------------------------------------------------------------------------

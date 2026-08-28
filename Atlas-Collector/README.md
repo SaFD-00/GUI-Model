@@ -43,7 +43,9 @@ Android GUI world model 학습용 **Stage-1 (NEXT_STATE_PREDICTION)** 데이터�
   `input tap/swipe/text` → `action`, 화면 안정화 후 다시 dump/screencap → `after_xml` / `after_screenshot`.
 - **출력 단위는 triple** — `(before_xml, before_screenshot, action, after_xml, after_screenshot)`.
 - **탐색 개념은 LLM-Explorer 계열**: coverage-guided unexplored-first 선택, 미탐색 action 까지의 shortest-path
-  navigation, BM25 + pixel page matching. page 식별은 **항상 LLM-free** 다.
+  navigation, 그리고 **LLM-Explorer 의 page matching**(activity 로 스코프된 구조 해시 + content-free
+  signature 대칭차). page 식별은 **항상 LLM-free** 다.
+- **픽셀은 page 식별에 쓰지 않는다.** 스크린샷 비교의 용도는 화면 **안정화** 하나뿐이다.
 - **LLM 은 단 하나에만 쓰인다 — 텍스트 입력 필드의 입력값 생성.** OpenRouter Chat Completions,
   기본 모델 `qwen/qwen3.8-flash`.
 - **auth-gated 앱**: 카탈로그의 `auth_required` 컬럼이 `account_required` 인 앱은 러너가 **기본적으로 건너뛴다**.

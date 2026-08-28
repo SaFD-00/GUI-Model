@@ -1,8 +1,8 @@
 """OpenRouter (OpenAI-compatible Chat Completions) client.
 
 **The LLM has exactly one job in Atlas-Collector: generating input text for text
-fields.** Page identity is decided structurally (BM25 + element diff + pixel
-gate) and never calls this client. Do not widen the LLM's remit without
+fields.** Page identity is decided structurally (LLM-Explorer hashes + element
+symmetric difference) and never calls this client. Do not widen the LLM's remit without
 revisiting ARCHITECTURE.md — the LLM-free page identity is a hard constraint.
 
 OpenRouter speaks the OpenAI **Chat Completions** API (``chat.completions``),

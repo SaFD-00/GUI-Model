@@ -44,8 +44,8 @@ Atlas 는 신호를 **없앤다**. 호스트가 자기 스케줄로 직접 끌�
     └──────────────────────────────────────────────────┘
                           ↓
     ┌─ decide ─────────────────────────────────────────┐
-    │  page 식별 (LLM-free): BM25 → element diff/Jaccard│
-    │                        AND pixel gate            │
+    │  page 식별 (LLM-free): state_str → structure_str  │
+    │                        → 대칭차 ≤ 2 (같은 activity)│
     │  action 선택: coverage-guided unexplored-first,   │
     │               미탐색 action 까지 shortest-path     │
     │  (텍스트 입력이 필요할 때만) LLM 으로 입력값 생성    │
@@ -107,9 +107,33 @@ LLM-Explorer (`.claude/references/LLM-Explorer`) 의 개념을 가져온다:
 
 - **coverage-guided unexplored-first**: 아직 실행하지 않은 action 을 우선 고른다
 - **shortest-path navigation**: 현재 page 에서 미탐색 action 이 있는 page 까지 최단 경로로 이동
-- **BM25 + pixel page matching**: encoded XML 을 element-line 문서로 직렬화 → BM25 로 후보 page 검색 →
-  element diff (`|A △ B| < element_diff_max`) 또는 Jaccard (`> element_jaccard_min`) **AND**
-  pixel gate (변경 픽셀 비율 `< page_pixel_diff_threshold`) 로 확인 → 기존 page 병합 또는 새 page 발급
+- **page matching (LLM-Explorer 이식)**: `device_state.py` 의 정체성 해시를 그대로 옮긴다.
+
+  ```
+  signature              [class]C[resource_id]R[visible]V[text]T[en,ch,se]   (text 50자 초과는 None)
+  content_free_signature [class]C[resource_id]R[visible]V
+  state_str      = md5("{activity}{" + ",".join(sorted(signature)) + "}")[:6]
+  structure_str  = 같은 식을 content_free_signature 로
+  ```
+
+  병합 순서: `state_str` 일치 → `structure_str` 일치 → (같은 activity 안에서) content-free signature
+  대칭차 `≤ max_diff_elements` 인 가장 가까운 page. 셋 다 빗나가면 새 page 를 발급한다.
+
+  > **레퍼런스의 LLM 선택 분기는 dead code 다.** `_classify_state` 는 `state_id = None` 을 무조건
+  > 대입한 뒤 `if state_id is not None` 을 검사한다(input_policy3.py:557-559). 즉 **레퍼런스의 page
+  > 병합은 LLM 유무와 무관하게 순수 휴리스틱**이고, LLM 은 page 의 *제목 문자열*만 만든다. 이 알고리즘을
+  > 이식해도 LLM-free 계약에 포기할 것이 없다. 대신 대칭차 필터는 실행되지 않는 선택자에게 후보만
+  > 넘기고 끝나므로, 문자 그대로 이식하면 구조 해시 매칭만 남아 스크롤마다 page 가 쪼개진다.
+  > `merge_policy: structure_only` 가 그 **실제** 동작이고, 기본값 `similar_elements` 가 빈자리를 메운다.
+
+  Pixel 6 실측 여유 (`tests/fixtures/pages/`): 같은 page 스크롤 = 대칭차 **2**, 가장 가까운 **다른**
+  화면 = **18**. 이 16 의 여유가 예산 2 를 안전하게 만든다. 다른 기기에서는 재측정하고, 넓히지 말고
+  `structure_only` 로 좁혀라 — 과병합은 시도하지도 않은 action 을 explored 로 표시하며 그 손상은
+  수집 데이터만 봐서는 발견되지 않는다.
+
+- **픽셀은 page 식별에 관여하지 않는다.** 스크린샷 비교는 화면 **안정화** 전용이다
+  (`atlas_collector.stabilize`). 두 관심사를 섞으면 안정화 임계값을 건드릴 때마다 page 정체성이
+  조용히 따라 바뀐다.
 
 **page 식별은 LLM 을 절대 타지 않는다.** 이건 성능 최적화가 아니라 재현성 계약이다 —
 같은 화면이 API 응답의 변덕에 따라 다른 page 로 갈리면 page_graph 전체가 무의미해진다.

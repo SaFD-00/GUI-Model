@@ -60,10 +60,10 @@ _BUILTIN_DEFAULTS: dict[str, dict[str, Any]] = {
         "stabilize_luma_delta": 10,
         "stabilize_low_res_width": 100,
     },
-    "screen_matching": {
-        "element_diff_max": 5,
-        "element_jaccard_min": 0.5,
-        "page_pixel_diff_threshold": 0.3,
+    "page_matching": {
+        "merge_policy": "similar_elements",
+        "max_diff_elements": 2,
+        "same_activity_only": True,
     },
     "llm": {
         "model": "qwen/qwen3.8-flash",
@@ -77,6 +77,7 @@ _BUILTIN_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 VALID_BUDGET_MODES: frozenset[str] = frozenset({"steps", "time"})
+VALID_MERGE_POLICIES: frozenset[str] = frozenset({"structure_only", "similar_elements"})
 VALID_INPUT_MODES: frozenset[str] = frozenset({"api", "random"})
 
 ENV_PREFIX = "AC"
@@ -141,12 +142,24 @@ class CollectionConfig:
 
 
 @dataclass
-class ScreenMatchingConfig:
-    """Page-identity thresholds. This path is LLM-free by construction."""
+class PageMatchingConfig:
+    """Page-identity knobs, ported from LLM-Explorer. LLM-free by construction.
 
-    element_diff_max: int = 5
-    element_jaccard_min: float = 0.5
-    page_pixel_diff_threshold: float = 0.3
+    Pixels are NOT part of page identity — screenshot comparison belongs to
+    screen STABILIZATION (:mod:`atlas_collector.stabilize`) and nothing else.
+    Page identity is the activity-scoped structure hash plus, optionally, a
+    content-free signature symmetric difference. See
+    :mod:`atlas_collector.pagematch` for the measurements behind these defaults.
+    """
+
+    #: ``similar_elements`` (default) or ``structure_only`` — see MergePolicy.
+    merge_policy: str = "similar_elements"
+    #: Symmetric-difference budget, from the reference's
+    #: MAX_NUM_DIFF_ELEMENTS_IN_SIMILAR_STATES. Measured margin on the Pixel 6:
+    #: same page scrolled = 2, nearest genuinely different screen = 18.
+    max_diff_elements: int = 2
+    #: Refuse to merge across foreground activities.
+    same_activity_only: bool = True
 
 
 @dataclass
@@ -185,7 +198,7 @@ class RunConfig:
 
     device: DeviceConfig = field(default_factory=DeviceConfig)
     collection: CollectionConfig = field(default_factory=CollectionConfig)
-    screen_matching: ScreenMatchingConfig = field(default_factory=ScreenMatchingConfig)
+    page_matching: PageMatchingConfig = field(default_factory=PageMatchingConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
     #: The run.yaml actually read, or None when builtin defaults stood alone.
@@ -352,20 +365,19 @@ def _validate(cfg: RunConfig) -> None:
             f"collection.stabilize_poll_ms must be >= 0, got {cfg.collection.stabilize_poll_ms!r}"
         )
 
-    # -- screen_matching: the LLM-free page-identity thresholds ---------------
-    diff_max = cfg.screen_matching.element_diff_max
-    if isinstance(diff_max, bool) or not isinstance(diff_max, int) or diff_max < 0:
+    # -- page_matching: LLM-free page identity ------------------------------
+    policy = cfg.page_matching.merge_policy
+    if policy not in VALID_MERGE_POLICIES:
         raise ConfigError(
-            f"screen_matching.element_diff_max must be a non-negative int "
-            f"(element-line symmetric-difference budget), got {diff_max!r}"
+            f"page_matching.merge_policy must be one of {sorted(VALID_MERGE_POLICIES)}, "
+            f"got {policy!r}"
         )
-    _require_unit_interval(
-        "screen_matching.element_jaccard_min", cfg.screen_matching.element_jaccard_min
-    )
-    _require_unit_interval(
-        "screen_matching.page_pixel_diff_threshold",
-        cfg.screen_matching.page_pixel_diff_threshold,
-    )
+    budget = cfg.page_matching.max_diff_elements
+    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
+        raise ConfigError(
+            f"page_matching.max_diff_elements must be a non-negative int "
+            f"(content-free signature symmetric-difference budget), got {budget!r}"
+        )
 
     # -- llm -----------------------------------------------------------------
     if cfg.llm.input_mode not in VALID_INPUT_MODES:
@@ -465,7 +477,7 @@ def load_run_config(path: str | Path | None = None) -> RunConfig:
         cfg = RunConfig(
             device=DeviceConfig(**merged["device"]),
             collection=CollectionConfig(**merged["collection"]),
-            screen_matching=ScreenMatchingConfig(**merged["screen_matching"]),
+            page_matching=PageMatchingConfig(**merged["page_matching"]),
             llm=LlmConfig(**merged["llm"]),
             export=ExportConfig(**export_raw),
             source_path=source,
@@ -483,6 +495,7 @@ def load_run_config(path: str | Path | None = None) -> RunConfig:
 __all__ = [
     "ENV_PREFIX",
     "VALID_BUDGET_MODES",
+    "VALID_MERGE_POLICIES",
     "parse_duration",
     "VALID_INPUT_MODES",
     "CollectionConfig",
@@ -491,6 +504,6 @@ __all__ = [
     "ExportConfig",
     "LlmConfig",
     "RunConfig",
-    "ScreenMatchingConfig",
+    "PageMatchingConfig",
     "load_run_config",
 ]
