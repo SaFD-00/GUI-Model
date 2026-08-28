@@ -17,6 +17,7 @@ from atlas_collector.adb import ScreenSize
 from atlas_collector.coverage import ActivityCoverage
 from atlas_collector.loop import (
     MAX_CONSECUTIVE_RECOVERIES,
+    MAX_STALLED_STEPS,
     MAX_STEPS_OUTSIDE,
     CollectionLoop,
     is_launcher,
@@ -216,7 +217,9 @@ def test_screen_size_is_read_from_the_device(tmp_path):
 
 
 def test_the_time_budget_stops_the_run(tmp_path):
-    adb = FakeAdb([Script(screen(tag=t)) for t in "abcdefghij"])
+    # The screen must keep changing for the whole run: a static one now ends the
+    # session as stalled (MAX_STALLED_STEPS), and this test is about the CLOCK.
+    adb = FakeAdb([Script(screen(tag=str(i))) for i in range(5000)])
     loop = build(tmp_path, adb, max_steps=0, max_duration_sec=0.4)
     stats = loop.run()
     assert stats.stop_reason == "time budget exhausted"
@@ -448,3 +451,26 @@ def test_stats_land_in_metadata(tmp_path):
     assert meta["triples"] == stats.triples
     assert meta["stop_reason"] == stats.stop_reason
     assert meta["pages"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# A screen that will not move
+# ---------------------------------------------------------------------------
+
+
+def test_a_session_that_stops_making_progress_gives_up(tmp_path):
+    """Markor opens on an onboarding carousel that BACK cannot leave. Measured:
+    647 consecutive BACKs, 658 triples, 2 of them changed -- a whole 2h budget
+    spent on data export drops as unchanged."""
+    adb = FakeAdb([Script(screen())])  # one screen, forever: nothing ever changes
+    stats = build(tmp_path, adb, max_steps=0, max_duration_sec=600).run()
+    assert stats.stop_reason == "made no progress"
+    assert stats.triples < MAX_STALLED_STEPS + 5, "it must not burn the budget"
+
+
+def test_dead_ends_that_still_move_the_screen_do_not_count_as_stalled(tmp_path):
+    """Backing out of a deep stack is also `exhausted`, and it is healthy."""
+    scripts = [Script(screen(tag=str(i % 4))) for i in range(MAX_STALLED_STEPS * 2)]
+    adb = FakeAdb(scripts)
+    stats = build(tmp_path, adb, max_steps=MAX_STALLED_STEPS + 5).run()
+    assert stats.stop_reason != "made no progress"

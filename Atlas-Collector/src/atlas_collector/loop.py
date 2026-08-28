@@ -83,6 +83,22 @@ MAX_CONSECUTIVE_RECOVERIES = 5
 #: steps separates the two.
 MAX_STEPS_OUTSIDE = 3
 
+#: Consecutive dead steps before the session is abandoned. A step is dead when
+#: the explorer had nothing left to try (``exhausted`` -> BACK) AND the screen
+#: did not change -- i.e. the run is pressing BACK against a screen that will
+#: not let it leave.
+#:
+#: Measured: Markor opens on a 5-page onboarding carousel whose "next" control
+#: the explorer marks explored after a handful of taps. BACK does nothing there.
+#: It then pressed BACK **647 times in a row**, producing 658 triples of which 2
+#: changed, and would have burnt its entire 2h budget for data that export drops
+#: as unchanged. Ending early hands the budget to the other 47 apps.
+#:
+#: 30 is far above any legitimate run of dead ends: backing out of a deep stack
+#: also produces ``exhausted`` steps, but those CHANGE the screen and so reset
+#: the counter. Only a screen that refuses to move counts.
+MAX_STALLED_STEPS = 30
+
 #: Swipe geometry as a fraction of the screen, for SCROLL actions.
 _SCROLL_FROM_Y = 0.75
 _SCROLL_TO_Y = 0.35
@@ -368,6 +384,7 @@ class CollectionLoop:
         failures = 0
         consecutive_recoveries = 0
         steps_outside = 0
+        stalled = 0
 
         while True:
             reason = self._budget_left()
@@ -442,6 +459,13 @@ class CollectionLoop:
                 self.stats.steps += 1
                 if not triple.changed:
                     self.stats.unchanged += 1
+                if not triple.changed and self._pending_reason == "exhausted":
+                    stalled += 1
+                else:
+                    stalled = 0
+                if stalled >= MAX_STALLED_STEPS:
+                    self.stats.stop_reason = "made no progress"
+                    break
 
             decision = self.explorer.select(current.page_key, frame.elements)
             if decision.is_fallback:
