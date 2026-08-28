@@ -15,6 +15,12 @@ click 은 단일 `coordinate`, 방향 액션은 `swipe` 의 coordinate1→coordi
   type / open      : 좌표 무관. 텍스트 / app_name 매칭만.
   wait / navigate_*: 타입만 일치하면 통과.
 
+`--xml-schema` (2026-08-28 추가) 는 위 bbox 채점이 읽을 **위치축 속성**만 고른다:
+android (기본) 은 `bounds="[x1,y1][x2,y2]"`, cerebra 는 AC_EXP08 의
+`data-bbox="x1 y1 x2 y2"`. 기본값으로 EXP08 을 채점하면 위치축을 하나도 못 읽어
+**에러 없이** 전 건이 no_bbox 로 빠진다 (하드 제약 15f 와 같은 계열) — 아래
+CerebraSchema 가 양방향으로 못박는다.
+
 Run:
     pytest tests/test_action_eval_xy.py -v
     # or: python -m unittest tests.test_action_eval_xy -v
@@ -26,8 +32,10 @@ import importlib
 import io
 import json
 import sys
+import tempfile
 import unittest
-from contextlib import redirect_stderr
+import unittest.mock
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -45,6 +53,17 @@ UI_XML = """<div bounds="[0,0][840,1876]" point="[420,938]">
   <button bounds="[400,200][700,280]" point="[550,240]">Cancel</button>
   <p bounds="[50,600][790,660]" point="[420,630]">Some label</p>
   <input bounds="[50,700][790,780]" point="[420,740]"/>
+</div>"""
+
+
+# cerebra(AC_EXP08) 스키마 fixture. 위치축이 data-bbox 이고 `point` 속성은 없다
+# (EXP08 실데이터와 동일 — 좌표를 데이터에 박지 않는 것이 확정 제약이다).
+# 루트 div 가 화면 전체를 덮는 구조는 UI_XML 과 같다.
+CEREBRA_XML = """<div data-bbox="0 0 840 1876">
+  <button aria-label="OK" data-bbox="100 200 300 280">OK</button>
+  <button aria-label="Cancel" data-bbox="400 200 700 280">Cancel</button>
+  <p data-bbox="50 600 790 660">Some label</p>
+  <input placeholder="Search" data-bbox="50 700 790 780"/>
 </div>"""
 
 
@@ -66,12 +85,13 @@ def _gt_entry(action, ui_xml=UI_XML):
     }
 
 
-def _single(gt_action, pred_action, ui_xml=UI_XML):
+def _single(gt_action, pred_action, ui_xml=UI_XML, xml_schema="android"):
     entry = _gt_entry(gt_action, ui_xml)
     return evaluate_single_xy(
         parse_action(entry["messages"][-1]["value"]),
         parse_action(_wrap(pred_action)),
         _action_eval._extract_ui_xml(entry),
+        xml_schema,
     )
 
 
@@ -413,6 +433,226 @@ class CoordSpaceWarning(unittest.TestCase):
         m, err = self._run_capture(specs)
         self.assertNotIn("[warn]", err)
         self.assertAlmostEqual(m["step_accuracy"], 1.0, places=4)
+
+
+class CerebraSchema(unittest.TestCase):
+    """--xml-schema cerebra (AC_EXP08) — 위치축이 data-bbox 인 XML 의 bbox 채점.
+
+    스키마는 **opt-in** 이다: 기본값 android 는 EXP01~07 채점을 바이트 단위로 보존하고,
+    cerebra 를 명시해야 EXP08 을 제대로 읽는다. 두 방향을 모두 못박는다 — 어느 쪽이든
+    어긋나면 에러가 아니라 지표가 조용히 무너지는 실패다.
+    """
+
+    def test_data_bbox_parsed_with_cerebra_schema(self):
+        # GT (200,240) → 최소 면적 element = button data-bbox="100 200 300 280"
+        r = _single(
+            {"action": "click", "coordinate": [200, 240]},
+            {"action": "click", "coordinate": [290, 275]},
+            CEREBRA_XML,
+            "cerebra",
+        )
+        self.assertTrue(r["step_correct"])
+        self.assertTrue(r["has_bbox_check"])
+        self.assertFalse(r["no_bbox"])
+
+    def test_default_schema_misses_cerebra_xml(self):
+        # 기본값(android)은 data-bbox 를 읽지 않는다 → element 목록이 통째로 비어
+        # 정답 좌표인데도 no_bbox 오답이 된다. 이것이 하드 제약 15f 의 실패 모습이다.
+        r = _single(
+            {"action": "click", "coordinate": [200, 240]},
+            {"action": "click", "coordinate": [290, 275]},
+            CEREBRA_XML,
+        )
+        self.assertFalse(r["step_correct"])
+        self.assertTrue(r["no_bbox"])
+
+    def test_cerebra_schema_on_android_xml_is_no_bbox(self):
+        # 역방향 — 기존 실험군에 cerebra 를 주면 bounds 를 못 읽는다. opt-in 규약이
+        # 대칭이라는 근거이자 "붙이면 안 되는 곳" 의 회귀 가드.
+        r = _single(
+            {"action": "click", "coordinate": [200, 240]},
+            {"action": "click", "coordinate": [290, 275]},
+            UI_XML,
+            "cerebra",
+        )
+        self.assertFalse(r["step_correct"])
+        self.assertTrue(r["no_bbox"])
+
+    def test_cerebra_boundary_inclusive(self):
+        # android 경로와 같은 경계 포함(<=) 규칙. 좌상단·우하단 꼭짓점 둘 다 정답.
+        for pred_pt in ([100, 200], [300, 280]):
+            with self.subTest(pred=pred_pt):
+                r = _single(
+                    {"action": "click", "coordinate": [200, 240]},
+                    {"action": "click", "coordinate": pred_pt},
+                    CEREBRA_XML,
+                    "cerebra",
+                )
+                self.assertTrue(r["step_correct"])
+
+    def test_cerebra_just_outside_boundary_fails(self):
+        r = _single(
+            {"action": "click", "coordinate": [200, 240]},
+            {"action": "click", "coordinate": [301, 280]},
+            CEREBRA_XML,
+            "cerebra",
+        )
+        self.assertFalse(r["step_correct"])
+        self.assertFalse(r["no_bbox"])
+
+    def test_cerebra_smallest_area_element_wins(self):
+        # 루트 div 안이지만 button 밖 → 오답 (android 경로와 같은 최소 면적 규칙)
+        r = _single(
+            {"action": "click", "coordinate": [200, 240]},
+            {"action": "click", "coordinate": [420, 1500]},
+            CEREBRA_XML,
+            "cerebra",
+        )
+        self.assertFalse(r["step_correct"])
+
+    def test_cerebra_off_screen_gt_is_no_bbox(self):
+        r = _single(
+            {"action": "click", "coordinate": [900, 2000]},
+            {"action": "click", "coordinate": [900, 2000]},
+            CEREBRA_XML,
+            "cerebra",
+        )
+        self.assertFalse(r["step_correct"])
+        self.assertTrue(r["no_bbox"])
+
+    def test_malformed_data_bbox_dropped(self):
+        # 토큰 수가 4가 아니거나 정수가 아닌 element 는 버린다 (음수는 허용).
+        xml = (
+            '<div data-bbox="0 0 840 1876">'
+            '<button data-bbox="100 200 300">short</button>'
+            '<button data-bbox="a b c d">nan</button>'
+            '<button data-bbox="-10 -20 40 60">neg</button>'
+            "</div>"
+        )
+        boxes = _action_eval._bbox_elements(xml, "cerebra")
+        self.assertEqual(sorted(boxes), [(-10, -20, 40, 60), (0, 0, 840, 1876)])
+
+    def test_evaluate_pairs_threads_schema(self):
+        specs = [
+            (
+                {"action": "click", "coordinate": [200, 240]},
+                {"action": "click", "coordinate": [290, 275]},
+            ),
+            (
+                {"action": "click", "coordinate": [550, 240]},
+                {"action": "click", "coordinate": [500, 250]},
+            ),
+        ]
+        gts = [_gt_entry(gt, CEREBRA_XML) for gt, _ in specs]
+        preds = [{"predict": _wrap(pred)} for _, pred in specs]
+
+        m_cerebra = evaluate_pairs(gts, preds, "xy", "cerebra")
+        self.assertAlmostEqual(m_cerebra["cond_bbox_acc"], 1.0, places=4)
+        self.assertEqual(m_cerebra["no_bbox_n"], 0)
+
+        m_default = evaluate_pairs(gts, preds, "xy")
+        self.assertAlmostEqual(m_default["cond_bbox_acc"], 0.0, places=4)
+        self.assertEqual(m_default["no_bbox_n"], 2)
+
+
+class XmlSchemaStamp(unittest.TestCase):
+    """xy 산출물의 `xml_schema` 스탬프 — 어떤 스키마로 채점됐는지 파일이 스스로 말한다.
+
+    스탬프가 없으면 스키마 오지정이 `cond_bbox_acc=0` / `no_bbox_n` 급증이라는
+    **간접 증상**으로만 드러난다. `_hungarian_eval` 의 동명 스탬프와 필드명·값 어휘가
+    같아야 두 산출물을 같은 방식으로 감사할 수 있다.
+    """
+
+    def _pairs(self, ui_xml):
+        gt = {"action": "click", "coordinate": [200, 240]}
+        pred = {"action": "click", "coordinate": [290, 275]}
+        return [_gt_entry(gt, ui_xml)], [{"predict": _wrap(pred)}]
+
+    def test_default_stamps_android(self):
+        gts, preds = self._pairs(UI_XML)
+        self.assertEqual(evaluate_pairs(gts, preds, "xy")["xml_schema"], "android")
+
+    def test_cerebra_stamps_cerebra(self):
+        gts, preds = self._pairs(CEREBRA_XML)
+        m = evaluate_pairs(gts, preds, "xy", "cerebra")
+        self.assertEqual(m["xml_schema"], "cerebra")
+
+    def test_index_mode_has_no_stamp(self):
+        # index 모드는 bbox 파싱을 하지 않는다 → 스탬프가 무의미하고, 찍으면
+        # EXP01~04 산출물의 바이트 불변이 깨진다.
+        gts = [
+            {
+                "messages": [
+                    {"from": "gpt", "value": '{"action_type":"click","index":"1"}'}
+                ]
+            }
+        ]
+        preds = [{"predict": '{"action_type":"click","index":"1"}'}]
+        self.assertNotIn("xml_schema", evaluate_pairs(gts, preds))
+        self.assertNotIn("xml_schema", evaluate_pairs(gts, preds, "index", "cerebra"))
+
+
+class XmlSchemaFlag(unittest.TestCase):
+    """`--xml-schema` 기본값·검증 — `_hungarian_eval` 의 동명 플래그와 같은 규약."""
+
+    def test_default_is_android_without_env(self):
+        with unittest.mock.patch.dict(_action_eval.os.environ, {}, clear=True):
+            self.assertEqual(_action_eval._default_xml_schema(), "android")
+
+    def test_env_var_overrides_default(self):
+        with unittest.mock.patch.dict(
+            _action_eval.os.environ, {"XML_SCHEMA": "cerebra"}
+        ):
+            self.assertEqual(_action_eval._default_xml_schema(), "cerebra")
+
+    def test_explicit_flag_beats_env(self):
+        # 명시 플래그 > 환경변수. CLI 를 실제로 통과시켜야 argparse 의 default 평가
+        # 시점(파서 생성 시)까지 함께 고정된다.
+        self.assertEqual(self._run_cli(env="cerebra", flag="android"), "android")
+
+    def test_env_var_drives_cli_default(self):
+        # 플래그를 안 주면 환경변수가 기본값이 된다 (셸 경유 재현 경로).
+        self.assertEqual(self._run_cli(env="cerebra", flag=None), "cerebra")
+
+    def _run_cli(self, env, flag):
+        """score 서브커맨드를 실제로 돌려 산출물의 `xml_schema` 스탬프를 돌려준다."""
+        gt = {"action": "click", "coordinate": [200, 240]}
+        pred = {"action": "click", "coordinate": [290, 275]}
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "test.jsonl").write_text(
+                json.dumps(_gt_entry(gt, CEREBRA_XML), ensure_ascii=False) + "\n"
+            )
+            (d / "pred.jsonl").write_text(
+                json.dumps({"predict": _wrap(pred)}, ensure_ascii=False) + "\n"
+            )
+            argv = [
+                "_action_eval.py",
+                "score",
+                "--test",
+                str(d / "test.jsonl"),
+                "--pred",
+                str(d / "pred.jsonl"),
+                "--coord-mode",
+                "xy",
+                "--output",
+                str(d / "m.json"),
+            ]
+            if flag:
+                argv += ["--xml-schema", flag]
+            with (
+                unittest.mock.patch.dict(_action_eval.os.environ, {"XML_SCHEMA": env}),
+                unittest.mock.patch.object(sys, "argv", argv),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(_action_eval.main(), 0)
+            return json.loads((d / "m.json").read_text())["xml_schema"]
+
+    def test_check_rejects_unknown_schema(self):
+        # 환경변수로 들어온 값은 argparse choices 를 통과하지 않으므로 검증이 필요하다.
+        with self.assertRaises(ValueError):
+            _action_eval.check_xml_schema("bounds")
+        self.assertEqual(_action_eval.check_xml_schema("cerebra"), "cerebra")
 
 
 if __name__ == "__main__":

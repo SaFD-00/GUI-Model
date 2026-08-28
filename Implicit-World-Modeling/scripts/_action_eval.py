@@ -64,12 +64,27 @@ xy           : EXP05 의 xy 통일 액션 스페이스용. GT 스키마가 다�
                            (|dx| >= |dy| → left/right, else up/down)
   open                     norm(app_name) 일치
   type                     norm(text) 일치 (좌표 무관)
+
+XML schema (--xml-schema)
+-------------------------
+android (기본) : bounds="[x1,y1][x2,y2]"  — EXP01~07. 바이트 단위 불변.
+cerebra        : data-bbox="x1 y1 x2 y2"  — AC_EXP08 (Cerebra 파서 산출).
+
+xy 모드의 click/long_press bbox 채점에서만 쓰인다 (index 모드는 XML 을 읽지 않는다).
+기본값으로 EXP08 을 채점하면 위치축을 **하나도** 못 읽어 전 건이 no_bbox 로 빠지고
+cond_bbox_acc 가 에러 없이 0 이 된다 — 하드 제약 15f 와 같은 실패 계열이라
+`_hungarian_eval.py` 의 동명 플래그와 이름·의미를 맞춘다 (환경변수 `XML_SCHEMA`
+fallback 포함). 반대로 기존 실험군에 cerebra 를 주지 마라.
+
+xy 모드 산출물에는 실제 사용된 값이 `xml_schema` 키로 스탬프된다 — 스탬프가 없는
+파일은 android 기준이다 (2026-08-28 이전 산출물 전부). index 모드에는 찍지 않는다.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -189,6 +204,28 @@ _BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 # 스키마 전환에도 종료 액션이 조용히 0점 처리되지 않게 한다(1118건/18.6% 오채점 수정).
 _XY_NO_FIELD_TYPES = {"wait", "navigate_back", "navigate_home", "finish", "terminate"}
 
+# xy bbox 채점이 읽을 위치축 속성. android 는 EXP01~07 의 bounds, cerebra 는 AC_EXP08 의
+# data-bbox 다 (`_hungarian_eval.XML_SCHEMA` 와 같은 이름·같은 값 집합).
+_XML_SCHEMAS = ("android", "cerebra")
+
+
+def _default_xml_schema():
+    """`--xml-schema` 의 기본값. 환경변수 `XML_SCHEMA` 가 있으면 그것을 쓴다.
+
+    `_hungarian_eval._default_xml_schema` 와 같은 규약이다 — 플래그를 넘기지 않는
+    셸 경로에서도 `XML_SCHEMA=cerebra bash scripts/stage1_eval.sh …` 로 재현할 수
+    있어야 한다. 명시 플래그는 언제나 환경변수를 이긴다.
+    """
+    return os.environ.get("XML_SCHEMA") or "android"
+
+
+def check_xml_schema(name):
+    """값 검증 한 곳. argparse 의 choices 는 (환경변수에서 온) 기본값에 적용되지 않는다."""
+    if name not in _XML_SCHEMAS:
+        raise ValueError(f"xml_schema 는 android|cerebra 여야 합니다: {name!r}")
+    return name
+
+
 # bbox 채점은 pred 좌표가 GT 와 같은 절대 픽셀 공간이라고 가정한다. 다른 좌표계
 # (예: 0~1 정규화) 로 학습된 체크포인트는 bbox 정확도가 0 으로 나오는데, 그것이
 # "모델이 못 배웠다" 인지 "좌표계가 다르다" 인지 메트릭만으로는 구분되지 않는다.
@@ -221,8 +258,28 @@ def _extract_ui_xml(entry):
     return ""
 
 
-def _bbox_elements(xml_str):
-    """bounds 속성을 가진 element 의 (x1, y1, x2, y2) 목록."""
+def _parse_data_bbox(s):
+    """cerebra 위치축 'x1 y1 x2 y2' → (x1, y1, x2, y2). 실패 시 None.
+
+    `_hungarian_eval._parse_bounds_center` 의 cerebra 분기와 같은 규약 — 공백 구분
+    정수가 정확히 4개일 때만 채택하고, 그 외에는 그 element 를 버린다 (음수 좌표 허용).
+    """
+    parts = (s or "").split()
+    if len(parts) != 4:
+        return None
+    try:
+        return tuple(int(v) for v in parts)
+    except ValueError:
+        return None
+
+
+def _bbox_elements(xml_str, schema="android"):
+    """위치축 속성을 가진 element 의 (x1, y1, x2, y2) 목록.
+
+    android (기본) : bounds="[x1,y1][x2,y2]"  — EXP01~07. 기존 경로 그대로.
+    cerebra        : data-bbox="x1 y1 x2 y2"  — AC_EXP08. bounds 속성이 아예 없어
+                     android 기본값으로 읽으면 목록이 통째로 비고 전 건이 no_bbox 가 된다.
+    """
     if not xml_str:
         return []
     from bs4 import BeautifulSoup
@@ -230,6 +287,11 @@ def _bbox_elements(xml_str):
     soup = BeautifulSoup(xml_str, "html.parser")
     boxes = []
     for el in soup.find_all(True):
+        if schema == "cerebra":
+            box = _parse_data_bbox(el.get("data-bbox", ""))
+            if box is not None:
+                boxes.append(box)
+            continue
         m = _BOUNDS_RE.search(el.get("bounds", "") or "")
         if m:
             boxes.append(tuple(int(v) for v in m.groups()))
@@ -305,7 +367,7 @@ def _primary_direction(start, end):
     return "down" if dy > 0 else "up"
 
 
-def evaluate_single_xy(gt_action, pred_action, ui_xml):
+def evaluate_single_xy(gt_action, pred_action, ui_xml, xml_schema="android"):
     result = {
         "parsed": pred_action is not None,
         "type_correct": False,
@@ -335,7 +397,7 @@ def evaluate_single_xy(gt_action, pred_action, ui_xml):
         pred_pt = _coord(pred_action, "coordinate")
         if gt_pt is None:
             return result
-        bbox = _gt_bbox(_bbox_elements(ui_xml), gt_pt)
+        bbox = _gt_bbox(_bbox_elements(ui_xml, xml_schema), gt_pt)
         if bbox is None:
             result["no_bbox"] = True
             return result
@@ -378,10 +440,13 @@ def _load_jsonl(path):
         return [json.loads(line) for line in f if line.strip()]
 
 
-def evaluate_pairs(gt_entries, pred_entries, coord_mode="index"):
-    """Compute metrics for a pre-loaded list of (gt, pred) pairs."""
+def evaluate_pairs(gt_entries, pred_entries, coord_mode="index", xml_schema="android"):
+    """Compute metrics for a pre-loaded list of (gt, pred) pairs.
+
+    `xml_schema` 는 xy 모드의 bbox 채점에서만 쓰인다 — index 모드는 UI XML 을 읽지 않는다.
+    """
     if coord_mode == "xy":
-        return _evaluate_pairs_xy(gt_entries, pred_entries)
+        return _evaluate_pairs_xy(gt_entries, pred_entries, xml_schema)
     if len(gt_entries) != len(pred_entries):
         print(
             f"[warn] length mismatch: gt={len(gt_entries)} pred={len(pred_entries)}"
@@ -473,7 +538,7 @@ def evaluate_pairs(gt_entries, pred_entries, coord_mode="index"):
     }
 
 
-def _evaluate_pairs_xy(gt_entries, pred_entries):
+def _evaluate_pairs_xy(gt_entries, pred_entries, xml_schema="android"):
     """EXP05 xy 액션 스페이스 채점. bbox 포함 / 주 성분 방향 / 텍스트 매칭."""
     if len(gt_entries) != len(pred_entries):
         print(
@@ -504,7 +569,9 @@ def _evaluate_pairs_xy(gt_entries, pred_entries):
         pred_text = pred_entry.get("predict", pred_entry.get("output", ""))
         pred_action = parse_action(pred_text)
 
-        r = evaluate_single_xy(gt_action, pred_action, _extract_ui_xml(gt_entry))
+        r = evaluate_single_xy(
+            gt_action, pred_action, _extract_ui_xml(gt_entry), xml_schema
+        )
         gt_type = _xy_atype(gt_action) or "unknown"
         coord_samples.extend(_pred_coords(pred_action))
 
@@ -559,12 +626,24 @@ def _evaluate_pairs_xy(gt_entries, pred_entries):
         "cond_text_acc": round(_ratio(cond["text"]), 4),
         "no_bbox_n": no_bbox_n,
         "per_type": per_type_summary,
+        # 어떤 위치축 스키마로 채점됐는지 파일이 스스로 말하게 한다
+        # (`_hungarian_eval` 의 동명 스탬프와 필드명·값 어휘가 같다). 스탬프가 없는
+        # 파일 = android 기준이다 (2026-08-28 이전 산출물 전부). 이 필드가 없으면
+        # 스키마 오지정은 cond_bbox_acc=0 / no_bbox_n 급증이라는 **간접 증상**으로만
+        # 드러난다 — EXP08 이 실제로 그렇게 조용히 깨져 있었다.
+        # index 모드 결과 dict 에는 넣지 않는다: bbox 파싱을 하지 않아 무의미하고,
+        # EXP01~04 산출물의 바이트 불변을 깬다.
+        "xml_schema": xml_schema,
     }
 
 
-def evaluate_predictions(test_path, pred_path, coord_mode="index"):
+def evaluate_predictions(
+    test_path, pred_path, coord_mode="index", xml_schema="android"
+):
     """Backward-compatible file-based entry point."""
-    return evaluate_pairs(_load_jsonl(test_path), _load_jsonl(pred_path), coord_mode)
+    return evaluate_pairs(
+        _load_jsonl(test_path), _load_jsonl(pred_path), coord_mode, xml_schema
+    )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -599,6 +678,8 @@ def _print_metrics_row(label, metrics):
 def _cmd_score(args):
     split_mode = bool(args.test_id or args.pred_id or args.test_ood or args.pred_ood)
     coord_mode = getattr(args, "coord_mode", "index")
+    # 환경변수로 들어온 값은 argparse choices 를 통과하지 않으므로 여기서 한 번 검증한다.
+    xml_schema = check_xml_schema(getattr(args, "xml_schema", "android"))
 
     if split_mode:
         # Require both ID and OOD paths if any split flag is set.
@@ -621,9 +702,11 @@ def _cmd_score(args):
         gt_ood = _load_jsonl(args.test_ood)
         pr_ood = _load_jsonl(args.pred_ood)
 
-        m_id = evaluate_pairs(gt_id, pr_id, coord_mode)
-        m_ood = evaluate_pairs(gt_ood, pr_ood, coord_mode)
-        m_overall = evaluate_pairs(gt_id + gt_ood, pr_id + pr_ood, coord_mode)
+        m_id = evaluate_pairs(gt_id, pr_id, coord_mode, xml_schema)
+        m_ood = evaluate_pairs(gt_ood, pr_ood, coord_mode, xml_schema)
+        m_overall = evaluate_pairs(
+            gt_id + gt_ood, pr_id + pr_ood, coord_mode, xml_schema
+        )
 
         metrics = {
             "overall": m_overall,
@@ -640,7 +723,7 @@ def _cmd_score(args):
                 file=sys.stderr,
             )
             return 2
-        metrics = evaluate_predictions(args.test, args.pred, coord_mode)
+        metrics = evaluate_predictions(args.test, args.pred, coord_mode, xml_schema)
         _print_metrics_row("all", metrics)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -674,6 +757,16 @@ def main():
         help="index (기본, EXP01~04): click/long_click 을 element index 로 채점. "
         "xy (EXP05): click/long_press 는 GT 좌표가 속한 element 의 bounds 안에 "
         "pred 좌표가 들어가면 정답, swipe 는 주 성분 방향 일치, type 은 텍스트만 검사.",
+    )
+    p_s.add_argument(
+        "--xml-schema",
+        default=_default_xml_schema(),
+        choices=list(_XML_SCHEMAS),
+        dest="xml_schema",
+        help='읽을 XML 위치축 스키마. android (기본, EXP01~07): bounds="[x1,y1][x2,y2]". '
+        'cerebra (AC_EXP08): data-bbox="x1 y1 x2 y2". xy 모드의 click/long_press bbox '
+        "채점에서만 쓰인다 (index 모드는 XML 을 읽지 않는다). 셸 스크립트 경유로는 "
+        "환경변수 `XML_SCHEMA=cerebra` 로 지정한다 (이 플래그가 이긴다).",
     )
     p_s.set_defaults(func=_cmd_score)
 

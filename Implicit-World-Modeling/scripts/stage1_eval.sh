@@ -240,7 +240,7 @@ run_exp08_eval() {
       metrics_name="hungarian_metrics.json"
       mode_flag="$(ds_score_mode_flag "$eval_ds" state)"
       # EXP08 XML 은 Cerebra 스키마다 — 기본값(android)으로 채점하면 에러 없이
-      # 지표가 무너진다 (하드 제약 15f). _action_eval.py 는 이 플래그를 받지 않는다.
+      # 지표가 무너진다 (하드 제약 15f). action 분기도 같은 플래그를 받는다.
       schema_flag="$(ds_xml_schema_flag "$eval_ds")"
       # state 예측 = 전체 UI XML (라벨 max ~11k 토큰) → 데이터 최대치를 덮는 예산.
       infer_mnt=12288
@@ -248,7 +248,9 @@ run_exp08_eval() {
       scorer="_action_eval.py"
       metrics_name="action_metrics.json"
       mode_flag="$(ds_score_mode_flag "$eval_ds" action)"
-      schema_flag=""
+      # xy 모드의 click/long_press bbox 채점이 GT 좌표를 담은 element 를 찾을 때
+      # 위치축(data-bbox)을 읽어야 한다 — state 와 같은 플래그, 같은 이유다.
+      schema_flag="$(ds_xml_schema_flag "$eval_ds")"
       infer_mnt=2048
     fi
 
