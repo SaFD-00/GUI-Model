@@ -551,6 +551,15 @@ _DATASET_CONFIG = {
         "ds_prefix": "IWM-AC_EXP08",
         "output_prefix": "AndroidControl_EXP08/",
         "hf_slug": "ac-exp08-",
+        # M2 ablation (World Modeling 순효과 측정): 메인 stage1(state 40K + action 10K)
+        # 과 같은 action 10K 만으로 학습하는 stage1 **full FT** 대조군. 하이퍼파라미터는
+        # 메인 stage1 full 과 완전 동일 — dataset 키만 이 10K 로 바꾼다. gen_configs 가
+        # {variant: dataset key} 를 stage1 full 모드에서만 추가로 렌더한다 (브리프 범위:
+        # stage1 full FT 전용, lora·stage2 는 만들지 않는다). 데이터 정본은
+        # scripts/build_exp08_ablation_data.py (stage1_train.jsonl 을 필터링만 — 재샘플링 아님).
+        "stage1_extra_variants": {
+            "action-only": "IWM-AC_EXP08_stage1_train_action_only",
+        },
         "stage1": {
             "lr": "1.0e-5",
             "epochs": 1,
@@ -642,6 +651,46 @@ _STAGE2_ONLY = {"AndroidControl_EXP06"}
 # 의 4 파일 계열이라 이 규칙으로 유도되지 않는다 — 그 이름의 소유자는
 # `configs/lf_dataset/dataset_info.json` 과 eval 셸(stage1_eval.sh)이다.
 _SINGLE_TEST = {"MonkeyCollection", "AndroidControl_EXP08"}
+
+# ============================================================
+# === 절대 픽셀 xy 좌표 계열 (채점 모드의 정본) ===
+# 이 DS 들의 XML 은 위치축이 bounds/data-bbox 이고 index 속성이 없다. 그래서 state 는
+# `--match-mode pos`, action 은 `--coord-mode xy` 로 채점해야 한다. 어긋나면 **에러
+# 없이** 전 건이 오답 처리된다.
+#
+# 왜 이 상수가 여기 있는가 — 같은 판정이 세 번 복제됐고 실제로 갈렸다.
+# 1차 사고: rebuild_*.sh 3 종이 각자 case 문을 복제하다 `rebuild_state_diff_metrics.sh`
+# 만 AC_EXP06 을 갖고 있었다 (2026-08-03 발견). 대응으로 셸 쪽을
+# `_common.sh::ds_is_pixel_xy` 한 곳에 모았다 — 그 경위는 `_common.sh:263` 주석에 있다.
+# 2차 사고: 그 통합이 **언어 경계를 넘지 않아** 파이썬 쪽 복제본
+# (`scripts/_compare_site.py::XY_FAMILY`) 이 AC_EXP08 을 놓친 채 남았고, 사이트가
+# 조용히 index 모드로 채점하고 있었다 (2026-08-28 발견). 같은 사고의 재발이다.
+# → 정본을 여기 하나 두고, `_compare_site` 는 유도해서 쓰고, 셸 case 목록은
+#   `tests/test_pixel_xy_consistency.py` 가 파싱해 일치를 강제한다. 셸을 런타임에
+#   파이썬으로 유도하지는 않는다 (eval 경로에 인터프리터 기동을 끼우지 않으려는
+#   의도적 트레이드오프 — 드리프트는 테스트가 잡는다).
+#
+# 이름 규약은 `DATASET_MODEL_ELIGIBILITY` 와 같은 **긴 이름**이다. 레지스트리 안에서
+# 두 키 공간이 섞이면 그 자체가 다음 드리프트의 씨앗이 된다 — 셸·뷰어가 쓰는 짧은
+# 키는 `pixel_xy_ds_keys()` 로 유도한다.
+PIXEL_XY_DATASETS: frozenset[str] = frozenset({
+    "AndroidControl_EXP05",
+    "AndroidControl_EXP06",
+    "AndroidControl_EXP07_v1",
+    "AndroidControl_EXP07_v2",
+    "AndroidControl_EXP08",
+})
+
+
+def short_ds_key(ds_name: str) -> str:
+    """긴 DS 이름 → 셸·뷰어의 짧은 키 (`AndroidControl_EXP05` → `AC_EXP05`)."""
+    return ds_name.replace("AndroidControl_", "AC_", 1)
+
+
+def pixel_xy_ds_keys() -> frozenset[str]:
+    """`PIXEL_XY_DATASETS` 의 짧은 키 표현 — `_common.sh::ds_is_pixel_xy` 와 같은 축."""
+    return frozenset(short_ds_key(n) for n in PIXEL_XY_DATASETS)
+
 
 _EVAL_ONLY_BENCHMARKS = {
     "MobiBench": {

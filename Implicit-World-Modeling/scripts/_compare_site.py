@@ -33,8 +33,12 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 _SCRIPTS = Path(__file__).resolve().parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+REPO = _SCRIPTS.parent
+# REPO 도 넣는다 — 아래 `implicit_world_modeling.lf_registry` (채점 모드 정본) 를
+# 스크립트 단독 실행에서도 import 할 수 있어야 한다.
+for _p in (_SCRIPTS, REPO):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 import _action_eval  # noqa: E402
 import _hungarian_eval  # noqa: E402
@@ -46,7 +50,8 @@ from _prompt_sections import (  # noqa: E402
     parse_prompt,
 )
 
-REPO = _SCRIPTS.parent
+from implicit_world_modeling.lf_registry import pixel_xy_ds_keys  # noqa: E402
+
 KST = timezone(timedelta(hours=9))
 
 # _action_eval._bbox_elements 가 XML 을 html.parser 로 읽어 행마다 경고를 낸다.
@@ -65,7 +70,11 @@ except ImportError:  # bs4 없는 환경 — 파서 단위 테스트만 돌 때
 MAX_NEW_TOKENS_FIX_UTC = _state_diff_eval.MAX_NEW_TOKENS_FIX_UTC
 
 # xy 통일 액션 스페이스 계열 — 채점 모드가 다르다 (scripts/stage1_eval.sh 와 정합).
-XY_FAMILY = {"AC_EXP05", "AC_EXP06", "AC_EXP07_v1", "AC_EXP07_v2"}
+# **여기에 목록을 다시 적지 마라.** 정본은 `lf_registry.PIXEL_XY_DATASETS` 하나이고
+# 셸(`_common.sh::ds_is_pixel_xy`) 과의 일치는 `tests/test_pixel_xy_consistency.py`
+# 가 강제한다. 손으로 복제했다가 AC_EXP08 을 놓쳐 사이트가 **에러 없이** index 모드로
+# 채점하던 것이 2026-08-28 에 잡혔다 (경위는 lf_registry 의 그 상수 주석).
+XY_FAMILY = pixel_xy_ds_keys()
 
 TASK_TITLE = {
     "state": "next-state 예측",
