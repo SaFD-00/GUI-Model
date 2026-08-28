@@ -259,8 +259,45 @@ $ echo $?
 
 주요 키는 [`config/run.yaml`](./config/run.yaml) 에 주석과 함께 있다. host-pull 고유 키:
 
-- `collection.stabilize_poll_ms` / `collection.stabilize_max_wait_sec` — 디바이스가 "화면 바뀜" 신호를
-  주지 않으므로, 호스트가 `uiautomator dump` 를 반복해 **연속 두 dump 가 같아질 때까지** 폴링한다.
+- `collection.stabilize_*` — 디바이스가 "화면 바뀜" 신호를 주지 않으므로 호스트가 스스로 판정한다.
+  **스크린샷 픽셀 비교**로 폴링하고, 화면이 멎은 뒤 `uiautomator dump` 를 딱 한 번 뜬다 (아래).
+
+### 화면 안정화 (host-pull 의 핵심 비용)
+
+Pixel 6 실측 (6회 중앙값):
+
+| 연산 | 시간 |
+|---|---:|
+| `uiautomator dump /dev/tty` | 2.341s |
+| `screencap -p` (1.7MB PNG) | 0.680s |
+| `screencap` (raw RGBA, 10.4MB) | 0.803s |
+| 호스트 디코드+축소+비교 | 0.022s |
+
+스크린샷 폴링이 hierarchy 폴링보다 **3.44배 싸고**, 호스트 비교 비용은 전송의 3% 라 무시된다.
+그래서 스크린샷으로 폴링하고 dump 는 마지막에 한 번만 뜬다. 폴 수 `k` 에 대해
+`k×0.680 + 2.341` vs `k×2.341` 이고, 안정화 판정에 최소 두 프레임이 필요하므로 `k ≥ 2` — 항상 이긴다.
+
+실기기 6개 전환으로 측정한 실제 절감:
+
+| 전환 | polls | 신방식 | 구방식 |
+|---|---:|---:|---:|
+| launch markor | 3 | 3.42s | 7.02s |
+| tap | 2 | 2.94s | 4.68s |
+| back | 3 | 3.26s | 7.02s |
+| launch settings | 4 | 3.54s | 9.36s |
+| swipe up | 4 | 3.74s | 9.36s |
+| back | 4 | 3.70s | 9.36s |
+| **합계** | | **20.60s** | **46.82s** |
+
+**step 당 7.80s → 3.43s, 56% 절감.** 2시간 예산 안에 들어가는 step 수가 그만큼 늘어난다.
+
+`stabilize_pixel_threshold` 는 **0 이 아니다**. 실측상 실제 전환은 changed_frac 0.0000 까지 정확히
+수렴하지만, 영상·스피너·깜빡이는 커서처럼 **영원히 픽셀이 같아지지 않는 화면**이 있다. 0 을 요구하면
+그런 화면에서 매 step 마다 `stabilize_max_wait_sec` 를 통째로 태우는데, 데이터는 계속 나오므로
+**조용하다** — 이 모듈이 가진 가장 비싼 실패 모드다. 임계값과 max_wait 백스톱이 그 방어다.
+안 멎은 화면은 `settled=False` 로 마지막 프레임을 그대로 반환한다 (에러가 아니다).
+
+설계 근거 전문은 [`src/atlas_collector/stabilize.py`](./src/atlas_collector/stabilize.py) 의 모듈 docstring 에 있다.
 
 ### 세션 예산
 

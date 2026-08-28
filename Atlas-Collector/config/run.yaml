@@ -38,13 +38,31 @@ collection:
   # action 실행 후 다음 관측까지의 기본 지연(ms). Env: AC_COLLECTION_ACTION_DELAY_MS
   action_delay_ms: 1500
   # --- host-pull 전용: 화면 안정화(stabilization) ---
-  # device-push 설계와 달리 디바이스가 "화면이 바뀌었다" 는 신호를 보내주지 않는다.
-  # 호스트가 직접 `uiautomator dump` 를 반복해 연속 두 dump 가 같아질 때까지 폴링한다.
-  # 폴링 간격(ms). Env: AC_COLLECTION_STABILIZE_POLL_MS
-  stabilize_poll_ms: 300
-  # 안정화 최대 대기(초). 초과하면 마지막 dump 를 그대로 채택하고 진행한다.
+  # device-push 설계와 달리 디바이스가 "화면이 바뀌었다" 는 신호를 보내주지 않으므로
+  # 호스트가 스스로 판정해야 한다. **스크린샷 픽셀 비교**로 폴링하고, 화면이 멎은 뒤
+  # `uiautomator dump` 를 딱 한 번 뜬다. Pixel 6 실측 근거 (6회 중앙값):
+  #   uiautomator dump 2.341s / screencap -p 0.680s  -> 스크린샷 폴링이 3.44배 싸다.
+  # 자세한 설계는 src/atlas_collector/stabilize.py 의 모듈 docstring 을 본다.
+  #
+  # 폴링 사이 추가 sleep(ms). 기본 0 — screencap 자체가 ~0.68s 라 프레임 간격은
+  # 이미 충분히 벌어져 있고, sleep 을 더하면 지연만 늘어난다.
+  # Env: AC_COLLECTION_STABILIZE_POLL_MS
+  stabilize_poll_ms: 0
+  # 안정화 최대 대기(초). 초과하면 마지막 프레임을 채택하고 settled=False 로 진행한다.
+  # 영상·스피너·깜빡이는 커서처럼 **영원히 안 멎는 화면**이 실제로 있으므로 필수다.
   # Env: AC_COLLECTION_STABILIZE_MAX_WAIT_SEC
   stabilize_max_wait_sec: 8.0
+  # 변경 픽셀 비율이 이 값 이하면 "멎었다" 로 본다. **0 이 아니다** — 실측상 실제
+  # 화면 전환은 0.0000 까지 수렴하지만, 안 멎는 화면에 0 을 요구하면 매 step 마다
+  # 대기 예산을 통째로 태운다(조용한 데다 가장 비싼 실패 모드).
+  # Env: AC_COLLECTION_STABILIZE_PIXEL_THRESHOLD
+  stabilize_pixel_threshold: 0.005
+  # 픽셀 하나가 "바뀌었다" 고 볼 밝기 차(0-255). 리샘플링 흔들림·서브픽셀 AA 를 흡수한다.
+  # Env: AC_COLLECTION_STABILIZE_LUMA_DELTA
+  stabilize_luma_delta: 10
+  # 비교용 썸네일 가로 폭(px). 100 이면 1080x2400 이 100x222 로 줄어 비교 22ms.
+  # Env: AC_COLLECTION_STABILIZE_LOW_RES_WIDTH
+  stabilize_low_res_width: 100
 
 screen_matching:
   # page 식별은 항상 LLM-free 다 (BM25 + element diff + pixel gate, LLM-Explorer / Mobile3M 계열).

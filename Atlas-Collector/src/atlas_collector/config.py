@@ -51,9 +51,14 @@ _BUILTIN_DEFAULTS: dict[str, dict[str, Any]] = {
         "seed": 42,
         "action_delay_ms": 1500,
         # host-pull only: the device never signals "screen changed", so the host
-        # polls `uiautomator dump` until two consecutive dumps agree.
-        "stabilize_poll_ms": 300,
+        # polls SCREENSHOTS until the picture stops moving, then dumps the
+        # hierarchy exactly once. See atlas_collector.stabilize for the
+        # measurements behind these defaults.
+        "stabilize_poll_ms": 0,
         "stabilize_max_wait_sec": 8.0,
+        "stabilize_pixel_threshold": 0.005,
+        "stabilize_luma_delta": 10,
+        "stabilize_low_res_width": 100,
     },
     "screen_matching": {
         "element_diff_max": 5,
@@ -115,10 +120,19 @@ class CollectionConfig:
     max_steps: int = 1500
     seed: int = 42
     action_delay_ms: int = 1500
-    #: Interval between `uiautomator dump` polls while waiting for a settled screen.
-    stabilize_poll_ms: int = 300
-    #: Give up waiting after this long and accept the last dump as-is.
+    #: Extra sleep between screenshot polls. Zero by default — ``screencap``
+    #: itself takes ~0.68 s on the Pixel 6, so frames are already ~680 ms apart.
+    stabilize_poll_ms: int = 0
+    #: Give up waiting after this long and accept the last frame as-is.
     stabilize_max_wait_sec: float = 8.0
+    #: Changed-pixel fraction at or below which a screen counts as settled.
+    #: NOT zero: a blinking cursor, video or spinner never reaches equality, and
+    #: under strict equality every step on such a screen burns the full wait.
+    stabilize_pixel_threshold: float = 0.005
+    #: Per-pixel intensity delta (0-255) that counts as a changed pixel.
+    stabilize_luma_delta: int = 10
+    #: Width the comparison thumbnail is downscaled to.
+    stabilize_low_res_width: int = 100
 
     @property
     def max_duration_sec(self) -> int:
@@ -313,6 +327,30 @@ def _validate(cfg: RunConfig) -> None:
     # flips budget_mode is the kind of delayed failure this module exists to avoid.
     parse_duration(cfg.collection.max_duration)
     _require_positive_int("collection.max_steps", cfg.collection.max_steps)
+
+    # -- collection: host-pull screen stabilization --------------------------
+    if cfg.collection.stabilize_max_wait_sec <= 0:
+        raise ConfigError(
+            "collection.stabilize_max_wait_sec must be positive, got "
+            f"{cfg.collection.stabilize_max_wait_sec!r} — it is the backstop that keeps a "
+            "never-settling screen (video, spinner, blinking cursor) from stalling the run"
+        )
+    _require_unit_interval(
+        "collection.stabilize_pixel_threshold", cfg.collection.stabilize_pixel_threshold
+    )
+    luma = cfg.collection.stabilize_luma_delta
+    if isinstance(luma, bool) or not isinstance(luma, int) or not 0 <= luma <= 255:
+        raise ConfigError(
+            f"collection.stabilize_luma_delta must be an int in [0, 255] "
+            f"(per-pixel intensity delta), got {luma!r}"
+        )
+    _require_positive_int(
+        "collection.stabilize_low_res_width", cfg.collection.stabilize_low_res_width
+    )
+    if cfg.collection.stabilize_poll_ms < 0:
+        raise ConfigError(
+            f"collection.stabilize_poll_ms must be >= 0, got {cfg.collection.stabilize_poll_ms!r}"
+        )
 
     # -- screen_matching: the LLM-free page-identity thresholds ---------------
     diff_max = cfg.screen_matching.element_diff_max

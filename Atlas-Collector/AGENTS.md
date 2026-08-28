@@ -100,6 +100,12 @@ action 선택, page 판정, 종료 판단, XML 요약 등 **다른 어떤 결정
   커밋본에는 콤마 없이 인용된 행들이 있어 read→write round-trip 이 **byte-identical 하지 않다**.
   writer 는 M3 의 `sync-installed` 를 위한 scaffold 이며, 그때 자체 diff 규칙과 함께 도입한다.
   테스트는 `tmp_path` 에서만 writer 를 쓴다.
+- **안정화는 스크린샷 픽셀 비교다. `uiautomator dump` 로 폴링하지 마라.** dump 는 screencap 의
+  3.44배(2.341s vs 0.680s, Pixel 6 실측)라, 폴링을 dump 로 돌리면 step 당 비용이 두 배 이상
+  된다(실측 7.80s vs 3.43s). 안정화가 끝난 뒤 dump 를 **딱 한 번** 뜬다.
+- **`stabilize_pixel_threshold` 를 0 으로 낮추지 마라.** 실제 전환이 0.0000 까지 수렴하는 걸 보고
+  "그럼 0 이면 되겠네" 로 가기 쉬운데, 영상·스피너·깜빡이는 커서는 영원히 같아지지 않는다.
+  0 이면 그런 화면에서 매 step 대기 예산을 통째로 태우면서도 데이터는 계속 나와 **조용히** 느려진다.
 - **`status=excluded` 4행은 수집하지 않는다** (사용자 결정, 2026-08-28). `is_collectable` 이
   False 라 M4 러너가 구동하지 않는다. 삭제하지 말고 그대로 둔다 — `notes` 의 제외 사유가
   사라지면 다음 작업에서 같은 앱을 다시 추가하고 같은 막다른 길을 재발견한다.
