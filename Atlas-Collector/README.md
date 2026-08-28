@@ -262,6 +262,29 @@ $ echo $?
 - `collection.stabilize_poll_ms` / `collection.stabilize_max_wait_sec` — 디바이스가 "화면 바뀜" 신호를
   주지 않으므로, 호스트가 `uiautomator dump` 를 반복해 **연속 두 dump 가 같아질 때까지** 폴링한다.
 
+### 세션 예산
+
+기본은 **시간 예산 2시간/앱**이다 (`budget_mode: time`, `max_duration: "2h"`).
+
+```yaml
+collection:
+  budget_mode: time      # time | steps
+  max_duration: "2h"     # "2h" / "120m" / "7200s" / 숫자(초)
+  max_steps: 1500        # budget_mode=steps 일 때만 사용
+```
+
+step 이 아니라 시간으로 잡는 이유는 step 단가가 앱마다 크게 흔들리기 때문이다. Pixel 6 실측으로
+`uiautomator dump` 2.33s + `screencap` 0.67s + `action_delay` 1.5s 이므로 2시간은 앱당 대략
+1,000~1,500 step 에 해당하지만, 안정화가 오래 걸리는 화면이 많은 앱은 같은 step 수에 훨씬 더
+오래 걸린다. 48개 앱 전체로는 시간 예산 쪽이 총 소요를 예측 가능하게 만든다.
+
+`max_duration` 파싱 실패나 0 이하는 **에러**다. 형제 프로젝트 Monkey-Collector 의 파서는 같은
+상황에서 경고만 남기고 2h 로 폴백하는데, 그러면 오타난 예산이 성공한 설정처럼 보인다 — 이 모듈이
+오타난 YAML 섹션을 거부하는 것과 같은 이유로 여기서도 거부한다. 두 예산은 **활성 모드와 무관하게
+둘 다 검증**되므로, 나중에 `budget_mode` 를 뒤집었을 때 비로소 깨지는 일이 없다.
+
+CLI 로도 덮어쓸 수 있다: `--budget-mode` / `--max-duration 90m` / `--max-steps 500`.
+
 ## 저장소 레이아웃
 
 ```

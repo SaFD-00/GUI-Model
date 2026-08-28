@@ -219,9 +219,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument("--apps", nargs="+", default=["all"], help="Package ids, or 'all'.")
     p_run.add_argument("--serial", default=None, help="Device serial (default: autodetect).")
-    p_run.add_argument("--max-steps", type=int, default=None, help="Override collection.max_steps.")
     p_run.add_argument(
-        "--budget-mode", choices=["steps", "time"], default=None, help="Override budget mode."
+        "--budget-mode",
+        choices=["steps", "time"],
+        default=None,
+        help="Override collection.budget_mode (default: time).",
+    )
+    p_run.add_argument(
+        "--max-duration",
+        default=None,
+        metavar="DURATION",
+        help='Override collection.max_duration, e.g. "2h" / "120m" / "7200s". '
+        "Used when budget_mode is time.",
+    )
+    p_run.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Override collection.max_steps. Used when budget_mode is steps.",
     )
     p_run.add_argument("--seed", type=int, default=None, help="Override the explorer seed.")
     p_run.add_argument(

@@ -45,8 +45,9 @@ _BUILTIN_DEFAULTS: dict[str, dict[str, Any]] = {
         "height": 2400,
     },
     "collection": {
+        "budget_mode": "time",
+        "max_duration": "2h",
         "max_steps": 1500,
-        "budget_mode": "steps",
         "seed": 42,
         "action_delay_ms": 1500,
         # host-pull only: the device never signals "screen changed", so the host
@@ -103,14 +104,26 @@ class DeviceConfig:
 class CollectionConfig:
     """Collection loop budget and host-pull stabilization knobs."""
 
+    #: Which budget ends a session. ``time`` (default) runs until
+    #: :attr:`max_duration_sec` of wall clock elapses; ``steps`` runs until
+    #: :attr:`max_steps` actions have been performed.
+    budget_mode: str = "time"  # steps | time
+    #: Wall-clock budget per app, as a duration string ("2h" / "120m" / "7200s")
+    #: or a bare number of seconds. Only consulted when ``budget_mode == "time"``.
+    max_duration: str = "2h"
+    #: Action budget per app. Only consulted when ``budget_mode == "steps"``.
     max_steps: int = 1500
-    budget_mode: str = "steps"  # steps | time
     seed: int = 42
     action_delay_ms: int = 1500
     #: Interval between `uiautomator dump` polls while waiting for a settled screen.
     stabilize_poll_ms: int = 300
     #: Give up waiting after this long and accept the last dump as-is.
     stabilize_max_wait_sec: float = 8.0
+
+    @property
+    def max_duration_sec(self) -> int:
+        """:attr:`max_duration` in whole seconds. Validated at load time."""
+        return parse_duration(self.max_duration)
 
 
 @dataclass
@@ -200,6 +213,46 @@ def _parse_target_size(value: Any) -> tuple[int, int]:
     return (int(parts[0]), int(parts[1]))
 
 
+def parse_duration(value: Any) -> int:
+    """Parse a wall-clock duration into whole seconds.
+
+    Grammar matches Monkey-Collector's (``"2h"`` / ``"120m"`` / ``"7200s"`` /
+    ``"7200"`` / a bare number), so a duration written for one collector means
+    the same thing in the other.
+
+    One deliberate divergence: the sibling implementation logs a warning and
+    falls back to 7200 on an unparsable value. This one RAISES. A typo'd budget
+    that silently becomes "2h" is the same failure class as the typo'd YAML
+    section this module already rejects — the run looks perfectly configured
+    while doing something the operator never asked for.
+    """
+    if isinstance(value, bool) or value is None:
+        raise ConfigError(f"collection.max_duration must be a duration, got {value!r}")
+    if isinstance(value, (int, float)):
+        seconds = int(value)
+    else:
+        text = str(value).strip().lower()
+        multiplier = 1
+        if text.endswith("h"):
+            multiplier, text = 3600, text[:-1]
+        elif text.endswith("m"):
+            multiplier, text = 60, text[:-1]
+        elif text.endswith("s"):
+            multiplier, text = 1, text[:-1]
+        try:
+            seconds = int(float(text) * multiplier)
+        except ValueError:
+            raise ConfigError(
+                f"collection.max_duration is not a duration: {value!r}. "
+                f'Use "2h", "120m", "7200s", or a bare number of seconds.'
+            ) from None
+    if seconds <= 0:
+        raise ConfigError(
+            f"collection.max_duration must be positive, got {value!r} ({seconds}s)"
+        )
+    return seconds
+
+
 def _apply_env_overrides(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Overlay ``AC_{SECTION}_{KEY}`` env vars onto *data* in place-ish."""
     out = copy.deepcopy(data)
@@ -255,6 +308,11 @@ def _validate(cfg: RunConfig) -> None:
             f"collection.budget_mode must be one of {sorted(VALID_BUDGET_MODES)}, "
             f"got {cfg.collection.budget_mode!r}"
         )
+    # Validate BOTH budgets regardless of the active mode: the inactive one is
+    # still committed config, and finding out it is malformed only after someone
+    # flips budget_mode is the kind of delayed failure this module exists to avoid.
+    parse_duration(cfg.collection.max_duration)
+    _require_positive_int("collection.max_steps", cfg.collection.max_steps)
 
     # -- screen_matching: the LLM-free page-identity thresholds ---------------
     diff_max = cfg.screen_matching.element_diff_max
@@ -387,6 +445,7 @@ def load_run_config(path: str | Path | None = None) -> RunConfig:
 __all__ = [
     "ENV_PREFIX",
     "VALID_BUDGET_MODES",
+    "parse_duration",
     "VALID_INPUT_MODES",
     "CollectionConfig",
     "ConfigError",

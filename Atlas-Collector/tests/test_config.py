@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from atlas_collector.config import ConfigError, load_run_config
+from atlas_collector.config import ConfigError, load_run_config, parse_duration
 
 # ---------------------------------------------------------------------------
 
@@ -53,6 +53,9 @@ def test_builtin_defaults_stand_when_no_file_is_given(tmp_path, monkeypatch):
     )
     cfg = load_run_config()
     assert cfg.source_path is None
+    assert cfg.collection.budget_mode == "time"
+    assert cfg.collection.max_duration == "2h"
+    assert cfg.collection.max_duration_sec == 7200
     assert cfg.collection.max_steps == 1500
     assert cfg.device.width == 1080
     assert cfg.device.height == 2400
@@ -64,6 +67,9 @@ def test_committed_run_yaml_loads_and_matches_the_builtin_defaults():
     cfg = load_run_config()
     assert cfg.source_path is not None
     assert cfg.source_path.name == "run.yaml"
+    assert cfg.collection.budget_mode == "time"
+    assert cfg.collection.max_duration == "2h"
+    assert cfg.collection.max_duration_sec == 7200
     assert cfg.collection.max_steps == 1500
     assert cfg.device.width == 1080
     assert cfg.export.target_size == (840, 1876)
@@ -224,3 +230,73 @@ def test_config_error_is_a_valueerror(tmp_path):
     """Callers written against the old `except ValueError` keep working."""
     with pytest.raises(ValueError, match="device.width"):
         load_run_config(write_yaml(tmp_path, "device:\n  width: 0\n"))
+
+
+# ---------------------------------------------------------------------------
+# Time budget — the default session end condition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("2h", 7200),
+        ("120m", 7200),
+        ("7200s", 7200),
+        ("7200", 7200),
+        (7200, 7200),
+        (7200.0, 7200),
+        ("1.5h", 5400),
+        ("90m", 5400),
+        ("30S", 30),  # suffix is case-insensitive
+        (" 2h ", 7200),  # surrounding whitespace tolerated
+    ],
+)
+def test_parse_duration_accepts_the_documented_grammar(text, seconds):
+    assert parse_duration(text) == seconds
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["2 hours", "abc", "", "h", "0", "0s", "-5h", -1, 0, None, True, False],
+)
+def test_parse_duration_raises_instead_of_falling_back(bad):
+    """A typo'd budget must NOT silently become 2h.
+
+    Monkey-Collector's sibling parser warns and falls back to 7200 here. That is
+    the same failure class as a typo'd YAML section: the run looks perfectly
+    configured while doing something the operator never asked for. This one raises.
+    """
+    with pytest.raises(ConfigError):
+        parse_duration(bad)
+
+
+def test_a_malformed_duration_fails_the_whole_config_load(tmp_path):
+    path = write_yaml(tmp_path, 'collection:\n  max_duration: "2 hours"\n')
+    with pytest.raises(ConfigError, match="max_duration"):
+        load_run_config(path)
+
+
+def test_the_inactive_budget_is_validated_too(tmp_path):
+    """A bad max_duration is rejected even while budget_mode is `steps`.
+
+    Otherwise the breakage surfaces only when someone later flips budget_mode —
+    long after the config was reviewed and committed.
+    """
+    path = write_yaml(
+        tmp_path, 'collection:\n  budget_mode: steps\n  max_duration: "nope"\n'
+    )
+    with pytest.raises(ConfigError, match="max_duration"):
+        load_run_config(path)
+
+    path = write_yaml(tmp_path, "collection:\n  budget_mode: time\n  max_steps: 0\n", "b.yaml")
+    with pytest.raises(ConfigError, match="max_steps"):
+        load_run_config(path)
+
+
+def test_max_duration_can_be_overridden_by_file_and_env(tmp_path, monkeypatch):
+    path = write_yaml(tmp_path, 'collection:\n  max_duration: "45m"\n')
+    assert load_run_config(path).collection.max_duration_sec == 2700
+
+    monkeypatch.setenv("AC_COLLECTION_MAX_DURATION", "90m")
+    assert load_run_config(path).collection.max_duration_sec == 5400

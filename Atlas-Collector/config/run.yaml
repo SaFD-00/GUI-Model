@@ -19,13 +19,20 @@ device:
   height: 2400
 
 collection:
-  # 앱당 최대 step 수 (budget_mode=steps 일 때 종료 조건). Env: AC_COLLECTION_MAX_STEPS
-  max_steps: 1500
   # 세션 종료 조건. Options: steps | time
+  #   time:  max_duration 만큼의 벽시계 시간이 지나면 종료 (기본)
   #   steps: max_steps 만큼 action 을 수행하면 종료
-  #   time:  벽시계 예산 소진 시 종료 (milestone 4 에서 max_duration 추가 예정)
   # Env: AC_COLLECTION_BUDGET_MODE
-  budget_mode: steps
+  budget_mode: time
+  # 앱당 벽시계 예산 (budget_mode=time 일 때 종료 조건).
+  # "2h" / "120m" / "7200s" / 숫자(초) 를 받는다. 파싱 실패나 0 이하는 에러다
+  # (조용히 2h 로 폴백하면 오타난 설정이 성공한 것처럼 보인다).
+  # 실측 참고: Pixel 6 에서 step 당 dump 2.33s + screencap 0.67s + action_delay 1.5s
+  # 이므로 2h 는 앱당 대략 1,000~1,500 step 에 해당한다.
+  # Env: AC_COLLECTION_MAX_DURATION
+  max_duration: "2h"
+  # 앱당 최대 step 수 (budget_mode=steps 일 때만 사용). Env: AC_COLLECTION_MAX_STEPS
+  max_steps: 1500
   # explorer 난수 시드. Env: AC_COLLECTION_SEED
   seed: 42
   # action 실행 후 다음 관측까지의 기본 지연(ms). Env: AC_COLLECTION_ACTION_DELAY_MS
