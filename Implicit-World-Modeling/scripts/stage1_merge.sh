@@ -32,6 +32,23 @@ source "$(dirname "$0")/_common.sh"
 parse_args "$@"
 export DISABLE_VERSION_CHECK=1
 
+# ⚠️ 임시 가드 (M4 §7 배선 전까지) — 이 스크립트는 STAGE1_VARIANT 를 모른다.
+# TRAIN_DIR_REL(아래) 이 항상 variant 세그먼트 없는 경로를 가리키므로, action-only
+# ablation 체크포인트를 merge 하려 하면 조용히 **메인 stage1 런의 어댑터**를 대신
+# merge 해서 같은 HF repo id 로 push 한다 (hf_repo_id_stage1 도 variant 를 모른다) —
+# HF 에 이미 올라간 메인 런 체크포인트 12개(각 7.53GB)를 되돌릴 수 없게 덮어쓸 수
+# 있다. 체인(local_merged_epoch_dir/hf_repo_id_stage1/resolve_eval_model_path/
+# stage1_eval.sh) 이 전부 variant-aware 해지기 전까지는 여기서 막는다.
+# 이 가드는 작업 2 의 체인이 배선되면 제거한다.
+if [[ -n "$STAGE1_VARIANT" ]]; then
+  echo "[!] stage1_merge.sh 는 아직 --stage1-variant 를 지원하지 않습니다 (got '$STAGE1_VARIANT')." >&2
+  echo "    이유: TRAIN_DIR_REL/hf_repo_id_stage1 이 variant 를 모르는 채 메인 런" >&2
+  echo "    체크포인트를 merge/push 해 HF 의 기존 산출물을 덮어쓸 수 있습니다." >&2
+  echo "    선행 필요: local_merged_epoch_dir·hf_repo_id_stage1·resolve_eval_model_path·" >&2
+  echo "    stage1_eval.sh 의 variant 배선(M4 §7) 완료 후 이 가드를 제거하세요." >&2
+  exit 2
+fi
+
 SCRIPT_TAG="stage1_merge_${STAGE1_MODE}"
 MERGED_COUNT=0
 SKIPPED_COUNT=0
