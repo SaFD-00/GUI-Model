@@ -66,13 +66,18 @@ The ``PENDING`` package-id sentinel (:data:`PENDING_PACKAGE`) is retained in
 code but NO row carries it any more: the catalog is fully resolved, and the
 tests assert it stays that way. It survives as a guard, not as live data.
 
-.. warning::
-   :func:`write_catalog` round-trips through ``csv.writer``, whose default
-   QUOTE_MINIMAL does **not** reproduce the source file byte-for-byte: several
-   committed rows are quoted gratuitously (apostrophes/semicolons but no comma).
-   Do not run the writer against the committed ``catalog/apps.csv`` — it exists
-   as scaffolding for a later ``sync-installed`` style installed-column update,
-   which milestone 3 will introduce together with its own diffing rules.
+.. note::
+   :func:`write_catalog` DOES reproduce the committed ``catalog/apps.csv``
+   byte-for-byte — measured 2026-08-28, ``read_bytes()`` equal on both sides.
+   An earlier version of this docstring warned it did not; the fear was that
+   ``csv.writer``'s QUOTE_MINIMAL would drop the quoting on the four
+   gratuitously-quoted rows, but each of them carries an embedded ``"`` or a
+   comma, so QUOTE_MINIMAL quotes them anyway. The file is CRLF-terminated,
+   which is also what the excel dialect emits. ``sync-installed`` is the
+   sanctioned writer of this file and rewrites the ``installed`` column only;
+   ``tests/test_provision.py`` pins the byte-identity so a reformat cannot ride
+   in on a sync. Compare with ``read_bytes``, never ``read_text`` — the latter
+   normalises newlines and would pass through a CRLF-to-LF rewrite.
 """
 
 from __future__ import annotations

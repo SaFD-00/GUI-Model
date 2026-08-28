@@ -188,6 +188,7 @@ def test_package_docstring_marks_m2_done():
 
 
 def test_unimplemented_commands_still_name_their_milestone():
-    assert set(cli.UNIMPLEMENTED) == {"sync-installed", "run", "export"}
+    # `sync-installed` left this table when M3 implemented it; the other two remain.
+    assert set(cli.UNIMPLEMENTED) == {"run", "export"}
     with pytest.raises(NotImplementedError, match="milestone 4"):
         cli.main(["run"])

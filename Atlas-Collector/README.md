@@ -164,7 +164,8 @@ atlas-collect [--config PATH] <command>
 | 서브커맨드 | 상태 | 설명 |
 |---|---|---|
 | `catalog` | **구현됨** | `catalog/apps.csv` 를 필터링해 나열하거나 요약한다 |
-| `sync-installed` | 미구현 (M3) | `adb pm list packages` 로 `installed` 컬럼 갱신 |
+| `sync-installed` | **구현됨** | `adb pm list packages` 로 `installed` 컬럼 갱신 (그 컬럼만) |
+| `provision` | **구현됨** | 수집에 필요한 APK 를 해석·설치하고 실패를 원장에 누적 |
 | `run` | 미구현 (M4) | host-pull 수집 루프 |
 | `export` | 미구현 (M5) | 수집된 triple → Stage-1 jsonl |
 
@@ -207,6 +208,83 @@ catalog: 52 rows total, 52 selected
   status         : clone_accepted=2, excluded=4, ok=46
   category       : Browser=2, Communication=8, Finance=2, Food=4, Health=5, Media=14, Navigation=3, Productivity=10, System=1, Utility=3
 ```
+
+### `sync-installed` (동작함)
+
+기기의 `pm list packages` 를 읽어 `installed` 컬럼을 갱신한다. **그 컬럼만** 쓴다 —
+`status` 는 사람의 큐레이션 판정이라 동기화가 절대 건드리지 않는다 (위의 "독립적인 두 컬럼" 참조).
+`status=excluded` 행도 **건너뛰지 않는다**: 제외된 앱이 실제로 기기에 있으면 `installed=true` 가
+사실이고, `is_collectable` 이 별도로 막으므로 수집되지는 않는다. 여기서 excluded 를 건너뛰는 것은
+`installed` 에서 `status` 를 유도하는 것과 같은 종류의 오염이다.
+
+```bash
+uv run atlas-collect sync-installed --dry-run     # diff 만 출력, 아무것도 쓰지 않음
+uv run atlas-collect sync-installed               # diff 출력 + catalog/apps.csv 갱신
+uv run atlas-collect sync-installed --serial 19101FDF6004EH --catalog /tmp/copy.csv
+```
+
+실측 출력 (2026-08-28, Pixel 6 연결 상태):
+
+```
+device 19101FDF6004EH: 370 packages present
+catalog: 52 rows — installed 48 -> 48
+  0 rows flipped — the catalog already matches the device
+  status column: untouched (curation verdict, not a device fact)
+dry-run: catalog NOT written
+```
+
+> 쓰기는 `csv.writer` 왕복이며 커밋된 `catalog/apps.csv` 를 **바이트 단위로 동일하게** 재생산한다
+> (2026-08-28 실측). `tests/test_provision.py` 가 이 성질을 `read_bytes()` 비교로 고정한다 —
+> `read_text()` 는 개행을 정규화해서 CRLF→LF 재포맷을 통과시키므로 쓰면 안 된다.
+
+### `provision` (동작함)
+
+수집에 필요한 APK 를 **우선순위대로** 해석해 설치한다.
+
+| 순위 | 소스 | 왜 이 순서인가 |
+|---|---|---|
+| 1 | `../Monkey-Collector/catalog/apks/{pkg}.apk` (129개 캐시) | 오프라인이고 ABI 확인이 끝났다. F-Droid 는 예고 없이 인덱스에서 앱을 내리므로 로컬 캐시가 유일한 항구적 사본이다 |
+| 2 | `EpochDroid/benchmarks/apks/android_world/{pkg}_{versionCode}.apk` | **버전이 핀 고정**돼 있다. `androidworld_fdroid` tier 에서는 F-Droid 최신판보다 이쪽이 옳다 — AndroidWorld 태스크가 바로 이 빌드를 대상으로 작성됐다 |
+| 3 | f-droid.org (`/api/v1/packages/<pkg>` → `/repo/<pkg>_<vc>.apk`) | 저장소 밖 사정으로 실패할 수 있는 유일한 소스. **인증서 검증은 어떤 경우에도 끄지 않는다** |
+
+- `status=excluded` 행은 `--force` 로도 설치하지 않는다. 제외는 이 기기에 대한 판단이 아니라
+  **앱에 대한 큐레이션 결정**이라 CLI 플래그가 뒤집을 수 있는 것이 아니다.
+- 이미 설치된 행은 건너뛴다 (`--force` 로 재설치). "이미 설치됨"의 판단은 카탈로그 컬럼이 아니라
+  **기기 조회 결과**로 한다 — 컬럼이 낡아 있으면 정말 없는 앱을 건너뛰게 된다.
+- 설치 성공 여부는 `adb install` 의 종료 코드가 아니라 **`pm list packages` 재조회**로 판정한다.
+  OsmAnd(335MB)는 호스트에서 타임아웃을 냈지만 기기에는 실제로 설치돼 있었다. 타임아웃은 1회 재시도한다.
+- split APK (`INSTALL_FAILED_MISSING_SPLIT`, 예: TickTick) 는 재시도하지 않고 `adb install-multiple`
+  이 필요하다고 즉시 보고한다 — 나머지 split 이 없는 이상 두 번째 시도도 똑같이 실패한다.
+
+```bash
+uv run atlas-collect provision --dry-run                       # 계획만 출력
+uv run atlas-collect provision --only org.tasks net.osmand     # 범위 한정
+uv run atlas-collect provision --force                         # 설치된 것도 재설치
+uv run atlas-collect provision --no-download                   # 로컬 소스만 (네트워크 금지)
+```
+
+실측 출력 (2026-08-28, `--force --dry-run --no-download`):
+
+```
+  ?       com.typo: no such row in the catalog
+  skip    com.simplemobiletools.contacts.pro  (excluded by curation (status=excluded))
+  skip    com.ticktick.task  (excluded by curation (status=excluded))
+2 package(s) to provision
+  plan    org.tasks  <- monkey-cache:org.tasks.apk
+  plan    com.simplemobiletools.calendar.pro  <- android-world:com.simplemobiletools.calendar.pro_238.apk
+```
+
+#### 실패 원장 `catalog/PROVISION_MISSING.json`
+
+`package_id -> {source, reason, first_seen, last_seen}` 의 **누적** 기록이다. 뜻은 "지금 여기서
+설치할 수 없다"이지 "마지막 시도가 실패했다"가 아니다. 그래서:
+
+- `--only` 로 범위를 좁힌 실행은 **자기 범위 안의 항목만** 갱신하고 나머지는 손대지 않는다.
+  아니면 첫 부분 실행이 누적 기록을 통째로 잘라 버린다.
+- 범위 안에서 실제로 설치가 확인된 패키지는 항목이 **삭제**된다.
+- `first_seen` 은 갱신에도 살아남는다 (얼마나 오래 못 구하고 있는지가 정보다).
+- JSON 이 깨져 있으면 빈 원장으로 리셋하지 않고 **예외를 낸다**. 조용한 리셋은 이 원장이 막으려는
+  바로 그 손실을 재현한다. 복구는 의도적으로 수동이다.
 
 ### 미구현 서브커맨드
 

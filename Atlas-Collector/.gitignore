@@ -22,3 +22,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# provision 실행이 남기는 런타임 원장 (수집 상태이지 커밋 데이터가 아니다)
+catalog/PROVISION_MISSING.json
