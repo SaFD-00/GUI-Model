@@ -48,7 +48,7 @@ TRAIN_DS="$TRAIN_DATASET"
 case "$TRAIN_DS" in
   # AC_EXP04 stage2 보류 — 데이터/등록 키 없음 (현재 *) 분기로 거부). 도입 시 case + 아래 에러문에 AC_EXP04 포함.
   # AC_EXP05 = xy 통일 액션 스페이스 실험군 — action 채점 시 --coord-mode xy (run_variant_epoch_eval_on 참조).
-  # AC_EXP08 = EXP05 계열 dual-task 실험군 (stage2 test 는 ID/OOD 없는 단일 파일).
+  # AC_EXP08 = EXP05 계열 dual-task 실험군 (stage2 test 는 app 4 + step 3 버킷 leaf).
   AC_EXP01_ratio37|AC_EXP01_ratio55|AC_EXP01_ratio73|AC_EXP02|AC_EXP03|AC_EXP05|AC_EXP06|AC_EXP07_v1|AC_EXP07_v2|AC_EXP08) ;;
   MC)
     echo "[!] Stage 2 는 MonkeyCollection(MC) 학습 데이터를 갖지 않습니다 (got '$TRAIN_DS')." >&2
@@ -59,12 +59,90 @@ case "$TRAIN_DS" in
     exit 2 ;;
 esac
 
+# AC_EXP08 stage2 = app 축 4 버킷 + step 축 3 버킷 평가 (stage1_eval.sh 의 run_exp08_eval 과
+# 대칭 구조). 구 단일 `stage2_test.jsonl` 은 2026-08-28 폐기됐다 — 등록 키도 배선도 없으니
+# 이 함수가 EXP08 stage2 eval 의 유일한 경로다.
+#
+#   app  축: app_both / app_s1_only / app_s2_only / app_ood
+#            여기서 "본" 은 **action 지도학습을 받은** 이다. stage1 state(WM) 는 822 앱 중
+#            819 를 이미 봤으므로 "완전 미관측 앱" 기준으로는 버킷이 서지 않는다.
+#   step 축: step_id_s1 / step_id_s2 / step_ood
+#
+# 지표를 읽는 규칙은 ARCHITECTURE §6 이다 — 버킷마다 action mix 가 달라(step_id_s1 은
+# terminate 0%) `step_accuracy` 원값 비교는 mix 효과에 오염된다. `macro_step_accuracy` 로
+# 읽고 레코드의 `s1_state_seen` 으로 층화하라.
+#
+# EVAL_BUCKETS 로 좁힐 수 있다. stage1 의 EVAL_TASKS 와 **이름이 다른 이유**는 값 공간이
+# 겹치지 않기 때문이다 — 같은 이름을 쓰면 stage1→stage2 를 잇는 래퍼에서 값이 새어
+# 조용히 엉뚱한 leaf 를 평가하게 된다.
+run_exp08_stage2_eval() {
+  local model_short="$1" train_ds="$2" variant="$3" epoch="$4" hub_id="$5" \
+        out_rel_base="$6" template="$7" eval_ds="${8:-AC_EXP08}"
+  local datadir="${DS_DATADIR[$eval_ds]}"
+  local eval_prefix="${DS_PREFIX[$eval_ds]}"
+
+  local mode_flag schema_flag
+  mode_flag="$(ds_score_mode_flag "$eval_ds" action)"
+  # Cerebra 스키마(`data-bbox`) — 기본값(android)으로 채점하면 에러 없이 click/long_press
+  # 전 건이 no_bbox 로 빠진다 (하드 제약 15f). 그 외 DS 는 빈 문자열이다.
+  schema_flag="$(ds_xml_schema_flag "$eval_ds")"
+
+  local bucket leaf subtag
+  for bucket in ${EVAL_BUCKETS:-app_both app_s1_only app_s2_only app_ood step_id_s1 step_id_s2 step_ood}; do
+    leaf="${bucket//_/-}"
+    local out_rel="${out_rel_base}/on-${eval_ds}-${leaf}"
+    local out_dir="$LF_ROOT/$out_rel"
+    subtag="${SCRIPT_TAG}_${model_short}_${train_ds}_${variant}"
+    if [[ -n "$epoch" ]]; then
+      subtag="${subtag}_epoch${epoch}"
+    fi
+    subtag="${subtag}_on-${eval_ds}-${leaf}"
+
+    if skip_if_done "$subtag" "$out_dir/action_metrics.json"; then
+      continue
+    fi
+
+    local test_jsonl="$BASE_DIR/data/${datadir}/stage2_test_${bucket}.jsonl"
+    if [ ! -f "$test_jsonl" ]; then
+      echo "[!] [$model_short][train=$train_ds][eval=${eval_ds}-${leaf}] Missing test jsonl:" >&2
+      echo "      $test_jsonl" >&2
+      exit 1
+    fi
+    local ds_test="${eval_prefix}_stage2_test_${bucket}"
+
+    build_infer_cmd "$model_short" "$hub_id" "$ds_test" \
+      "$test_jsonl" "$template" \
+      "$out_rel/generated_predictions.jsonl" \
+      "$out_rel/predict_results.json"
+
+    run_logged "$subtag" \
+      bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
+        $INFER_CMD && \
+        python '$BASE_DIR/scripts/_action_eval.py' score \
+          --test   '$test_jsonl' \
+          --pred   '$out_dir/generated_predictions.jsonl' \
+          $mode_flag $schema_flag \
+          --output '$out_dir/action_metrics.json' && \
+        python '$BASE_DIR/scripts/thought_eval.py' \
+          --pred   '$out_dir/generated_predictions.jsonl' \
+          --output '$out_dir/thought_metrics.json'"
+  done
+}
+
 # 한 (MODEL, TRAIN_DS, VARIANT, EPOCH, HUB_ID, EVAL_DS) 조합 평가 실행.
 # - EVAL_DS=AC_EXP01 / AC_EXP02 : test_id + test_ood → 3-섹션 action_metrics.
 # - EVAL_DS=MB                  : 단일 파일 → overall only action_metrics (single-pair 모드).
+# - EVAL_DS=AC_EXP08            : run_exp08_stage2_eval 로 위임 (버킷 7 leaf).
 run_variant_epoch_eval_on() {
   local model_short="$1" train_ds="$2" variant="$3" epoch="$4" hub_id="$5" \
         out_rel_base="$6" template="$7" eval_ds="$8"
+  # AC_EXP08 은 버킷 leaf 로 갈라진다 — stage1_eval.sh 가 run_exp08_eval 로 위임하는 것과
+  # 같은 형태다. 아래 단일/ID-OOD 경로는 이제 EXP08 에 도달하지 않는다.
+  if [[ "$eval_ds" == "AC_EXP08" ]]; then
+    run_exp08_stage2_eval "$model_short" "$train_ds" "$variant" "$epoch" "$hub_id" \
+                          "$out_rel_base" "$template" "$eval_ds"
+    return $?
+  fi
   local out_rel="${out_rel_base}/on-${eval_ds}"
   local out_dir="$LF_ROOT/$out_rel"
   local tag="${SCRIPT_TAG}_${model_short}_${train_ds}_${variant}"
@@ -79,24 +157,23 @@ run_variant_epoch_eval_on() {
   local datadir="${DS_DATADIR[$eval_ds]}"
   local eval_prefix="${DS_PREFIX[$eval_ds]}"
 
-  # AC_EXP05 는 xy 통일 액션 스페이스라 action 채점 모드가 다르다 (stage1_eval 과 동일).
-  # 나머지 EXP 는 플래그 없이 기존 index 채점 경로 그대로.
-  local action_mode_flag=""
-  if [[ "$eval_ds" == "AC_EXP05" || "$eval_ds" == "AC_EXP06" || "$eval_ds" == "AC_EXP07_v1" || "$eval_ds" == "AC_EXP07_v2" || "$eval_ds" == "AC_EXP08" ]]; then
-    action_mode_flag="--coord-mode xy"
-  fi
+  # xy 통일 액션 스페이스 실험군은 action 채점 모드가 다르다 (stage1_eval 과 동일).
+  # 판정 정본은 `_common.sh::ds_is_pixel_xy` → `lf_registry.PIXEL_XY_DATASETS` 다.
+  # **목록을 여기에 다시 적지 마라** — 그렇게 갈린 사고가 두 번 있었고
+  # tests/test_pixel_xy_consistency.py 가 그 재발을 잡는다.
+  local action_mode_flag
+  action_mode_flag="$(ds_score_mode_flag "$eval_ds" action)"
+  # AC_EXP08 XML 은 Cerebra 스키마라 xy bbox 채점의 위치축이 data-bbox 다 — 기본값
+  # (android)으로 채점하면 에러 없이 전 건이 no_bbox 가 된다 (하드 제약 15f).
+  # 그 외 DS 는 빈 문자열이라 기존 채점 결과는 불변이다.
+  local action_schema_flag
+  action_schema_flag="$(ds_xml_schema_flag "$eval_ds")"
 
-  # Single-test 데이터셋 (overall only): MB, AC_EXP08.
-  # AC_EXP08 은 앱 파티션 메타가 없어 ID/OOD 를 나누지 않는다 → stage2_test.jsonl 단일 파일.
-  if [[ "$eval_ds" == "MB" || "$eval_ds" == "AC_EXP08" ]]; then
-    local test_jsonl ds_test
-    if [[ "$eval_ds" == "AC_EXP08" ]]; then
-      test_jsonl="$BASE_DIR/data/${datadir}/stage2_test.jsonl"
-      ds_test="${eval_prefix}_stage2_test"
-    else
-      test_jsonl="$BASE_DIR/data/${datadir}/stage2.jsonl"
-      ds_test="${eval_prefix}_stage2"
-    fi
+  # Single-test 데이터셋 (overall only): MB 만. AC_EXP08 은 위에서 버킷 경로로 빠졌고
+  # 구 `stage2_test.jsonl` 단일 leaf 는 2026-08-28 폐기됐다 (등록 키도 제거).
+  if [[ "$eval_ds" == "MB" ]]; then
+    local test_jsonl="$BASE_DIR/data/${datadir}/stage2.jsonl"
+    local ds_test="${eval_prefix}_stage2"
     if [ ! -f "$test_jsonl" ]; then
       echo "[!] [$model_short][train=$train_ds][eval=$eval_ds] Missing test file: $test_jsonl" >&2
       exit 1
@@ -113,7 +190,7 @@ run_variant_epoch_eval_on() {
         python '$BASE_DIR/scripts/_action_eval.py' score \
           --test   '$test_jsonl' \
           --pred   '$out_dir/generated_predictions.jsonl' \
-          $action_mode_flag \
+          $action_mode_flag $action_schema_flag \
           --output '$out_dir/action_metrics.json' && \
         python '$BASE_DIR/scripts/thought_eval.py' \
           --pred   '$out_dir/generated_predictions.jsonl' \
@@ -150,7 +227,7 @@ run_variant_epoch_eval_on() {
           --pred-id  '$out_dir/generated_predictions_id.jsonl' \
           --test-ood '$test_ood' \
           --pred-ood '$out_dir/generated_predictions_ood.jsonl' \
-          $action_mode_flag \
+          $action_mode_flag $action_schema_flag \
           --output   '$out_dir/action_metrics.json' && \
         python '$BASE_DIR/scripts/thought_eval.py' \
           --pred-id  '$out_dir/generated_predictions_id.jsonl' \

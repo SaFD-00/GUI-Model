@@ -216,6 +216,32 @@ ACTION_METRIC_KEYS = [
     "predict_rouge-l",
 ]
 
+# thought 품질 (`scripts/thought_eval.py` → thought_metrics.json). std_* 와 `n` 은
+# 싣지 않는다 — `n` 은 action 쪽 `total` 과 같은 수이고 표 열만 낭비한다.
+THOUGHT_METRIC_KEYS = [
+    "missing_thought_ratio",
+    "mean_cosine",
+    "mean_rouge_l",
+    "mean_bleu",
+]
+
+# AC_EXP08 stage2 평가 버킷 — app 축 4 (앱 관측 이력) + step 축 3 (step 관측 이력).
+# 파일명·등록키의 정본은 `scripts/build_exp08_stage2_v2.py` 와
+# `configs/lf_dataset/dataset_info.json` 이고 여기 순서는 표시 순서다.
+EXP08_STAGE2_BUCKETS = (
+    "app_both",
+    "app_s1_only",
+    "app_s2_only",
+    "app_ood",
+    "step_id_s1",
+    "step_id_s2",
+    "step_ood",
+)
+
+# EXP08 stage2 는 action 지표 + thought 지표를 한 표에 싣는다. 키 이름이 겹치지
+# 않으므로 `load_metrics` 의 setdefault merge 로 안전하다 (실측 확인).
+EXP08_STAGE2_METRIC_KEYS = ACTION_METRIC_KEYS + THOUGHT_METRIC_KEYS
+
 
 def _ac_stage1_entries(exp: str) -> dict:
     """AC_EXP01/AC_EXP02 stage1 dual-task entries (ID/OOD × state/action × ±without-open_app)."""
@@ -401,21 +427,34 @@ def _exp08_stage1_entries() -> dict:
 
 
 def _exp08_stage2_entries() -> dict:
-    """AC_EXP08 stage2 entries — 단일 stage2_test.jsonl (overall 1-섹션)."""
+    """AC_EXP08 stage2 entries — app 축 4 + step 축 3, 버킷마다 단일 파일(overall).
+
+    구 단일 leaf(`on-AC_EXP08` / `stage2_test.jsonl`) 는 폐기했다 (2026-08-28 사용자
+    결정). 버킷 7 종은 앱 관측 이력(app 축)과 step 관측 이력(step 축)을 분리해 재는
+    평가셋이고, 파일별 실현 N 은 균일하지 않다 (재고 상한 — `app_ood` 408 /
+    `app_s2_only` 193). 디렉토리 이름은 stage1 과 같은 규칙 — stem 의 `_` 를 `-` 로.
+
+    `thought_metrics.json` 을 함께 싣는다: stage2_eval.sh 가 실제로 산출하는데 구
+    엔트리는 읽지 않아 표에 뜨지 않았다. 이 파일도 1 단 섹션이라 single-test 인
+    EXP08 은 `overall` 하나뿐이다.
+    """
     data = REPO / "data" / DS_DATADIR["AC_EXP08"]
-    return {
-        "on-AC": {
-            "dir": "on-AC_EXP08",
+    entries: dict[str, dict] = {}
+    for bucket in EXP08_STAGE2_BUCKETS:
+        leaf = bucket.replace("_", "-")
+        entries[f"on-AC-{leaf}"] = {
+            "dir": f"on-AC_EXP08-{leaf}",
             "pred": "generated_predictions.jsonl",
-            "test": data / "stage2_test.jsonl",
+            "test": data / f"stage2_test_{bucket}.jsonl",
             "metric_files": [
                 ("predict_results.json", None),
-                ("action_metrics.json", None),
-                ("action_metrics.json", "overall"),
+                ("action_metrics.json", None),  # single-pair: top-level flat
+                ("action_metrics.json", "overall"),  # 호환: nested 면 overall
+                ("thought_metrics.json", "overall"),
             ],
-            "metric_keys": ACTION_METRIC_KEYS,
-        },
-    }
+            "metric_keys": EXP08_STAGE2_METRIC_KEYS,
+        }
+    return entries
 
 
 def _ac_stage2_entries(exp: str) -> dict:
