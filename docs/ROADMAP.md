@@ -39,7 +39,7 @@ HF slug 규약은 [§3 이름 규약](../Implicit-World-Modeling/ARCHITECTURE.md
 | **AC_EXP05** | ✅ **eval 완주** | `qwen2.5-vl-3b` stage1 full FT + stage2(full·lora world-model·base) **전부 eval 완주** (2026-07-21). **데이터 쟁점 4건 미판정** |
 | **AC_EXP06** | 🔄 **merge/업로드** | EXP05 비증강 Stage-2 대조군. `base` variant 완료·업로드, **world-model variant 학습 미착수** |
 | **AC_EXP07** | 🧱 **데이터·인프라 완비** | `qwen2.5-vl-3b` 단독 stage1 world-modeling. 등록·YAML·빌더 완비, **0725 실데이터 빌드 완료(누출 0)**, **학습 이력 0** |
-| **AC_EXP08** | 🧱 **데이터·인프라 완비** | anti-copy **3-포맷 관측성 분할** stage1. 자격 `qwen2.5-vl-3b`·`7b`. 배선·YAML·데이터 완비(누출 0), **학습 이력 0** |
+| **AC_EXP08** | 🔄 **stage1 3B 완료, 나머지 진행 중** | anti-copy **3-포맷 관측성 분할** stage1. **stage1 3B full FT 12체크포인트 학습·평가 완료**(HF 실재). **7B stage1·stage2(3B/7B 전부) 는 학습 이력 0.** stage2 데이터 30K+7버킷 재빌드·eval 셸 배선 완료 |
 | **MC** | ⬜ 미착수 | 데이터·등록·YAML 완비, 자격 제한 없음. **프로덕션 코퍼스 아님** |
 | **MB** | ⬜ 미사용 | 평가 전용. `on-MB*` 산출물 0 |
 
@@ -151,33 +151,80 @@ EXP05 의 **비증강(증강 X) Stage-2 대조군**. 좌표/budget/`--coord-mode
 
 ---
 
-## 🧱 EXP08 — anti-copy 3-포맷 분할 (데이터·인프라 완비, 학습 미착수)
+## 🔄 EXP08 — anti-copy 3-포맷 분할 (stage1 3B 완료, 7B·stage2 미착수)
 
 `qwen2.5-vl-3b` + `qwen2.5-vl-7b` stage1 world-modeling. **EXP07 과의 핵심 차이는 입력 관측성을 세 포맷으로 쪼갠 것**이다 — `full` 25% / `masked` 55% / `dropped` 20%. 모델이 입력 XML 을 그대로 베끼는 국소 최적(실측 복사만으로 토큰 절반 적중)에서 빠져나오게 하려고 **베낄 원본을 물리적으로 제거**한다. 설계 배경은 [`WM_FORMATS.md`](./WM_FORMATS.md), 파이프라인은 [`DIFF_TARGETS.md`](./DIFF_TARGETS.md).
 
-**스펙 요약**: **stage1** 1ep · `save_steps 0.25` · train **50K** = state 40K(3-포맷·가중) + downstream 10K(이미지 **유지**, 균일 1.0) · diff **1 : 0.25** · full/lora YAML 둘 다 · **stage2** train 15K. test 는 **자체 5 종** (state ×3 포맷 · action · stage2), **ID/OOD 없음**. 계약 정본은 [§3 계보](../Implicit-World-Modeling/ARCHITECTURE.md#3-데이터와-설정-계약), 채점 규약은 [§6](../Implicit-World-Modeling/ARCHITECTURE.md#6-메트릭).
+**스펙 요약**: **stage1** 1ep · `save_steps 0.25` · train **50K** = state 40K(3-포맷·가중) + downstream 10K(이미지 **유지**, 균일 1.0) · diff **1 : 0.25** · full/lora YAML 둘 다 · **stage2** train **30K**(2026-08-28 재빌드). test 는 stage1 **자체 4 종**(state ×3 포맷 · action, **ID/OOD 없음**) + stage2 **7 버킷**(app 축 4 · step 축 3). 계약 정본은 [§3 계보](../Implicit-World-Modeling/ARCHITECTURE.md#3-데이터와-설정-계약), 채점 규약은 [§6](../Implicit-World-Modeling/ARCHITECTURE.md#6-메트릭).
 
-**완료 (2026-08-22)**:
-- **원천 배치** — `data/AndroidControl/EXP08_{stage1_state,stage2}.jsonl` (60,871 / 86,431). 이미지는 **새로 받을 필요가 없었다**: 소스의 `myset/images/episode_{N}_...` 는 zero-pad 만 다를 뿐 공용 `AndroidControl/images/` 와 **전수 매핑**된다 (60,871 + 86,431 전부 hit). 즉 AndroidControl 을 Cerebra 파서로 다시 뽑은 것이고 AC 계보가 맞다.
+**완료 — stage1 3B full FT 학습·평가 (2026-08-28 확인)**:
+- **학습 산출물이 HF 에 실재한다** — `SaFD-00/qwen2.5-vl-3b-ac-exp08-world-model-stage1-full-epoch{0.25 … 3}` 12 개, 각 완전 병합본. **로컬 `outputs/.../adapters` 는 비어 있고** eval 은 `resolve_eval_model_path` 의 HF fallback 으로 돌았다 — 위 "완료 판정 규칙" 이 말하는 바로 그 사례다.
+- **stage1 eval 완주** — `base` + 12 체크포인트 × leaf **7 종**(action 1 + state 3 포맷 × {기본, `-without-open_app`}). 지표 정본은 Notion `🧪 Experiments` DB.
+
+**완료 — action 채점 버그 수정 + 13 leaf 재채점 (2026-08-28)**:
+`_action_eval.py::_bbox_elements` 가 `bounds` 만 읽어 Cerebra `data-bbox` 를 못 봤다. click/long_press 가 **13 개 leaf 전부 `no_bbox` → 오답**이었고 `cond_bbox_acc` 가 전부 `0.0000` 이었다. `--xml-schema cerebra` 를 `_action_eval.py` 에 추가하고(기본값 `android` 유지) 재채점한 결과:
+
+| leaf | `step_acc` before → after | `cond_bbox_acc` |
+|---|---|---|
+| `base` | 0.178 → **0.448** | 0.0000 → 0.6683 |
+| `full_world-model/epoch-2.76` (최고) | 0.284 → **0.616** | 0.0000 → — |
+| `full_world-model/epoch-3` | — | 0.0000 → 0.7222 |
+
+**base 대비 world-model 이득이 +0.106 → +0.168 로 커졌다.** 버그가 WM 의 이득 자체를 과소평가하고 있었다. state 경로는 처음부터 정상이었다(78 leaf 전부 `xml_schema: cerebra` 스탬프). 옛 산출은 `action_metrics.pre_cerebra.json` 으로 보존.
+
+**회귀 가드 — 표본 6개 통과, 전수 아님.** EXP05 stage1 action(base) · EXP05 stage2(base) · EXP06 stage2(base) · EXP07_v1 stage1 action(base) · EXP07_v2 stage1 action(ep1) · EXP07_v1 stage2(base) 를 새 코드로 재채점해 **`xml_schema` 키를 빼면 전 키·값이 기존 파일과 동일**하고 추가된 스탬프가 전부 `"android"` 임을 확인했다. ⚠️ EXP05/06/07 의 action leaf 는 **47개**이고(전부 xy 3섹션 모드라 모두 스탬프 영향권) 그중 **6개만 실제로 재채점했다** — 나머지 41개의 근거는 **구조적 논증**(android 분기 바이트 무변경 · `xml_schema` 기본값 `android` · `ds_xml_schema_flag` 가 EXP08 외 빈 문자열)이지 실측이 아니다. 메커니즘은 [§6 AC_EXP08 채점](../Implicit-World-Modeling/ARCHITECTURE.md#6-메트릭), 규칙은 [AGENTS 하드 제약 15f](../Implicit-World-Modeling/AGENTS.md).
+
+**완료 — stage2 데이터 재빌드 (2026-08-28)**:
+빌드 정본 [`scripts/build_exp08_stage2_v2.py`](../Implicit-World-Modeling/scripts/build_exp08_stage2_v2.py). 구 `stage2_train` 은 stage1 의 state 40K 와 step 을 공유하고 있었다("훈련 샘플이 겹치면 안 된다" 위반) → **stage1_train 의 모든 step(state ∪ action)을 제외한 풀**에서 다시 뽑았다.
+- **train 15K → 30K.** 구본은 `data/AndroidControl_EXP08/_build/stage2_train.15k.bak.jsonl` 에 백업 (stage2 학습 이력 0 이라 덮어써도 손실 없음).
+- **eval 7 버킷** — app 축 `app_{both,s1_only,s2_only,ood}` + step 축 `step_{id_s1,id_s2,ood}`. 앱 파티션은 `episodes_meta.jsonl::primary_app` 기준.
+- **구 `stage2_test.jsonl` 폐기** — 등록 키·배선에서 제거했다. 파일 자체는 디스크에 남아 있고 새 7 버킷과 교집합 0 이다.
+- 불변식(빌더 `verify()` 가 fail-closed 검사): stage1 산출물 5 파일 **sha256 빌드 전후 불변** · `stage2_train ∩ stage1_train` = 0 · train ∩ 각 버킷 = 0 · 버킷 21 개 쌍 상호 교집합 = 0 · 홀드아웃 앱(`APP_S1_ONLY`·`APP_OOD`) step 이 train 에 0 건 · `images` 전부 `AndroidControl/` 접두.
+- 실현 N·앱수·에피소드수·action 분포는 sidecar 에서 읽는다: `cat data/AndroidControl_EXP08/stage2_train.jsonl.meta.json`, 또는 `python scripts/build_exp08_stage2_v2.py --verify-only` 가 표로 출력한다.
+
+**완료 — stage2 eval 셸 배선 (2026-08-28)**:
+- `stage2_eval.sh::run_exp08_stage2_eval()` 신설 — `run_variant_epoch_eval_on` 이 EXP08 을 조기 위임하고 MB 단일-파일 분기에서 EXP08 을 뺐다 (`stage1_eval.sh::run_exp08_eval` 과 대칭 구조). leaf 명명은 `on-AC_EXP08-<bucket>` (`_`→`-`).
+- 버킷 선택 변수는 **`EVAL_BUCKETS`** 다 — stage1 의 `EVAL_TASKS` 와 **일부러 이름을 다르게 했다.** 값 공간이 겹치지 않아서, 같은 이름을 쓰면 stage1→stage2 를 잇는 래퍼에서 값이 새어 **조용히 엉뚱한 leaf 를 평가**한다.
+- dry-run 조립 확인: dataset `IWM-AC_EXP08_stage2_test_app_both` · test `stage2_test_app_both.jsonl` · 채점 `--coord-mode xy --xml-schema cerebra` · cutoff 24576 · `thought_eval` 동반.
+- **인라인 xy 목록 제거** — `stage2_eval.sh` 에 복제돼 있던 `[[ "$eval_ds" == "AC_EXP05" || … ]]` 를 `ds_score_mode_flag` 위임으로 바꿔 **셸 복제본이 2벌 → 1벌**이 됐다 ([AGENTS 하드 제약 15g](../Implicit-World-Modeling/AGENTS.md)). 이 교체로 `tests/test_pixel_xy_consistency.py` 의 파서가 형태를 못 알아보고 **실패했고**(가드가 제 역할을 했다), 위임 형태를 인정하도록 파서를 확장한 뒤 그 확장이 조용한 통과를 만들지 않는지 두 가지로 재실증했다.
+
+**완료 — stage1 ablation 데이터 (2026-08-28)**:
+`data/AndroidControl_EXP08/stage1_train_action_only.jsonl` — 부모 `stage1_train.jsonl` 에서 `fmt` 키가 **없는**(= downstream/action) 레코드를 **라인 단위 그대로** 필터링한 것이다. 재샘플링하지 않아 메인 런이 본 것과 바이트 동일하고, 그래야 "World Modeling 의 순수 이득" 대조군이 성립한다. 빌드 정본 [`scripts/build_exp08_ablation_data.py`](../Implicit-World-Modeling/scripts/build_exp08_ablation_data.py).
+
+**완료 (2026-08-22, 데이터·인프라)**:
+- **원천 배치** — `data/AndroidControl/EXP08_{stage1_state,stage2}.jsonl`. 이미지는 **새로 받을 필요가 없었다**: 소스의 `myset/images/episode_{N}_...` 는 zero-pad 만 다를 뿐 공용 `AndroidControl/images/` 와 **전수 매핑**된다. 즉 AndroidControl 을 Cerebra 파서로 다시 뽑은 것이고 AC 계보가 맞다.
 - **diff loss v2c** — `scripts/diff_loss/{hungarian_metric,hungarian_diff,token_weight_builder}_v2c.py`. v2 는 **덮지 않았다** (하드 제약 9·15e). Cerebra 스키마(`data-bbox`/`aria-label`) 지원 + **구조축 `div` 채택** + **컨테이너는 여는-태그만 가중**.
-- **데이터 빌드 완료 (2026-08-22)** — `scripts/build_exp08_data.py --seed 8`. 길이 필터(state 22 / down 2 drop) → 95% 복사 필터(state-train 57,255 → **56,827**, drop 428 = 0.75% / state-test 3,594 → 3,565) → 층화 표본 40K → 3-포맷 분할 **정확히 10,000/22,000/8,000, skip 0** → C1~C11 전수 통과 → 헝가리안 diff **40,000/40,000 ok, fallback 0** (ADDED 581,101 / MODIFIED 568,839 / UNCHANGED 664,960) → `token_weights` 부착.
-  산출: `stage1_train.jsonl` 50,000행(795MB) · `stage2_train.jsonl` 15,000행 · test 5종 각 500행.
-  빌더 `verify()`: fmt 분포 masked 22,000 / full 10,000 / dropped 8,000 / action 10,000,
-  test 3 포맷 `raw_current_state` 500건 동일, **train 에피소드 13,571 / test 750 / 교집합 0**.
-- **시각 감사** — `scripts/diff_loss/weight_site.py` 가 `outputs/AndroidControl_EXP08/_weight_site/index.html` 을 낸다 (조병웅님 요청 항목). 왼쪽에 모델이 실제로 본 current state, 오른쪽에 타깃 토큰별 가중치를 색으로 칠한다.
-  **diff 를 raw 로 계산했다는 증거**(40,000건 전량): 상향-가중 비율이 dropped p50 `.705` / full `.704` / masked `.702` 로 포맷 간 동일하고 "전부 상향" 샘플이 0.31~0.34% 다. applied(가려진 current)로 계산했다면 dropped 는 1.0 에 몰려야 한다. token_weights 길이 불일치 **0** (state 40K·downstream 10K 양쪽 표본 검사).
-- **배선** — `dataset_info` 7 키, `lf_registry`(자격 3b·7b), `_common.sh`, `gpu_policy`, `stage1_eval.sh`(EXP08 전용 단일-test helper, leaf 4 종), `eval_viewer`. **YAML 16 종** (stage1 {full,lora}×2모델 + stage2 {full,lora}×3variant×2모델). `gen_configs --check` 통과(218 YAML), `pytest tests` **926 passed / 9 skipped / 0 failed**.
+- **stage1 데이터 빌드** — `scripts/build_exp08_data.py --seed 8`. 길이 필터 → 95% 복사 필터 → 층화 표본 → 3-포맷 분할(skip 0) → C1~C11 전수 통과 → 헝가리안 diff **fallback 0** → `token_weights` 부착. 행수·분포·drop 수는 sidecar: `cat data/AndroidControl_EXP08/stage1_train.jsonl.meta.json`.
+- **시각 감사** — `scripts/diff_loss/weight_site.py` → `outputs/AndroidControl_EXP08/_weight_site/index.html` (조병웅님 요청). 왼쪽에 모델이 실제로 본 current state, 오른쪽에 타깃 토큰별 가중치.
+  **diff 를 raw 로 계산했다는 증거**(전량): 상향-가중 비율이 dropped p50 `.705` / full `.704` / masked `.702` 로 포맷 간 동일하고 "전부 상향" 샘플이 0.31~0.34% 다. applied(가려진 current)로 계산했다면 dropped 는 1.0 에 몰려야 한다.
+- **배선** — `dataset_info`(stage1 train/test + ablation + stage2 train/7 버킷), `lf_registry`(자격 3b·7b), `_common.sh`, `gpu_policy`, `stage1_eval.sh`(EXP08 전용 단일-test helper), `eval_viewer`(stage1 7 leaf + stage2 7 버킷). 키·YAML 개수는 세지 말고 확인 커맨드를 쓴다 — 아래 "등록 상태 재확인".
 - **채점기 Cerebra opt-in** — `--xml-schema cerebra` (기본 `android` → 기존 실험군 불변), 프롬프트 파서에 관측성 라벨 머리글 추가, copy 지표를 **`raw_current_state`** 로 계산.
 
-**남은 것**: **학습 실행** — 학습 이력 0. 데이터 빌드 완료 후 실제 `stage1_train.sh` 실행이 남았고, GPU 는 미정이라 config 는 **A100×2 기준**(ds_z3_offload)으로 잡아 뒀다 (하드웨어가 바뀌어도 YAML 재생성 금지 — 하드 제약 6, 환경변수로 override).
+```bash
+# 등록 상태 재확인 (파생 수치를 문서에 적지 않는다)
+python -c "import json;d=json.load(open('Implicit-World-Modeling/configs/lf_dataset/dataset_info.json'));print(*sorted(k for k in d if 'EXP08' in k),sep='\n')"
+python -m implicit_world_modeling.gen_configs --check
+python Implicit-World-Modeling/scripts/build_exp08_stage2_v2.py --verify-only
+```
+
+**남은 것**:
+1. **7B stage1 학습** — 자격은 있으나 산출물 0.
+2. **stage2 학습 (3B·7B 전부)** — 데이터 30K 와 eval 배선은 준비됐고 **학습 이력 0**.
+3. **action-only ablation 체인** — 아래 쟁점 5.
 
 **차단·쟁점**:
-- **로컬 GPU 없음** — RTX 5090 2 장이 다른 사용자 서빙으로 상시 점유(2026-08-22 실측 31GB/32GB × 2). EXP07 과 같은 상황이다.
-- **원격 제출은 여전히 UNVALIDATED** — `scripts/remote_launch.sh` 는 실행 이력 0 이고 `configs/remote/run.template.yaml` 은 `--dataset AC_EXP05 --stage1-mode full` 이 **하드코딩**돼 있다. EXP08 을 원격으로 돌리려면 그 줄을 바꿔야 한다.
-- **중간 체크포인트 → 로컬 eval 접착이 없다.** 협업자가 요청한 "0.25 epoch 마다 내려받아 연구실 서버에서 validation eval" 을 자동으로 해 주는 스크립트는 리포에 **없다** (`export:` 블록의 계획만 있고 미검증). 체크포인트를 손으로 내려받은 뒤 `stage1_eval.sh --train-dataset AC_EXP08 --eval-datasets AC_EXP08` 로 4 leaf 를 도는 것은 배선돼 있다.
+- ⚠️ **app 축은 "본다 = action 지도학습" 이라는 정의 위에 서 있다.** stage1 **state** 가 소스 822 앱 중 818 을 이미 봤고 어느 쪽으로도 완전 미관측인 앱은 **4 개(20 step)** 뿐이다. 그래서 `app_ood` 를 "stage1 이 전혀 못 본 앱" 으로 정의하면 표본이 성립하지 않아, **action 지도를 받지 않은 앱**으로 정의하고 각 레코드에 `s1_state_seen` 플래그를 달았다. `app_s2_only`(24 앱 / 49 에피소드) 와 `app_ood`(44 앱 / 76 에피소드) 는 **재고 물리 상한**이라 목표 500 을 못 채운다 — **유효 표본은 행수보다 훨씬 작다** (앱·에피소드 단위로 세라). 늘리려면 stage1 재학습이 필요한데 **사용자가 stage1 재학습을 금지**했다.
+- ⚠️ **app 축이 stage1 state 노출과 교락(confound)돼 있다.** `s1_state_seen` 비율이 `app_both` 89.6% / `app_s1_only` 55.8% / `app_s2_only` 58.0% / `app_ood` 47.1% 로 앱 그룹마다 다르다. 앱 그룹 간 차이를 그대로 "action 지도 효과" 로 읽으면 state 노출 효과가 섞인다 — **`s1_state_seen` 으로 층화해서 읽어라.** 버킷별 실측 비율은 sidecar `buckets.*.s1_state_seen`.
+- ⚠️ **버킷 비교는 `macro_step_accuracy` 로 하라.** action 타입 mix 가 버킷마다 다르다 — `step_id_s1` 은 **terminate 0%** 인데 `step_id_s2`·`step_ood` 는 20% 수준이다. 구조적 이유가 있다: stage1 state 소스는 "다음 화면" 이 있어야 하므로 종단(terminate) step 을 담지 못하고, 그래서 "state 가 본 step" 집합에는 terminate 가 원천적으로 없다. terminate 는 좌표·텍스트 없이 type 만 맞으면 정답이라 쉬운 축이고, `step_accuracy` 원값 격차의 상당 부분이 **난이도 차가 아니라 mix 효과**다.
+- ⚠️ **`stage2_train` 30K 의 terminate 비중이 27.3% 다** (구 15K 는 14.9%). 위와 같은 원인 — stage1 step 을 제외하고 남은 풀 자체가 terminate 쪽으로 기울어 있고, 층화 샘플러가 그 marginal 을 보존한다. **사용자가 인위적 재층화를 거절하고 이 분포를 택했다** (2026-08-28). 따라서 구 15K 와 새 30K 를 비교하면 **규모와 분포가 함께 바뀐 이중 변수**다 — 단독 비교로 결론을 내지 마라.
+- ⚠️ **action-only ablation 은 아직 merge/eval 할 수 없다.** `stage1_merge.sh` 는 `STAGE1_VARIANT` 를 모르고 `TRAIN_DIR_REL`·`hf_repo_id_stage1` 이 variant 세그먼트 없는 경로를 만든다 → ablation 을 merge 하려 하면 **조용히 메인 런의 어댑터를 merge 해 같은 HF repo id 로 push** 한다(HF 의 기존 stage1 체크포인트 12 개를 되돌릴 수 없게 덮어쓴다). 그래서 `stage1_merge.sh` 에 **임시 가드**를 넣어 `--stage1-variant` 지정 시 `exit 2` 로 막아 뒀다. 선행 필요: `local_merged_epoch_dir`·`hf_repo_id_stage1`·`resolve_eval_model_path`·`stage1_eval.sh` 의 variant 배선. 배선이 끝나면 그 가드를 제거한다.
+- ⚠️ **`rebuild_eval_metrics.sh` 는 EXP08 을 커버하지 않는다** (기존 공백). leaf 를 `on-*-state` / `on-*-state-without-open_app` / `on-*-action` glob 으로 찾는데 EXP08 leaf 는 `on-AC_EXP08-state-full` 처럼 **포맷 접미사**가 붙고 stage2 는 `on-AC_EXP08-app-both` 형태라 어느 패턴에도 안 걸린다. EXP08 지표를 백필해야 하면 이 스크립트를 먼저 고쳐야 한다.
+- **로컬 GPU 없음** — RTX 5090 2 장이 다른 사용자 서빙으로 상시 점유. EXP07 과 같은 상황이고, stage1 3B 는 이 때문에 원격에서 돌았다.
+- **원격 제출은 여전히 UNVALIDATED** — `configs/remote/run.template.yaml` 은 `--dataset AC_EXP05 --stage1-mode full` 이 **하드코딩**돼 있다.
+- **중간 체크포인트 → 로컬 eval 접착 스크립트는 없다.** 협업자가 요청한 "0.25 epoch 마다 내려받아 연구실 서버에서 validation eval" 은 리포에 없다. 체크포인트를 손으로 내려받은 뒤 `stage1_eval.sh --train-dataset AC_EXP08 --eval-datasets AC_EXP08` 로 7 leaf 를 도는 것은 배선돼 있다.
 - **가중치 0.25 는 지난 실험(EXP07 v2 = 0.05)과 다르다** — 사용자 확정 사항이다. 포맷 분할이라는 새 변수가 이미 들어갔으므로 원인 분리 시 이 차이를 함께 고려해야 한다.
-- **헝가리안 매칭 임계값은 EXP07 값을 그대로 승계했고 육안 검증을 하지 않았다.** [`WM_FORMATS.md`](./WM_FORMATS.md) §4.4 는 이 임계값을 "최대 리스크" 로 지목하며 무작위 30 샘플 육안 확인을 요구한다. 현행 값(`MATCH_THRESHOLD=1.7`, `UNCHANGED_COST_THRESHOLD=0.05`)은 `build_diff_targets.py` 에 CLI 로 노출돼 있지도 않다 — 변수 최소화 차원의 승계이지 검증된 값이 아니다. `_weight_site` 로 요소 단위 확인은 가능하다.
-- **초기 빌드는 `--revision` 핀 없이 돌았다.** 로컬 캐시 스냅샷이 `66285546…` 하나뿐이라 실제로 그 SHA 로 해석됐고(그래서 이제 빌더 기본값이다), 다만 그 빌드의 sidecar `diff_targets_meta.revision_resolved` 는 `null` 이다. bit-exact 재현이 필요하면 핀이 박힌 현재 코드로 재빌드하면 된다.
+- **헝가리안 매칭 임계값은 EXP07 값을 그대로 승계했고 육안 검증을 하지 않았다.** [`WM_FORMATS.md`](./WM_FORMATS.md) §4.4 는 이 임계값을 "최대 리스크" 로 지목하며 무작위 30 샘플 육안 확인을 요구한다. 현행 값(`MATCH_THRESHOLD=1.7`, `UNCHANGED_COST_THRESHOLD=0.05`)은 `build_diff_targets.py` 에 CLI 로 노출돼 있지도 않다 — 변수 최소화 차원의 승계이지 검증된 값이 아니다.
+- **초기 stage1 빌드는 `--revision` 핀 없이 돌았다.** 로컬 캐시 스냅샷이 `66285546…` 하나뿐이라 실제로 그 SHA 로 해석됐고(그래서 이제 빌더 기본값이다), 다만 그 빌드의 sidecar `diff_targets_meta.revision_resolved` 는 `null` 이다. **stage1 은 재빌드하지 마라** — 학습·평가가 끝난 불가침 자산이다(하드 제약 15d).
 
 ---
 
@@ -220,7 +267,7 @@ EXP05 의 **비증강(증강 X) Stage-2 대조군**. 좌표/budget/`--coord-mode
 - [x] 문서 트리오 정비 (README · ARCHITECTURE · AGENTS) + SSoT 재배치
 - [x] 2-stage 파이프라인 자동화 (`scripts/stage{1,2}_{train,merge,eval}.sh`)
 - [x] 학습 설정 정본화 — YAML 생성기(`gen_configs`) + 커밋된 `dataset_info.json` + 코드 가드(자격·등록)
-- [ ] **실험 매트릭스 완주** (모델 × 데이터셋 × {base / stage2 / stage1+stage2}) — EXP04 차단, EXP06 world-model·EXP07 학습 미착수, ratio55·`qwen3-vl-4b`·MC 공백
+- [ ] **실험 매트릭스 완주** (모델 × 데이터셋 × {base / stage2 / stage1+stage2}) — EXP04 차단, EXP06 world-model·EXP07 학습 미착수, **EXP08 은 stage1 3B 만 완료(7B·stage2 미착수)**, ratio55·`qwen3-vl-4b`·MC 공백
 - [ ] 결과 종합 및 논문화 (AAAI/ICLR 2027 트랙)
 - [ ] (추후) Obsidian 동기화 — Vault 있는 환경에서 `/project-sync init` 재실행
 

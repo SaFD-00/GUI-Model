@@ -3,6 +3,75 @@
 시점성 진행 로그 (append-only). 최신 엔트리를 위에 추가한다. 과거 엔트리는 수정·삭제하지 않는다.
 상세 결과는 Notion Dev Log / Experiments DB, 계획은 [ROADMAP.md](./ROADMAP.md) 참조.
 
+## 2026-08-28 — IWM: AC_EXP08 action 채점 버그 수정 · stage2 30K+7버킷 재빌드 · xy 판정 SSoT
+
+stage1 3B full FT 12 체크포인트가 학습·평가를 마친 뒤(HF 실재, 로컬 `outputs/` 는 비어 있어 eval 은 HF
+fallback 으로 돌았다) 협업자 피드백을 반영하는 과정에서 **조용한 실패 2건**이 드러나 함께 고쳤다.
+학습은 새로 돌리지 않았다.
+
+- **action 채점 버그 — 13 leaf 전부 오답이었다.** `_action_eval.py::_bbox_elements` 가 `bounds` 만 읽어
+  EXP08 의 Cerebra `data-bbox` 를 못 봤고, click/long_press 가 전량 `no_bbox` 로 집계돼
+  `cond_bbox_acc = 0.0000` 이었다. `--xml-schema cerebra` 추가(기본 `android` 유지) 후 재채점:
+  `base` `step_acc` **0.178 → 0.448** · `cond_bbox_acc` **0.0 → 0.6683**, 최고 leaf `epoch-2.76`
+  **0.284 → 0.616**, `epoch-3` `cond_bbox_acc` 0.7222. **base 대비 WM 이득 +0.106 → +0.168** —
+  버그가 world modeling 의 이득 자체를 과소평가하고 있었다. 옛 산출은 `action_metrics.pre_cerebra.json`
+  으로 보존. state 경로는 처음부터 정상이었다(78 leaf 전부 cerebra 스탬프).
+  **교훈: "셸을 통하면 안전하다" 가 아니었다** — `stage1_eval.sh` 의 action 분기가 `schema_flag=""` 로
+  하드코딩돼 있어 채점기가 인자를 받을 수 있게 된 뒤에도 전달되지 않았다. 채점기에 opt-in 인자를 넣으면
+  **그 인자를 넘기는 셸 분기를 전수 확인**해야 한다 (AGENTS 15f 갱신).
+- **"원본에 앱 파티션 메타가 없다" 는 오판이었다.** `episodes_meta.jsonl::primary_app` 이 EXP08
+  에피소드를 전수 커버한다(state 14,095 / downstream 14,383). 2026-08-22 에 이 전제로 ID/OOD 를
+  포기했던 것을 정정하고 stage2 를 앱 축으로 다시 갈랐다 (AGENTS 15d 정정).
+- **stage2 재빌드** — `scripts/build_exp08_stage2_v2.py` 신설. 구 `stage2_train`(15K) 은 stage1 의
+  state 40K 와 step 을 공유하고 있었다("훈련 샘플이 겹치면 안 됨" 위반) → **stage1 의 state ∪ action
+  step 을 전량 제외한 풀**에서 30K 재추출. eval 은 app 축 4 + step 축 3 = **7 버킷**. 구
+  `stage2_test.jsonl` 은 폐기(등록키·배선 제거, 파일만 잔존), 구 train 은 `_build/` 에 백업.
+  **stage1 산출물 5 파일은 sha256 을 빌드 전후로 대조**해 바이트 불변을 증명한다(빌더 `verify()`).
+- **재고가 규칙을 이겼다 — 정직하게 기록했다.** stage1 **state** 가 소스 822 앱 중 818 을 이미 봐서
+  완전 미관측 앱은 4개(20 step)뿐이다. 그래서 app 축의 "본다" 를 **action 지도학습**으로 정의하고
+  각 레코드에 `s1_state_seen` 을 달았다. `app_s2_only` 193행(24앱/49에피소드) · `app_ood`
+  408행(44앱/76에피소드) 은 **물리적 상한**이라 목표 500 을 못 채운다 — 규칙을 완화하지 않고 상한까지만
+  뽑았다. 늘리려면 stage1 재학습이 필요한데 사용자가 막았다.
+- **버킷 지표를 읽는 규칙을 문서에 박았다.** `step_id_s1` 은 terminate **0%**(stage1 state 소스가 종단
+  화면을 담지 못해 구조적), `step_id_s2`·`step_ood` 는 20% 수준 → **`macro` 로 비교**해야 한다.
+  app 축은 stage1 state 노출과 교락(`s1_state_seen` 89.6/55.8/58.0/47.1%) → 그 플래그로 층화해 읽는다.
+  `stage2_train` 30K 의 terminate 27.3%(구 15K 14.9%)도 같은 원인이고, **사용자가 재층화를 거절하고
+  실제 잔여 분포를 택했다** — 15K↔30K 비교는 규모+분포 이중 변수다.
+- **xy 판정 SSoT + 드리프트 가드.** `_compare_site.py::XY_FAMILY` 가 AC_EXP08 을 놓친 채 남아 사이트가
+  조용히 index 모드로 채점하고 있었다. 2026-08-03 의 `rebuild_*.sh` 3종 드리프트와 **같은 사고의
+  재발**이다 — 그때의 통합이 언어 경계를 넘지 않았다. `lf_registry.PIXEL_XY_DATASETS` 를 정본으로 두고
+  `_compare_site` 는 유도, 셸 case 목록은 성능상 유지하되 `tests/test_pixel_xy_consistency.py` 가
+  셸 원문을 파싱해 드리프트를 잡는다(파서가 매치 0건이면 조용히 통과하지 않고 크게 실패한다).
+  AGENTS 하드 제약 **15g** 로 규칙화.
+- **stage1 ablation 데이터** — `stage1_train_action_only.jsonl` (부모의 `fmt` 없는 행을 라인 단위 그대로
+  필터링, 재샘플링 금지 — 그래야 메인 런과의 대조가 성립). ⚠️ **아직 merge/eval 불가**:
+  `stage1_merge.sh` 가 `STAGE1_VARIANT` 를 몰라 ablation 을 merge 하면 조용히 메인 런 어댑터를 같은
+  HF repo id 로 push 한다 → 임시 가드로 `exit 2` 를 넣어 막아 뒀다. 체인 배선 후 가드 제거 예정.
+- **부수 발견**: `eval_viewer` 가 `thought_metrics.json` 을 생성해 두고도 표에 싣지 않고 있었다
+  (`metric_files` 에만 있고 `metric_keys` 에 없어서) → 7버킷 엔트리에 반영.
+  `rebuild_eval_metrics.sh` 는 EXP08 leaf 를 glob 으로 못 잡는다 (기존 공백, 미해결).
+- **stage2 eval 배선** — `stage2_eval.sh::run_exp08_stage2_eval()` 신설(7 버킷 루프,
+  leaf `on-AC_EXP08-<bucket>`). 버킷 선택 변수는 `EVAL_BUCKETS` 로 **stage1 의 `EVAL_TASKS` 와
+  이름을 다르게** 했다 — 값 공간이 겹치지 않아 같은 이름을 쓰면 stage1→stage2 래퍼에서 값이 새어
+  조용히 엉뚱한 leaf 를 평가한다. 같은 작업에서 `stage2_eval.sh` 에 복제돼 있던 인라인 xy 목록을
+  `ds_score_mode_flag` 위임으로 바꿔 **셸 복제본이 2벌 → 1벌**이 됐다. 이 교체로
+  `test_pixel_xy_consistency.py` 파서가 형태를 못 알아보고 **실패했고(가드가 제 역할을 했다)**
+  위임 형태를 인정하도록 파서를 확장했다 — 확장이 조용한 통과를 만들지 않는지 두 가지로 재실증했다
+  (위임을 알 수 없는 형태로 바꾸면 실패 / 인라인 복귀 + EXP08 누락이면 차집합을 찍고 실패).
+- **회귀 가드 — 표본 6개 통과.** EXP05 stage1 action(base) · EXP05 stage2(base) · EXP06 stage2(base) ·
+  EXP07_v1 stage1 action(base) · EXP07_v2 stage1 action(ep1) · EXP07_v1 stage2(base) 를 새 코드로
+  재채점해 **`xml_schema` 키를 제외하면 전 키·값이 기존 파일과 동일**하고 추가된 스탬프는 전부
+  `"android"` 임을 확인했다.
+  ⚠️ **전수 검증이 아니다.** EXP05/06/07 의 action leaf 는 **47개**(조사 결과 전부 xy 3섹션 모드라
+  모두 스탬프 영향권)이고 그중 **6개만 실제로 재채점했다.** 나머지 41개의 근거는 **구조적 논증**이다 —
+  `_bbox_elements` 의 android 분기가 바이트 단위로 무변경(cerebra 는 `continue` 로 빠지는 순수 추가
+  분기)이고, `xml_schema` 기본값이 `android` 이며, `ds_xml_schema_flag` 가 EXP08 외에는 빈 문자열을
+  반환한다. 논증이지 실측이 아니라는 점을 구분해서 읽어라.
+- **검증:** `pytest tests` 957 passed / 10 skipped / 0 failed · `build_exp08_stage2_v2.py --verify-only`
+  통과(불변식 전항) · 드리프트 가드는 고의 파손 6종으로 실제로 무는 것을 확인.
+- 남은 것: 7B stage1 · stage2 학습(3B/7B 전부) · ablation 체인.
+  상세는 [ROADMAP.md](./ROADMAP.md) EXP08 절.
+
 ## 2026-08-22 — IWM: AC_EXP08 anti-copy 3-포맷 관측성 분할 세팅 (코드·데이터, 학습 전)
 
 조병웅님 `diff_loss_bundle_v2` + 0822 Cerebra 재추출 데이터를 새 실험군 **AC_EXP08** 로 세팅했다.

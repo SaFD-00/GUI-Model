@@ -316,8 +316,9 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
   │                                                         #   stage1 down 10K·stage1 action test 도 같은 풀 (규칙 3)
   ├── EXP07_open_aug.jsonl                                  #   open 증강 (home.jpg) — s1/s2 에 50 씩 균등 → stage 중립명
   ├── EXP08_stage1_state.jsonl                              # ★ EXP08 원천 — 0822 Cerebra 파서 재추출 (data-bbox/aria-label)
-  ├── EXP08_stage2.jsonl                                    #   downstream(with_history, **이미 img-first**). stage2 15K 가
-  │                                                         #   주 소비자, stage1 down 10K·stage1 action test 도 같은 풀 (규칙 3)
+  ├── EXP08_stage2.jsonl                                    #   downstream(with_history, **이미 img-first**). stage2 30K 가
+  │                                                         #   주 소비자, stage1 down 10K·stage1 action test·stage2
+  │                                                         #   eval 7 버킷도 같은 풀 (규칙 3)
   ├── episodes_meta.jsonl         # primary_app = 전경 앱 package_name
   └── images/                     # ★ 유일한 이미지 디렉토리 — EXP01~EXP07 전부가 "AndroidControl/images/..." 로 참조
       ⚠ EXP04 원천 (EXP04_stage1_{action,state}.jsonl) 은 디스크에 없다 → 재빌드 불가 (§2 경고 블록)
@@ -340,12 +341,18 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
          이미지는 myset → AndroidControl/images/ 로 경로 문자열 remap (파일 복사·링크 없음).
 
   AC_EXP08  = EXP01 계보 밖 — AndroidControl/EXP08_*.jsonl (0822 Cerebra 재추출) 에서 자체 빌드
-     │                                                        (build_exp08_data.py, seed 8)
-     ├── train  : stage1 50K (state 40K **3-포맷 분할 + 가중** + downstream 10K 이미지 **유지**) + stage2 15K
-     ├── test   : 자체 5 종 — stage1 state 3 (**같은 500 원본의 full/masked/dropped**) · stage1 action 1 · stage2 1
-     └── 누출 차단은 **에피소드 단위 홀드아웃**이다 (EXP07 처럼 EXP05 test 키를 승계하지 않는다).
-         원본에 앱 파티션 메타가 없어 ID/OOD 를 재현할 수 없고, state·downstream 두 소스가
-         에피소드를 13,967/14,095 공유해 step 단위 분리로는 누출이 남기 때문이다.
+     │                             (stage1: build_exp08_data.py seed 8 / stage2: build_exp08_stage2_v2.py)
+     ├── train  : stage1 50K (state 40K **3-포맷 분할 + 가중** + downstream 10K 이미지 **유지**)
+     │            + stage1 ablation `stage1_train_action_only.jsonl` (부모의 fmt-없는 행을 라인 그대로)
+     │            + stage2 **30K** (2026-08-28 재빌드 — stage1 의 state ∪ action step 을 전량 제외)
+     ├── test   : stage1 자체 4 종 — state 3 (**같은 500 원본의 full/masked/dropped**) · action 1
+     │            stage2 **7 버킷** — app 축 {both, s1_only, s2_only, ood} · step 축 {id_s1, id_s2, ood}
+     ├── stage1 누출 차단은 **에피소드 단위 홀드아웃**이다 (EXP07 처럼 EXP05 test 키를 승계하지 않는다).
+     │   state·downstream 두 소스가 에피소드를 13,967/14,095 공유해 step 단위 분리로는 누출이 남는다.
+     │   stage1 test 에는 ID/OOD 가 없다.
+     └── stage2 는 **앱 축 분할이 있다** — episodes_meta.jsonl::primary_app 이 EXP08 에피소드를
+         전수 커버한다 (state 14,095 / downstream 14,383). "원본에 앱 파티션 메타가 없다" 는
+         2026-08-22 시점의 오판이었고 2026-08-28 에 정정됐다.
          이미지는 EXP07 과 같은 규약으로 AndroidControl/images/ 를 참조한다 (zero-pad remap).
 
   MonkeyCollection  = Stage 1 전용 (random split 0.95)
@@ -372,7 +379,7 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
 | **AC_EXP04** | ✗ `_STAGE1_ONLY` | EXP03 미러 + 프롬프트 (4 + without_open_app 2) | **§2 경고 참조** | — |
 | **AC_EXP05** | ✓ (2026-07-15 도입) | 4 + without_open_app 2 | **절대 픽셀 840×1876** | **v2** (stage1) |
 | **AC_EXP07** | ✓ (자체 train 15K) | **자체 4** (id,ood) × (state,action) | **절대 픽셀 840×1876** | **v2** (stage1 state, 인라인 1:0.2) |
-| **AC_EXP08** | ✓ (자체 train 15K) | **자체 5** (state ×3 포맷 · action · stage2) | **절대 픽셀 840×1876** | **v2c** (stage1 state, 인라인 1:0.25) |
+| **AC_EXP08** | ✓ (자체 train **30K**) | **stage1 자체 4** (state ×3 포맷 · action) + **stage2 7 버킷** (app 4 · step 3) | **절대 픽셀 840×1876** | **v2c** (stage1 state, 인라인 1:0.25) |
 | MC | ✗ (데이터 없음) | 단일 test | — | — |
 | MB | 평가 전용 | 단일 파일 | — | — |
 
@@ -396,6 +403,15 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
   - **diff 는 raw 로 계산하고 학습은 applied 로 한다.** 마스킹된 current XML 로 헝가리안을 돌리면 가려져 사라진 요소가 next 에서 ADDED 로 오분류되고, dropped 는 current 가 비어 전 요소가 ADDED 가 되어 anti-copy 신호가 소멸한다. 두 산출물을 `sample_id` 로 조인해 `token_weights` 를 붙이는 것이 [`scripts/diff_loss/build_diff_targets.py`](./scripts/diff_loss/build_diff_targets.py) 다. 성립 근거는 타깃(next XML)이 세 포맷에서 **바이트 동일**(C2)이고 가중치 배열이 assistant standalone 토크나이즈 기준이라는 것.
   - **가중치는 1 : 0.25** (ADDED/MODIFIED : UNCHANGED). EXP07 v1 은 0.2, v2 는 0.05 였다. Cerebra XML 은 토큰의 상당수가 `data-bbox` 좌표라 baseline 을 과도하게 낮추면 다음 화면의 렌더 골격이 무너진다는 판단 (2026-08-22 사용자 확정, [`../docs/WM_FORMATS.md`](../docs/WM_FORMATS.md) §4.3).
   - **필터**: 길이 필터는 EXP07 과 동일(`cutoff_len` 24576, train 풀에만). 95% 복사-편향 필터는 **train 과 state test 양쪽**에 건다 — 이 실험의 지표가 복사율이라 "복사가 정답"인 샘플이 test 에 섞이면 copy 계열 지표가 구조적으로 부풀기 때문이다. 다만 원천이 이미 `hungarian_deduped` 라 실제 drop 은 미미하다 (3,000 샘플 실측 0.7%).
+  - **stage2 재빌드 (2026-08-28)** — 빌드 정본 [`scripts/build_exp08_stage2_v2.py`](./scripts/build_exp08_stage2_v2.py). 구 `stage2_train`(15K) 은 stage1 의 **state 40K 와 step 을 공유**하고 있었다 — 정본 빌더가 stage1-down / stage2 두 표본만 서로 disjoint 하게 뽑고 state 풀은 고려하지 않았기 때문이다. "state 로 본 화면도 같은 입력" 이므로 새 train 30K 는 **`stage1_train.jsonl` 의 모든 step(state ∪ action)을 제외한 풀**에서 뽑는다. 구 파일은 `_build/stage2_train.15k.bak.jsonl` 에 백업된다 (stage2 학습 이력 0 이라 덮어써도 손실 없음).
+    - **앱 파티션** (`episodes_meta.jsonl::primary_app`): `P_ACTION` = stage1 downstream 10K 이 action 지도를 준 앱, `P_STATE_ONLY` = 나머지. 전자를 `APP_S1_ONLY`(train 홀드아웃) / `APP_BOTH` 로, 후자를 `APP_S2_ONLY` / `APP_OOD` 로 쪼갠다. **"본다" 의 정의가 action 지도학습이라는 점이 핵심**이다 — stage1 **state** 는 소스 822 앱 중 818 을 이미 봐서, 완전 미관측 앱으로 버킷을 만들면 4 앱(20 step)밖에 안 남는다. 그래서 `app_ood` 는 "action 지도를 안 받은 앱" 이고 각 레코드에 **`s1_state_seen`** 플래그를 달아 사후 층화가 가능하게 했다.
+    - **step 축**: `step_id_s1`(stage1 state 가 본 step, action 지도는 어디서도 안 받음) / `step_id_s2`(신규 train 이 학습한 **에피소드**에 속하되 그 step 자체는 미학습) / `step_ood`(stage1·stage2 어느 에피소드에도 없음). `_episode_roundrobin` 이 풀의 거의 모든 에피소드를 train 에 넣어버려 `step_ood` 재고가 사후에 0 으로 수렴하므로, 빌더가 **에피소드 일부를 train 풀에서 미리 예약**한다 (`--n-ood-episodes`).
+    - **재고 상한이 실재한다**: `P_STATE_ONLY` 앱들의 소스 step 이 원래 적어 `app_s2_only`·`app_ood` 는 목표 500 을 못 채운다. 빌더는 규칙을 완화하지 않고 상한까지만 뽑은 뒤 실현 N 을 sidecar 에 남긴다. **행수보다 앱수·에피소드수가 유효 표본의 척도다.**
+    - **불변식** (`verify()` 가 fail-closed): stage1 산출물 5 파일의 **sha256·size·mtime 이 빌드 전후 불변** (`_build/stage1_immutable.sha256.json` 기준 대조) · `stage2_train ∩ stage1_train` = 0 · train ∩ 각 버킷 = 0 · 버킷 상호 교집합 = 0 · 홀드아웃 앱 step 이 train 에 0 건 · 기존 평가셋(stage1_test_action · stage1_test_state ×3 · 구 stage2_test) 과 교집합 0 · `images` 전부 `AndroidControl/` 접두. 라벨을 믿지 않고 `episodes_meta.jsonl` 에서 앱을 **재계산**해 대조한다.
+    - **각 레코드의 보조 라벨**: `bucket` · `primary_app` · `app_bucket` · `step_bucket` · `s1_state_seen` · `episode_id` · `step_id`. `step_bucket` 은 파일 소속과 무관하게 **step 의 노출 이력**으로 계산돼 app 축 버킷 레코드에도 붙는다 — 두 축의 교차표를 사후에 만들 수 있다.
+    - 실현 N·분포·앱 리스트는 sidecar `data/AndroidControl_EXP08/stage2_train.jsonl.meta.json` 이 정본이다. `python scripts/build_exp08_stage2_v2.py --verify-only` 가 같은 내용을 표로 출력한다.
+  - **stage1 ablation** — `stage1_train_action_only.jsonl` 은 부모 `stage1_train.jsonl` 에서 `fmt` 키가 **없는**(downstream/action) 레코드를 **라인 단위 그대로** 필터링한 것이다. 재샘플링하면 메인 런과 다른 표본이 되어 "World Modeling 의 순수 이득" 대조가 성립하지 않는다. 빌드 정본 [`scripts/build_exp08_ablation_data.py`](./scripts/build_exp08_ablation_data.py).
+  - ⚠️ **stage1 산출물 5 파일은 불가침이다** (학습·평가 완료 — [AGENTS 하드 제약 15d](./AGENTS.md)). stage2 를 다시 굽더라도 `build_exp08_data.py` 를 재실행하지 마라.
   - **state test 3 종은 같은 500 원본을 세 포맷으로 각각 변환한 것**이다 (`--ratio-full 1.0` 식으로 세 번 굽는다). 포맷 간 난이도 교란을 없애려는 설계라 세 파일의 `sample_id` 집합이 동일해야 하고, 빌더 `verify()` 가 이를 검사한다.
 
 ### MC 데이터 상태 (2026-07-14 — 프로덕션 코퍼스 아님)
@@ -585,7 +601,7 @@ python -c "import json;d=json.load(open('configs/lf_dataset/dataset_info.json'))
 
 - **`stage2_train.sh`** — YAML `…/stage2_${MODE2}/{MODEL}_{base,world-model-full,world-model-lora}.yaml`. 실행 env 는 **Stage 1 과 동일**하다 — `FORCE_TORCHRUN=1 NNODES=1 NPROC_PER_NODE=…` (`stage2_train.sh:101` ↔ `stage1_train.sh:43`). 유일한 차이는 stage1 만 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 를 추가로 export 한다는 것뿐이다. world-model variant 는 local `merged/…/epoch-${N}/` 을 base 로 쓰도록 `model_name_or_path` 를 런타임 sed 치환하고 (그래서 YAML 의 HF id placeholder 는 무시된다), YAML 의 `__STAGE1_EPOCH__` 플레이스홀더가 `${N}` 으로 치환돼 결과가 `…_world-model_from_{M1}-ep{N}/` 로 분리 저장된다. 디렉토리 미존재 시 hard-fail.
 - **`stage2_merge.sh`** — Full FT 는 checkpoint 자체가 전체 모델 (adapter 블록 없음), LoRA 는 `model_name_or_path: {base}` + `adapter_name_or_path: {ckpt}` + `finetuning_type: lora`.
-- **`stage2_eval.sh`** — `--variants` 로 `base` / `{full|lora}_base` / `{full|lora}_world_model` 선택. EVAL_DS=AC_EXP01/02/03/05 는 ID+OOD 동시 추론 → 3 섹션, MB 는 single-pair 1 섹션. **AC_EXP05 는 xy 통일 액션 스페이스라 `_action_eval.py score --coord-mode xy` 로 채점**한다 (stage1_eval 의 EXP05 분기와 동일; 나머지 EXP 는 플래그 없이 index 채점). marker (`action_metrics.json`) 존재 unit 은 variant × EVAL_DS 별 독립 skip.
+- **`stage2_eval.sh`** — `--variants` 로 `base` / `{full|lora}_base` / `{full|lora}_world_model` 선택. EVAL_DS=AC_EXP01/02/03/05 는 ID+OOD 동시 추론 → 3 섹션, MB 는 single-pair 1 섹션. **AC_EXP08 은 `run_exp08_stage2_eval()` 로 조기 위임**돼 7 버킷을 돈다 (leaf `on-AC_EXP08-<bucket>`, 버킷 선택은 `EVAL_BUCKETS` — stage1 의 `EVAL_TASKS` 와 값 공간이 겹치지 않아 **이름을 일부러 다르게** 뒀다; 같은 이름이면 stage1→stage2 래퍼에서 값이 새어 엉뚱한 leaf 를 평가한다). 채점 모드 플래그는 `ds_score_mode_flag` 위임으로 얻는다 — 목록을 인라인으로 복제하지 않는다 (하드 제약 15g). marker (`action_metrics.json`) 존재 unit 은 variant × EVAL_DS 별 독립 skip.
   - **`--epochs` 에 `0` 포함 (opt-in)**: `{full|lora}_world_model` 의 epoch-0 = stage2 미학습 베이스라인 (= stage1 merged 와 동일 모델). `{full|lora}_base` 는 stage1 계보가 없어 epoch-0 이 `base` 와 중복 → 경고 후 skip. 기본 `1,2,3` 에는 미포함.
 
 > ⓘ **merge X 변형 (`world-model-adapter`) — EXP07 한정 opt-in.** 일반 world-model variant 는 stage1 어댑터를 **merge 한** local merged dir 을 base 로 삼지만(merge O), EXP07 은 `_DATASET_CONFIG["AndroidControl_EXP07"]["stage2_adapter_variant"] = True` 로 `stage2_lora` 에 **merge 하지 않는** 변형을 하나 더 렌더한다. 그 YAML (`…/stage2_lora/{MODEL}_world-model-adapter.yaml`) 은 `model_name_or_path` 를 **원본 base 그대로** 두고 `adapter_name_or_path: __STAGE1_ADAPTER__` placeholder 만 둔다 — `stage2_train.sh` 가 런타임에 stage1 LoRA 어댑터 checkpoint 경로로 sed 치환해 base 위에 얹어 이어학습한다 (merge 스텝 없음). 산출은 `…_world-model_from_adapter-ep{E1}/` 로 `from_full`/`from_lora` 와 대칭 분리되고, HF slug 는 `_common.sh::hf_repo_id_stage2_world_model_adapter` 가 조립한다 (`…world-model-stage1-lora-epoch{E1}-stage2-lora-adapter-epoch{E2}`). eval 변형 `lora_world_model_adapter` 는 `STAGE2_EXTRA_VARIANTS` 라 **기본 sweep 에 미포함** — `--variants lora_world_model_adapter` 로 명시할 때만 채점된다.
@@ -806,6 +822,16 @@ EXP08 은 채점 경로에 **두 가지 opt-in** 이 걸린다. 둘 다 기본�
 
 > ⚠️ **함정 — 포맷별 copy 지표를 프롬프트 기준으로 읽지 마라.** diff 타깃을 raw 로 계산해야 하는 것과 **같은 이유**다 (§3 EXP08 빌드). 세 포맷의 `raw_current_state` 는 서로 **동일**해야 하며 빌더 `verify()` 가 이를 검사한다 — 다르면 포맷 간 비교 자체가 무효다.
 
+**(a-2) `_action_eval.py` 도 `--xml-schema` 를 받는다 (2026-08-28 추가).** action 채점의 click/long_press 는 "pred 좌표가 GT 좌표를 품은 element 의 bbox 안인가" 로 판정하므로 **bbox 를 못 읽으면 전 건이 오답**이 된다. `_bbox_elements` 가 `bounds="[x1,y1][x2,y2]"` 만 파싱하고 있어 EXP08 의 `data-bbox="x1 y1 x2 y2"` 를 놓쳤고, 13 개 action leaf 전부에서 click 이 `no_bbox` 로 집계되며 `cond_bbox_acc = 0.0000` 이 나왔다. `cerebra` 모드 추가 후 재채점에서 `base` 의 `step_accuracy` 0.178 → 0.448, `cond_bbox_acc` 0.0 → 0.6683 으로 바뀌었고 **base 대비 world-model 이득도 +0.106 → +0.168 로 커졌다** (버그가 이득을 과소평가하고 있었다). 옛 산출은 leaf 마다 `action_metrics.pre_cerebra.json` 으로 보존한다.
+
+> ⚠️ **함정 — "셸을 통하면 안전하다" 가 아니다.** `stage1_eval.sh` 의 action 분기는 `schema_flag=""` 로 **하드코딩**돼 있어서 채점기가 플래그를 받을 수 있게 된 뒤에도 실제로는 전달되지 않았다. 채점기에 opt-in 인자를 추가할 때는 **그 인자를 넘기는 셸 분기를 전수로 확인**하라 — 셸도 채점기도 각자 정상으로 보이는 형태의 조용한 실패다 ([AGENTS 하드 제약 15f](./AGENTS.md)).
+
+**(c) stage2 버킷 지표를 읽는 규칙 (2026-08-28 신설).** EXP08 stage2 test 는 7 버킷이고 **버킷마다 action 타입 mix 와 stage1 노출 이력이 다르다**. 두 가지를 지키지 않으면 결론이 뒤집힌다.
+
+- **`macro_step_accuracy` 를 1차 지표로 읽어라.** `step_id_s1` 은 **terminate 가 0%** 인데 `step_id_s2`·`step_ood` 는 20% 수준이다. 구조적 이유가 있다 — stage1 state 소스는 "다음 화면" 이 존재해야 하므로 종단 step 을 담지 못하고, 따라서 "state 가 본 step" 집합에는 terminate 가 원천적으로 없다. terminate 는 좌표·텍스트 없이 type 만 맞으면 정답이라 쉬운 축이고, `step_accuracy` 원값 격차의 상당 부분은 난이도가 아니라 **mix 효과**다. 같은 이유로 `stage2_train` 30K 의 terminate 비중(27.3%)이 구 15K(14.9%)보다 높다 — 사용자가 인위적 재층화를 거절하고 실제 잔여 분포를 택했으므로 **15K↔30K 비교는 규모와 분포가 함께 바뀐 이중 변수**다.
+- **`s1_state_seen` 으로 층화해라.** app 축 버킷은 stage1 **state** 노출과 교락돼 있다 (`app_both` 89.6% / `app_s1_only` 55.8% / `app_s2_only` 58.0% / `app_ood` 47.1%). 앱 그룹 간 차이를 그대로 "action 지도 효과" 로 읽으면 state 노출 효과가 섞인다. 각 레코드에 그 플래그가 있으므로 부분집합으로 잘라 다시 재는 것이 가능하다.
+- **app 축과 step 축은 서로 순수하지 않다** — 예컨대 `step_ood` 레코드의 일부는 `APP_S1_ONLY` 앱에 속한다. 교차 비교가 필요하면 `app_bucket` 라벨로 부분집합을 잡아라 (재빌드 불필요). 버킷별 실측 비율은 sidecar `stage2_train.jsonl.meta.json` 의 `buckets.*` 가 정본이다.
+
 `scripts/_prompt_sections.py` 의 `SECTION_MARKERS` 에는 EXP08 의 관측성 라벨 머리글 (`Current UI State (FULL|PARTIAL …|NOT PROVIDED):`) 이 추가돼 있다. 라벨 문자열이 기존 A/B 계열과 겹치지 않아 **추가만으로 안전**하다.
 
 ### Stage 1 보조 — `copy_baseline_metrics.json` (복사기 기준선 · similarity gain, 2026-08-11 신설)
@@ -868,11 +894,13 @@ GT 의 `action_type` 키로 type 판정 (구 `type` 키 fallback 유지). GT las
 
 정본은 `scripts/_action_eval.py`, 회귀 테스트는 `tests/test_action_eval.py` (`parse_action` / `evaluate_single` / `evaluate_predictions` 분기, unknown type 집계, `cond_*` n=0, `predict`/`output` fallback, ID+OOD 통합 집계 커버).
 
-### xy 좌표 스페이스 채점 (EXP05 전용, opt-in)
+### xy 좌표 스페이스 채점 (EXP05 계열 opt-in)
+
+> **어느 DS 가 이 모드인지의 정본은 `implicit_world_modeling.lf_registry.PIXEL_XY_DATASETS` 다** (현재 EXP05·EXP06·EXP07_v1·EXP07_v2·EXP08). `scripts/_compare_site.py::XY_FAMILY` 는 `pixel_xy_ds_keys()` 로 유도하고, `scripts/_common.sh::ds_is_pixel_xy` 는 셸 case 목록을 유지하되 `tests/test_pixel_xy_consistency.py` 가 그 원문을 파싱해 정본과의 드리프트를 실패로 잡는다. **네 번째 장소에 목록을 복제하지 마라** — 이 판정이 갈리면 채점이 **에러 없이** 전 건 오답이 된다 ([AGENTS 하드 제약 15g](./AGENTS.md); 실제로 두 번 갈렸다).
 
 EXP05 는 액션 스페이스가 xy 좌표로 통일돼 **GT 스키마가 바뀐다** — `<action>{"action":"click","coordinate":[x,y]}</action>` (키가 `action`, 구 `action_type` 과 다름; swipe 는 `coordinate1`/`coordinate2`).
 
-EXP01~04 채점 결과가 **불변**이도록 **opt-in 플래그**로 구현했다: `_action_eval.py --coord-mode {index,xy}` (기본 `index`), `_hungarian_eval.py --match-mode {index,pos}` (기본 `index`). `stage1_eval.sh` 는 **EVAL_DS=AC_EXP05 일 때만** 전달한다.
+EXP01~04 채점 결과가 **불변**이도록 **opt-in 플래그**로 구현했다: `_action_eval.py --coord-mode {index,xy}` (기본 `index`), `_hungarian_eval.py --match-mode {index,pos}` (기본 `index`). 셸은 `ds_score_mode_flag` 를 통해 위 정본 판정에 해당하는 DS 에만 전달한다 (기본값 경로를 타는 나머지 실험군의 산출물은 불변).
 
 | action | xy 모드 채점 규칙 |
 |---|---|
