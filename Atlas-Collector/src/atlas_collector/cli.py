@@ -319,6 +319,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     # today, and `--apps A` must behave the same as a full sweep.
     catalog_packages = {row.package_id for row in rows if row.is_collectable}
 
+    # Nothing on the device may be carrying state into this sweep. Each session
+    # already starts its own app cold, but that says nothing about the OTHER 47:
+    # a task left open by a previous run is what an app hands off to, and it is
+    # what the launcher intent resumes. Measured before this existed: 31 open
+    # tasks after a few attempts, and apps reached each other through them.
+    stopped = 0
+    for package in sorted(catalog_packages):
+        try:
+            adb.force_stop(package)
+            stopped += 1
+        except Exception as error:  # noqa: BLE001 - one refusal must not stop the sweep
+            print(f"  could not stop {package} ({error})")
+    print(f"stopped {stopped}/{len(catalog_packages)} catalog app(s) before starting")
+
     failures = 0
     for position, row in enumerate(targets, start=1):
         session = Session(
@@ -433,6 +447,9 @@ def cmd_reset(args: argparse.Namespace) -> int:
     indistinguishable from a consistent one, and a resumed session would
     continue the OLD observation numbering — older triples would then reference
     newer screens with nothing in the data to flag it.
+
+    ``run.log`` is deliberately NOT deleted: the data can be re-collected, the
+    record of what went wrong while collecting it cannot.
     """
     root = collection_root(args.root)
     if not root.exists():

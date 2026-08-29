@@ -98,6 +98,17 @@ def export_root(root: str | Path = DEFAULT_ROOT) -> Path:
     return collection_root(root)
 
 
+def run_log(root: str | Path = DEFAULT_ROOT) -> Path:
+    """The sweep's journal: ``{root}/run.log``.
+
+    Inside the root because everything one collection produces belongs to one
+    directory -- a log beside it is a second place to look and a second thing to
+    move. `reset` deliberately does NOT delete it: the data can be re-collected,
+    the record of what went wrong while collecting it cannot.
+    """
+    return collection_root(root) / "run.log"
+
+
 def apps_root(runtime_dir: str | Path) -> Path:
     """Root holding one directory per collected package: ``{runtime_dir}/apps``."""
     return _resolve(runtime_dir) / APPS_SUBDIR
@@ -129,5 +140,6 @@ __all__ = [
     "project_root",
     "raw_app_dir",
     "raw_root",
+    "run_log",
     "runtime_root",
 ]
