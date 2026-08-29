@@ -1,45 +1,145 @@
-"""Canonical sub-roots under the runtime root.
+"""Canonical roots for Monkey-Collector data and runtime artifacts.
 
-``runtime/`` holds two kinds of ephemeral artifact, and they are kept in
-separate sub-directories so neither has to be filtered out of the other::
+ONE COLLECTION ROOT
+===================
 
-    runtime/
-    ├── apps/{package}/     per-app session bookkeeping (metadata.json, events.jsonl,
-    │                       cost.csv, activity_coverage.csv)
-    └── logs/run_*.log      per-run loguru sinks
+Everything a run produces — intermediate and final — lives under a single root,
+by default ``data/MonkeyCollection`` (named to sit beside the sibling collector's
+``data/AtlasCollection``, which the training pipeline reads the same way)::
 
-Everything that resolves a *per-app* path goes through :func:`apps_root` — a
-single definition point, so a consumer can never write under ``apps/`` while
-another reads the bare runtime root. Note the sub-roots are siblings: iterating
-``apps_root(runtime_dir)`` yields package dirs only, with no ``logs`` entry to
-skip.
+    data/MonkeyCollection/
+        raw/{package}/          durable — collected triples (xml + png + action)
+        runtime/apps/{package}/ ephemeral — per-app session bookkeeping
+        runtime/logs/           ephemeral — per-run loguru sinks
+        stage1_train.jsonl      durable — the Stage-1 export
+        stage1_test_id.jsonl
+        stage1_test_ood.jsonl
+        images/
 
-``runtime_dir`` itself (config ``collection.runtime_dir``, CLI ``--runtime-dir``)
-stays the *root* — it is the parent both sub-roots are derived from, so it must
-not be pointed at ``runtime/apps`` directly.
+One root because a run's intermediate and final artifacts are one dataset: split
+across ``data/raw``, ``runtime`` and an export dir they can be deleted,
+copied or archived out of step, and a stale ``raw/`` beside a fresh export is
+indistinguishable from a consistent one. It also makes "throw this pilot away"
+a single removal instead of three that must all be remembered.
+
+``raw`` and ``runtime`` stay distinct SUBTREES within it: their lifetimes still
+differ (the corpus is the product, the runtime state is scaffolding), and
+:func:`apps_root` / :func:`raw_app_dir` remain the only way to resolve a per-app
+path so a consumer can never write under ``apps/`` while another reads the bare
+runtime root.
+
+Everything that resolves a per-app path goes through :func:`apps_root` /
+:func:`raw_app_dir`, so a consumer can never write under ``apps/`` while another
+reads the bare runtime root. The sub-roots are siblings: iterating
+``apps_root(runtime_dir)`` yields package dirs only, with no ``logs`` entry to skip.
+
+``project_root()`` is the anchor for the repo-relative defaults in
+``config/run.yaml``. It is derived from this file's location (``src`` layout:
+``src/monkey_collector/paths.py`` -> ``parents[2]``), which stays correct under an
+editable ``uv sync`` install.
 """
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
+#: The single collection root, relative to the project unless absolute.
+DEFAULT_ROOT = "data/MonkeyCollection"
+
+RAW_SUBDIR = "raw"
+RUNTIME_SUBDIR = "runtime"
 APPS_SUBDIR = "apps"
 LOGS_SUBDIR = "logs"
 
 
-def apps_root(runtime_dir: str | os.PathLike[str]) -> str:
+def project_root() -> Path:
+    """Monkey-Collector repo root (the directory holding ``pyproject.toml``)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def config_path(name: str = "run.yaml") -> Path:
+    """Path to a file under ``config/``. Existence is NOT checked here."""
+    return project_root() / "config" / name
+
+
+def catalog_path(name: str = "apps.csv") -> Path:
+    """Path to a file under ``catalog/``. Existence is NOT checked here."""
+    return project_root() / "catalog" / name
+
+
+def _resolve(base: str | Path) -> Path:
+    """Interpret *base* relative to the project root when it is not absolute."""
+    path = Path(base)
+    return path if path.is_absolute() else project_root() / path
+
+
+def collection_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """The single root holding everything one collection produces."""
+    return _resolve(root)
+
+
+def raw_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """Durable collection subtree: ``{root}/raw``."""
+    return collection_root(root) / RAW_SUBDIR
+
+
+def raw_app_dir(root: str | Path, package: str) -> Path:
+    """Durable per-package collection dir: ``{root}/raw/{package}``."""
+    return raw_root(root) / package
+
+
+def runtime_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """Ephemeral run-state subtree: ``{root}/runtime``."""
+    return collection_root(root) / RUNTIME_SUBDIR
+
+
+def export_root(root: str | Path = DEFAULT_ROOT) -> Path:
+    """Stage-1 export lands at the root itself, beside ``raw`` and ``runtime``."""
+    return collection_root(root)
+
+
+def run_log(root: str | Path = DEFAULT_ROOT) -> Path:
+    """The sweep's journal: ``{root}/run.log``.
+
+    Inside the root because everything one collection produces belongs to one
+    directory -- a log beside it is a second place to look and a second thing to
+    move. `reset` deliberately does NOT delete it: the data can be re-collected,
+    the record of what went wrong while collecting it cannot.
+    """
+    return collection_root(root) / "run.log"
+
+
+def apps_root(runtime_dir: str | Path) -> Path:
     """Root holding one directory per collected package: ``{runtime_dir}/apps``."""
-    return os.path.join(str(runtime_dir), APPS_SUBDIR)
+    return _resolve(runtime_dir) / APPS_SUBDIR
 
 
-def app_dir(runtime_dir: str | os.PathLike[str], package: str) -> str:
-    """Runtime directory for a single package: ``{runtime_dir}/apps/{package}``."""
-    return os.path.join(apps_root(runtime_dir), package)
+def app_dir(runtime_dir: str | Path, package: str) -> Path:
+    """Ephemeral runtime dir for a single package: ``{runtime_dir}/apps/{package}``."""
+    return apps_root(runtime_dir) / package
 
 
-def logs_root(runtime_dir: str | os.PathLike[str]) -> str:
+def logs_root(runtime_dir: str | Path) -> Path:
     """Root holding per-run log files: ``{runtime_dir}/logs``."""
-    return os.path.join(str(runtime_dir), LOGS_SUBDIR)
+    return _resolve(runtime_dir) / LOGS_SUBDIR
 
 
-__all__ = ["APPS_SUBDIR", "LOGS_SUBDIR", "app_dir", "apps_root", "logs_root"]
+__all__ = [
+    "APPS_SUBDIR",
+    "DEFAULT_ROOT",
+    "LOGS_SUBDIR",
+    "RAW_SUBDIR",
+    "RUNTIME_SUBDIR",
+    "app_dir",
+    "collection_root",
+    "apps_root",
+    "catalog_path",
+    "config_path",
+    "export_root",
+    "logs_root",
+    "project_root",
+    "raw_app_dir",
+    "raw_root",
+    "run_log",
+    "runtime_root",
+]
