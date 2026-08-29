@@ -18,6 +18,7 @@ _MC_ROOT = Path(__file__).resolve().parents[2]
 if str(_MC_ROOT) not in sys.path:
     sys.path.insert(0, str(_MC_ROOT))
 
+from catalog.app_catalog import AppJob  # noqa: E402
 from catalog.download_apks import (  # noqa: E402
     DownloadError,
     DownloadResult,
@@ -33,8 +34,6 @@ from catalog.download_apks import (  # noqa: E402
     render_missing_md,
     update_missing_ledger,
 )
-
-from monkey_collector.pipeline.app_catalog import AppJob  # noqa: E402
 
 # ── CLI ────────────────────────────────────────────────────────────────────
 

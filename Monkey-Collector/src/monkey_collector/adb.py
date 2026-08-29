@@ -325,6 +325,7 @@ class AdbClient:
 
             # Inside activities: subsection.
             # A sibling or parent section at same/lower indent ends it.
+            assert activities_indent is not None  # set whenever in_activities is True
             if stripped and indent <= activities_indent:
                 break
 

@@ -9,14 +9,8 @@
 # Experiment runs sweep several keys. Canonical git default: exploration.strategy=BFS,
 # collection.max_steps=1500, collection.action_delay_ms=1500,
 # collection.budget_mode=time, collection.max_duration=2h,
-# collection.signal_timeout_sec=12, collection.poke_delay_sec=1.5,
 # collection.max_action_repeats=8,
-# collection.max_steps_without_new_page=98,
-# screen_matching.luminance_prefilter=true, screen_matching.persist_filtered=true,
-# screen_matching.bm25_top_k=5, screen_matching.element_criterion=diff,
-# screen_matching.element_diff_max=5, screen_matching.element_jaccard_min=0.5,
-# screen_matching.page_pixel_diff_threshold=0.3,
-# screen_matching.package_guard=true. Reset to these before committing.
+# collection.max_steps_without_new_page=98. Reset to these before committing.
 
 exploration:
   # Traversal strategy. Options: DFS | BFS | GREEDY
@@ -33,8 +27,6 @@ collection:
   seed: 42
   # Delay between actions (milliseconds). Env: MC_COLLECTION_ACTION_DELAY_MS
   action_delay_ms: 1500
-  # TCP server port. Env: MC_COLLECTION_PORT
-  port: 12345
   # Durable raw-collection root (pages/observations, page_graph). Sibling of
   # data/processed, which holds the converted training artifacts.
   # Env: MC_COLLECTION_DATA_DIR
@@ -52,19 +44,6 @@ collection:
   # Wall-clock budget when budget_mode=time. Formats: 2h / 120m / 7200s / 7200
   # (bare number = seconds). Env: MC_COLLECTION_MAX_DURATION
   max_duration: 2h
-  # Per-signal wait (seconds) before a stuck screen escalates: nudge on timeouts
-  # 1-2, force-relaunch on the 3rd (recovery.MAX_SIGNAL_TIMEOUTS), so worst-case
-  # one stuck episode waits signal_timeout_sec×3. Env: MC_COLLECTION_SIGNAL_TIMEOUT_SEC
-  signal_timeout_sec: 12
-  # Silence (seconds) inside one signal wait after which the server pokes the
-  # client with a CAPTURE request (up to recovery.MAX_POKES_PER_WAIT = 2 times).
-  # The client only pushes a frame when the accessibility service sees a change,
-  # so a settled screen that fired no event stays silent for the whole timeout
-  # window even though it has a frame to give. The pokes are carved OUT of
-  # signal_timeout_sec, so the total wait — and the escalation timing above — is
-  # unchanged. 0 or negative (or >= signal_timeout_sec) disables poking.
-  # Env: MC_COLLECTION_POKE_DELAY_SEC
-  poke_delay_sec: 1.5
   # Repeat-action circuit breaker: max times the same (page, action, element)
   # may execute on a page before the next attempt breaks out via back/relaunch,
   # killing the fruitless page ping-pong behind R2 volume-not-diversity. Counter
@@ -86,52 +65,3 @@ llm:
   # The LLM is used for input-text generation ONLY.
   # Env: MC_LLM_INPUT_MODE
   input_mode: api
-
-screen_matching:
-  # Luminance prefilter (MobileGPT-V2 port). Governs the tighter OBSERVATION
-  # dedup AND supplies the fingerprints for the PAGE-level pixel gate. Off ⇒ the
-  # pixel gate abstains and the element criterion alone decides a merge. Default ON.
-  # Env: MC_SCREEN_MATCHING_LUMINANCE_PREFILTER
-  luminance_prefilter: true
-  # Per-pixel brightness |ΔY| above which a pixel counts as "changed" (0–255).
-  # Env: MC_SCREEN_MATCHING_LUMINANCE_THRESHOLD
-  luminance_threshold: 10
-  # Changed-pixel fraction below which two renders are the same OBSERVATION.
-  # Env: MC_SCREEN_MATCHING_SCREENSHOT_DIFF_THRESHOLD
-  screenshot_diff_threshold: 0.02
-  # Downscale width (px) for the luminance fingerprint.
-  # Env: MC_SCREEN_MATCHING_LUMINANCE_LOW_RES_WIDTH
-  luminance_low_res_width: 100
-  # Persist a prefilter/dedup revisit as its OWN fresh observation (per-visit
-  # chain pages/{page_key}/0,1,2,...) instead of writing no files. true = filtered
-  # revisits are saved; false = restore no-write-on-revisit dedup. Default ON.
-  # Env: MC_SCREEN_MATCHING_PERSIST_FILTERED
-  persist_filtered: true
-  # --- BM25 unique-page matching (Mobile3M mechanism) ---
-  # BM25 candidate pages verified per screen (paper: top-5; reference code: 1).
-  # Env: MC_SCREEN_MATCHING_BM25_TOP_K
-  bm25_top_k: 5
-  # Element-set same-page criterion. Options: diff | jaccard
-  #   diff:    |A △ B| < element_diff_max      (paper default)
-  #   jaccard: Jaccard(A, B) > element_jaccard_min  (reference code)
-  # Env: MC_SCREEN_MATCHING_ELEMENT_CRITERION
-  element_criterion: diff
-  # Max differing element-lines to still count as the same page ('diff' mode).
-  # Env: MC_SCREEN_MATCHING_ELEMENT_DIFF_MAX
-  element_diff_max: 5
-  # Min element-line Jaccard to count as the same page ('jaccard' mode).
-  # Env: MC_SCREEN_MATCHING_ELEMENT_JACCARD_MIN
-  element_jaccard_min: 0.5
-  # Changed-pixel fraction below which the pixel gate confirms a page merge.
-  # Env: MC_SCREEN_MATCHING_PAGE_PIXEL_DIFF_THRESHOLD
-  page_pixel_diff_threshold: 0.3
-  # Same-package merge guard. A BM25 merge additionally requires the candidate
-  # page to have been minted under the SAME package as the current screen — the
-  # merge path never checked which APP a screen belonged to (only the structural
-  # pre-filter keys on the activity), so a launcher/home frame sharing a few
-  # generic element-lines could merge into an app's page (measured in the live
-  # corpora). Abstains when either package is unknown
-  # (fail-open: a missing activity label must not fragment a page). Guards the
-  # WHOLE merge path, every candidate alike. true | false.
-  # Env: MC_SCREEN_MATCHING_PACKAGE_GUARD
-  package_guard: true

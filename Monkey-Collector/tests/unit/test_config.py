@@ -26,23 +26,11 @@ def _full_args(**overrides) -> argparse.Namespace:
         steps=None,
         duration=None,
         budget_mode=None,
-        signal_timeout=None,
         seed=None,
         delay=None,
-        port=None,
         data_dir=None,
         runtime_dir=None,
         input_mode=None,
-        luminance_prefilter=None,
-        luminance_threshold=None,
-        screenshot_diff_threshold=None,
-        luminance_low_res_width=None,
-        persist_filtered=None,
-        bm25_top_k=None,
-        element_criterion=None,
-        element_diff_max=None,
-        element_jaccard_min=None,
-        page_pixel_diff_threshold=None,
         config=None,
     )
     base.update(overrides)
@@ -57,26 +45,13 @@ def test_builtin_defaults_no_yaml():
     assert cfg.collection.max_steps == 1500
     assert cfg.collection.seed == 42
     assert cfg.collection.action_delay_ms == 1500
-    assert cfg.collection.port == 12345
     assert cfg.collection.data_dir == "data/raw"
     assert cfg.collection.runtime_dir == "runtime"
     assert cfg.collection.budget_mode == "time"
     assert cfg.collection.max_duration_sec == 7200
-    assert cfg.collection.signal_timeout_sec == 12.0
-    assert cfg.collection.poke_delay_sec == 1.5
     assert cfg.collection.max_action_repeats == 8
     assert cfg.collection.max_steps_without_new_page == 98
     assert cfg.llm.input_mode == "api"
-    assert cfg.screen_matching.luminance_prefilter is True
-    assert cfg.screen_matching.luminance_threshold == 10
-    assert cfg.screen_matching.screenshot_diff_threshold == 0.02
-    assert cfg.screen_matching.luminance_low_res_width == 100
-    assert cfg.screen_matching.persist_filtered is True
-    assert cfg.screen_matching.bm25_top_k == 5
-    assert cfg.screen_matching.element_criterion == "diff"
-    assert cfg.screen_matching.element_diff_max == 5
-    assert cfg.screen_matching.element_jaccard_min == 0.5
-    assert cfg.screen_matching.page_pixel_diff_threshold == 0.3
 
 
 def test_valid_strategies_set():
@@ -118,10 +93,8 @@ def test_env_overrides_yaml(tmp_path, monkeypatch):
 
 def test_env_int_coercion(monkeypatch):
     monkeypatch.setenv("MC_COLLECTION_MAX_STEPS", "321")
-    monkeypatch.setenv("MC_COLLECTION_PORT", "55555")
     cfg = load_run_config(path=NONEXISTENT)
     assert cfg.collection.max_steps == 321
-    assert cfg.collection.port == 55555
 
 
 def test_env_no_progress_guard_coercion(monkeypatch):
@@ -140,54 +113,6 @@ def test_no_progress_guards_non_positive_kept_as_disable(monkeypatch):
     cfg = load_run_config(path=NONEXISTENT)
     assert cfg.collection.max_action_repeats == 0
     assert cfg.collection.max_steps_without_new_page == -1
-
-
-def test_env_luminance_coercion(monkeypatch):
-    monkeypatch.setenv("MC_SCREEN_MATCHING_LUMINANCE_PREFILTER", "off")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_LUMINANCE_THRESHOLD", "25")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_SCREENSHOT_DIFF_THRESHOLD", "0.1")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_LUMINANCE_LOW_RES_WIDTH", "64")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_PERSIST_FILTERED", "off")
-    cfg = load_run_config(path=NONEXISTENT)
-    assert cfg.screen_matching.luminance_prefilter is False
-    assert cfg.screen_matching.luminance_threshold == 25
-    assert cfg.screen_matching.screenshot_diff_threshold == 0.1
-    assert cfg.screen_matching.luminance_low_res_width == 64
-    assert cfg.screen_matching.persist_filtered is False
-
-
-def test_env_bm25_matching_coercion(monkeypatch):
-    monkeypatch.setenv("MC_SCREEN_MATCHING_BM25_TOP_K", "3")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_ELEMENT_CRITERION", "jaccard")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_ELEMENT_DIFF_MAX", "8")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_ELEMENT_JACCARD_MIN", "0.7")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_PAGE_PIXEL_DIFF_THRESHOLD", "0.25")
-    cfg = load_run_config(path=NONEXISTENT)
-    assert cfg.screen_matching.bm25_top_k == 3
-    assert cfg.screen_matching.element_criterion == "jaccard"
-    assert cfg.screen_matching.element_diff_max == 8
-    assert cfg.screen_matching.element_jaccard_min == 0.7
-    assert cfg.screen_matching.page_pixel_diff_threshold == 0.25
-
-
-def test_invalid_element_criterion_falls_back_to_diff(monkeypatch):
-    monkeypatch.setenv("MC_SCREEN_MATCHING_ELEMENT_CRITERION", "cosine")
-    cfg = load_run_config(path=NONEXISTENT)
-    assert cfg.screen_matching.element_criterion == "diff"
-
-
-def test_env_bool_coercion(monkeypatch):
-    monkeypatch.setenv("MC_SCREEN_MATCHING_PACKAGE_GUARD", "false")
-    cfg = load_run_config(path=NONEXISTENT)
-    assert cfg.screen_matching.package_guard is False
-
-
-def test_env_bool_coercion_truthy(tmp_path, monkeypatch):
-    # A yaml-disabled knob flipped back on by a truthy env string ("on").
-    path = _write_yaml(tmp_path, "screen_matching:\n  package_guard: false\n")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_PACKAGE_GUARD", "on")
-    cfg = load_run_config(path=path)
-    assert cfg.screen_matching.package_guard is True
 
 
 def test_mc_config_path_env_respected(tmp_path, monkeypatch):
@@ -250,18 +175,14 @@ def test_cli_invalid_strategy_falls_back_to_greedy():
 def test_no_state_leak_across_calls(monkeypatch):
     """An env override with no YAML must not mutate the module-global defaults."""
     monkeypatch.setenv("MC_COLLECTION_MAX_STEPS", "999")
-    monkeypatch.setenv("MC_SCREEN_MATCHING_PACKAGE_GUARD", "false")
     first = load_run_config(path=NONEXISTENT)
     assert first.collection.max_steps == 999
-    assert first.screen_matching.package_guard is False
 
-    # Remove the env vars; a fresh load must return the true builtin values,
-    # not the previously-applied overrides.
+    # Remove the env var; a fresh load must return the true builtin value,
+    # not the previously-applied override.
     monkeypatch.delenv("MC_COLLECTION_MAX_STEPS")
-    monkeypatch.delenv("MC_SCREEN_MATCHING_PACKAGE_GUARD")
     second = load_run_config(path=NONEXISTENT)
     assert second.collection.max_steps == 1500
-    assert second.screen_matching.package_guard is True
 
 
 def test_cli_full_override():
@@ -273,85 +194,18 @@ def test_cli_full_override():
             steps=10,
             seed=7,
             delay=250,
-            port=4000,
             data_dir="/tmp/out",
             runtime_dir="/tmp/rt",
             input_mode="random",
-            luminance_prefilter="off",
-            luminance_threshold=30,
-            screenshot_diff_threshold=0.05,
-            luminance_low_res_width=80,
-            persist_filtered="off",
-            bm25_top_k=7,
-            element_criterion="jaccard",
-            element_diff_max=9,
-            element_jaccard_min=0.6,
-            page_pixel_diff_threshold=0.2,
         ),
     )
     assert cfg.exploration.strategy == "GREEDY"
     assert cfg.collection.max_steps == 10
     assert cfg.collection.seed == 7
     assert cfg.collection.action_delay_ms == 250
-    assert cfg.collection.port == 4000
     assert cfg.collection.data_dir == "/tmp/out"
     assert cfg.collection.runtime_dir == "/tmp/rt"
     assert cfg.llm.input_mode == "random"
-    assert cfg.screen_matching.luminance_prefilter is False
-    assert cfg.screen_matching.luminance_threshold == 30
-    assert cfg.screen_matching.screenshot_diff_threshold == 0.05
-    assert cfg.screen_matching.luminance_low_res_width == 80
-    assert cfg.screen_matching.persist_filtered is False
-    assert cfg.screen_matching.bm25_top_k == 7
-    assert cfg.screen_matching.element_criterion == "jaccard"
-    assert cfg.screen_matching.element_diff_max == 9
-    assert cfg.screen_matching.element_jaccard_min == 0.6
-    assert cfg.screen_matching.page_pixel_diff_threshold == 0.2
-
-
-def test_cli_element_criterion_normalised():
-    cfg = load_run_config(path=NONEXISTENT)
-    valid = merge_with_cli_args(cfg, _full_args(element_criterion="jaccard"))
-    assert valid.screen_matching.element_criterion == "jaccard"
-    invalid = merge_with_cli_args(cfg, _full_args(element_criterion="cosine"))
-    assert invalid.screen_matching.element_criterion == "diff"
-
-
-def test_cli_luminance_prefilter_on_off():
-    cfg = load_run_config(path=NONEXISTENT)
-    off = merge_with_cli_args(cfg, _full_args(luminance_prefilter="off"))
-    assert off.screen_matching.luminance_prefilter is False
-    on = merge_with_cli_args(cfg, _full_args(luminance_prefilter="on"))
-    assert on.screen_matching.luminance_prefilter is True
-
-
-def test_cli_persist_filtered_on_off():
-    cfg = load_run_config(path=NONEXISTENT)
-    off = merge_with_cli_args(cfg, _full_args(persist_filtered="off"))
-    assert off.screen_matching.persist_filtered is False
-    on = merge_with_cli_args(cfg, _full_args(persist_filtered="on"))
-    assert on.screen_matching.persist_filtered is True
-
-
-def test_legacy_screen_matching_keys_are_ignored(tmp_path, monkeypatch):
-    legacy_cluster = "_".join(("cluster", "merge", "tolerance"))
-    legacy_expand = "_".join(("max", "expand", "iters"))
-    path = _write_yaml(
-        tmp_path,
-        (
-            "screen_matching:\n"
-            f"  {legacy_cluster}: 0.9\n"
-            f"  {legacy_expand}: 7\n"
-            "  luminance_prefilter: false\n"
-        ),
-    )
-    monkeypatch.setenv("MC_SCREEN_MATCHING_CLUSTER_MERGE_TOLERANCE", "0.45")
-
-    cfg = load_run_config(path=path)
-
-    assert cfg.screen_matching.luminance_prefilter is False
-    assert not hasattr(cfg.screen_matching, legacy_cluster)
-    assert not hasattr(cfg.screen_matching, legacy_expand)
 
 
 # ── parse_duration ──
@@ -420,62 +274,6 @@ def test_invalid_budget_mode_falls_back_to_time(monkeypatch):
     monkeypatch.setenv("MC_COLLECTION_BUDGET_MODE", "bogus")
     cfg = load_run_config(path=NONEXISTENT)
     assert cfg.collection.budget_mode == "time"
-
-
-# ── signal_timeout_sec (YAML + env + CLI + non-positive fallback) ──
-
-def test_yaml_signal_timeout_overrides_builtin(tmp_path):
-    path = _write_yaml(tmp_path, "collection:\n  signal_timeout_sec: 8\n")
-    cfg = load_run_config(path=path)
-    assert cfg.collection.signal_timeout_sec == 8.0
-
-
-def test_env_signal_timeout_coercion(monkeypatch):
-    monkeypatch.setenv("MC_COLLECTION_SIGNAL_TIMEOUT_SEC", "20")
-    cfg = load_run_config(path=NONEXISTENT)
-    assert cfg.collection.signal_timeout_sec == 20.0
-
-
-def test_non_positive_signal_timeout_falls_back_to_12(tmp_path):
-    path = _write_yaml(tmp_path, "collection:\n  signal_timeout_sec: 0\n")
-    cfg = load_run_config(path=path)
-    assert cfg.collection.signal_timeout_sec == 12.0
-
-    neg = _write_yaml(tmp_path, "collection:\n  signal_timeout_sec: -5\n")
-    cfg2 = load_run_config(path=neg)
-    assert cfg2.collection.signal_timeout_sec == 12.0
-
-
-def test_cli_signal_timeout_override():
-    cfg = load_run_config(path=NONEXISTENT)
-    cfg = merge_with_cli_args(cfg, _full_args(signal_timeout=20.0))
-    assert cfg.collection.signal_timeout_sec == 20.0
-
-
-# ── poke_delay_sec (YAML + env; non-positive is the documented disable) ──
-
-def test_yaml_poke_delay_overrides_builtin(tmp_path):
-    path = _write_yaml(tmp_path, "collection:\n  poke_delay_sec: 3\n")
-    cfg = load_run_config(path=path)
-    assert cfg.collection.poke_delay_sec == 3.0
-
-
-def test_env_poke_delay_coercion(monkeypatch):
-    monkeypatch.setenv("MC_COLLECTION_POKE_DELAY_SEC", "0.5")
-    cfg = load_run_config(path=NONEXISTENT)
-    assert cfg.collection.poke_delay_sec == 0.5
-
-
-def test_non_positive_poke_delay_is_preserved(tmp_path):
-    # Unlike signal_timeout_sec, a non-positive poke_delay_sec is NOT clamped:
-    # it is the documented way to disable poking, so it must survive intact.
-    path = _write_yaml(tmp_path, "collection:\n  poke_delay_sec: 0\n")
-    cfg = load_run_config(path=path)
-    assert cfg.collection.poke_delay_sec == 0.0
-
-    neg = _write_yaml(tmp_path, "collection:\n  poke_delay_sec: -1\n")
-    cfg2 = load_run_config(path=neg)
-    assert cfg2.collection.poke_delay_sec == -1.0
 
 
 # ── CLI: budget-mode / duration resolution (D2) ──

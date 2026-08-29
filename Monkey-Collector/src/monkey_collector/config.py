@@ -31,32 +31,15 @@ _BUILTIN_DEFAULTS: dict = {
         "max_steps": 1500,
         "seed": 42,
         "action_delay_ms": 1500,
-        "port": 12345,
         "data_dir": "data/raw",
         "runtime_dir": "runtime",
         "budget_mode": "time",
         "max_duration": "2h",
-        "signal_timeout_sec": 12.0,
-        "poke_delay_sec": 1.5,
         "max_action_repeats": 8,
         "max_steps_without_new_page": 98,
     },
     "llm": {
         "input_mode": "api",
-    },
-    "screen_matching": {
-        "luminance_prefilter": True,
-        "luminance_threshold": 10,
-        "screenshot_diff_threshold": 0.02,
-        "luminance_low_res_width": 100,
-        "persist_filtered": True,
-        # BM25 unique-page matching (Mobile3M mechanism).
-        "bm25_top_k": 5,
-        "element_criterion": "diff",
-        "element_diff_max": 5,
-        "element_jaccard_min": 0.5,
-        "page_pixel_diff_threshold": 0.3,
-        "package_guard": True,
     },
 }
 
@@ -80,7 +63,6 @@ class CollectionConfig:
     max_steps: int = 1500
     seed: int = 42
     action_delay_ms: int = 1500
-    port: int = 12345
     data_dir: str = "data/raw"
     # Runtime ROOT: per-app state under {root}/apps/, run logs under {root}/logs/.
     runtime_dir: str = "runtime"
@@ -88,15 +70,6 @@ class CollectionConfig:
     # (product default). "steps": run until max_steps actions (legacy).
     budget_mode: str = "time"
     max_duration_sec: int = 7200
-    # Per-signal wait before a stuck episode escalates (nudge → force-relaunch).
-    # Env: MC_COLLECTION_SIGNAL_TIMEOUT_SEC. See recovery.MAX_SIGNAL_TIMEOUTS.
-    signal_timeout_sec: float = 12.0
-    # Silence (seconds) inside one signal wait after which the server pokes the
-    # client with CAPTURE (up to recovery.MAX_POKES_PER_WAIT times). The pokes
-    # are carved out of signal_timeout_sec, so the total wait is unchanged. Env:
-    # MC_COLLECTION_POKE_DELAY_SEC. 0 or negative — or >= signal_timeout_sec —
-    # disables poking (single full-timeout wait).
-    poke_delay_sec: float = 1.5
     # Repeat-action circuit breaker (D2): max times the same
     # (page_key, action_type, element_index) may execute on a page before the
     # next attempt breaks out via back/relaunch. Env:
@@ -117,35 +90,10 @@ class LlmConfig:
 
 
 @dataclass
-class ScreenMatchingConfig:
-    # Luminance prefilter (MobileGPT-V2 port). Governs the tighter OBSERVATION
-    # identity dedup + the PAGE-level pixel gate's fingerprints. Default ON.
-    luminance_prefilter: bool = True
-    luminance_threshold: int = 10           # per-pixel |ΔY| change cutoff (0–255)
-    screenshot_diff_threshold: float = 0.02  # changed-pixel fraction → same OBSERVATION
-    luminance_low_res_width: int = 100       # fingerprint downscale width (px)
-    # Persist a prefilter/dedup revisit as its OWN fresh observation (per-visit
-    # chain) instead of writing nothing. Default ON — filtered screens are saved.
-    persist_filtered: bool = True
-    # BM25 unique-page matching (Mobile3M mechanism).
-    bm25_top_k: int = 5                       # BM25 candidates to verify per screen
-    element_criterion: str = "diff"           # "diff" (|A△B|<max) | "jaccard" (>min)
-    element_diff_max: int = 5                 # symmetric-diff cutoff → same page
-    element_jaccard_min: float = 0.5          # Jaccard floor → same page ("jaccard")
-    page_pixel_diff_threshold: float = 0.3    # PAGE-level pixel gate (changed frac)
-    # Same-package merge guard: a BM25 merge requires the candidate page to have
-    # been minted under the SAME package as the current screen (abstains when
-    # either package is unknown). Blocks cross-app merges (launcher home frame →
-    # an app's page); measured in the pre-fix corpora. Default ON.
-    package_guard: bool = True
-
-
-@dataclass
 class RunConfig:
     exploration: ExplorationConfig
     collection: CollectionConfig
     llm: LlmConfig
-    screen_matching: ScreenMatchingConfig
 
 
 # ---------------------------------------------------------------------------
@@ -184,24 +132,6 @@ def _normalize_strategy(value: object, *, source: str) -> str:
             ", ".join(sorted(VALID_STRATEGIES)),
         )
         return "GREEDY"
-    return s
-
-
-VALID_ELEMENT_CRITERIA: frozenset[str] = frozenset({"diff", "jaccard"})
-
-
-def _normalize_criterion(value: object, *, source: str) -> str:
-    """Lower + validate an element criterion; fall back to "diff" if invalid."""
-    s = str(value).strip().lower()
-    if s not in VALID_ELEMENT_CRITERIA:
-        logger.warning(
-            "Unknown element_criterion %r (from %s) — falling back to 'diff'. "
-            "Valid options: %s",
-            value,
-            source,
-            ", ".join(sorted(VALID_ELEMENT_CRITERIA)),
-        )
-        return "diff"
     return s
 
 
@@ -277,27 +207,13 @@ def _apply_env_overrides(raw: dict) -> dict:
         ("MC_COLLECTION_MAX_STEPS",                  "collection",      "max_steps",                 "int"),
         ("MC_COLLECTION_SEED",                       "collection",      "seed",                      "int"),
         ("MC_COLLECTION_ACTION_DELAY_MS",            "collection",      "action_delay_ms",            "int"),
-        ("MC_COLLECTION_PORT",                       "collection",      "port",                      "int"),
         ("MC_COLLECTION_DATA_DIR",                   "collection",      "data_dir",                  "str"),
         ("MC_COLLECTION_RUNTIME_DIR",                "collection",      "runtime_dir",               "str"),
         ("MC_COLLECTION_BUDGET_MODE",                "collection",      "budget_mode",               "str"),
         ("MC_COLLECTION_MAX_DURATION",               "collection",      "max_duration",              "str"),
-        ("MC_COLLECTION_SIGNAL_TIMEOUT_SEC",         "collection",      "signal_timeout_sec",        "float"),
-        ("MC_COLLECTION_POKE_DELAY_SEC",             "collection",      "poke_delay_sec",            "float"),
         ("MC_COLLECTION_MAX_ACTION_REPEATS",         "collection",      "max_action_repeats",        "int"),
         ("MC_COLLECTION_MAX_STEPS_WITHOUT_NEW_PAGE", "collection",      "max_steps_without_new_page", "int"),
         ("MC_LLM_INPUT_MODE",                        "llm",             "input_mode",                "str"),
-        ("MC_SCREEN_MATCHING_LUMINANCE_PREFILTER",     "screen_matching", "luminance_prefilter",       "bool"),
-        ("MC_SCREEN_MATCHING_LUMINANCE_THRESHOLD",     "screen_matching", "luminance_threshold",       "int"),
-        ("MC_SCREEN_MATCHING_SCREENSHOT_DIFF_THRESHOLD", "screen_matching", "screenshot_diff_threshold", "float"),
-        ("MC_SCREEN_MATCHING_LUMINANCE_LOW_RES_WIDTH", "screen_matching", "luminance_low_res_width",   "int"),
-        ("MC_SCREEN_MATCHING_PERSIST_FILTERED",        "screen_matching", "persist_filtered",          "bool"),
-        ("MC_SCREEN_MATCHING_BM25_TOP_K",              "screen_matching", "bm25_top_k",                "int"),
-        ("MC_SCREEN_MATCHING_ELEMENT_CRITERION",       "screen_matching", "element_criterion",         "str"),
-        ("MC_SCREEN_MATCHING_ELEMENT_DIFF_MAX",        "screen_matching", "element_diff_max",          "int"),
-        ("MC_SCREEN_MATCHING_ELEMENT_JACCARD_MIN",     "screen_matching", "element_jaccard_min",       "float"),
-        ("MC_SCREEN_MATCHING_PAGE_PIXEL_DIFF_THRESHOLD", "screen_matching", "page_pixel_diff_threshold", "float"),
-        ("MC_SCREEN_MATCHING_PACKAGE_GUARD",           "screen_matching", "package_guard",             "bool"),
     ]
 
     # raw is already an isolated deep copy (see load_run_config); mutate in place.
@@ -324,17 +240,8 @@ def _from_raw(raw: dict) -> RunConfig:
     expl = raw.get("exploration", {})
     coll = raw.get("collection", {})
     llm  = raw.get("llm", {})
-    sm   = raw.get("screen_matching", {})
 
     strategy = _normalize_strategy(expl.get("strategy", "BFS"), source="config")
-
-    signal_timeout_sec = float(coll.get("signal_timeout_sec", 12.0))
-    if signal_timeout_sec <= 0:
-        logger.warning(
-            "Non-positive signal_timeout_sec %r — falling back to 12.0",
-            signal_timeout_sec,
-        )
-        signal_timeout_sec = 12.0
 
     return RunConfig(
         exploration=ExplorationConfig(
@@ -344,37 +251,15 @@ def _from_raw(raw: dict) -> RunConfig:
             max_steps=int(coll.get("max_steps", 1500)),
             seed=int(coll.get("seed", 42)),
             action_delay_ms=int(coll.get("action_delay_ms", 1500)),
-            port=int(coll.get("port", 12345)),
             data_dir=str(coll.get("data_dir", "data/raw")),
             runtime_dir=str(coll.get("runtime_dir", "runtime")),
             budget_mode=_normalize_budget_mode(coll.get("budget_mode", "time"), source="config"),
             max_duration_sec=parse_duration(coll.get("max_duration", "2h")),
-            signal_timeout_sec=signal_timeout_sec,
-            # No non-positive fallback here (unlike signal_timeout_sec above):
-            # a 0-or-negative value is the documented way to DISABLE poking and
-            # the D2/D3 guards (tests/experiments), so it is a valid input, not
-            # an error.
-            poke_delay_sec=float(coll.get("poke_delay_sec", 1.5)),
             max_action_repeats=int(coll.get("max_action_repeats", 8)),
             max_steps_without_new_page=int(coll.get("max_steps_without_new_page", 98)),
         ),
         llm=LlmConfig(
             input_mode=str(llm.get("input_mode", "api")),
-        ),
-        screen_matching=ScreenMatchingConfig(
-            luminance_prefilter=_coerce_bool(sm.get("luminance_prefilter", True)),
-            luminance_threshold=int(sm.get("luminance_threshold", 10)),
-            screenshot_diff_threshold=float(sm.get("screenshot_diff_threshold", 0.02)),
-            luminance_low_res_width=int(sm.get("luminance_low_res_width", 100)),
-            persist_filtered=_coerce_bool(sm.get("persist_filtered", True)),
-            bm25_top_k=int(sm.get("bm25_top_k", 5)),
-            element_criterion=_normalize_criterion(
-                sm.get("element_criterion", "diff"), source="config"
-            ),
-            element_diff_max=int(sm.get("element_diff_max", 5)),
-            element_jaccard_min=float(sm.get("element_jaccard_min", 0.5)),
-            page_pixel_diff_threshold=float(sm.get("page_pixel_diff_threshold", 0.3)),
-            package_guard=_coerce_bool(sm.get("package_guard", True)),
         ),
     )
 
@@ -419,7 +304,6 @@ def merge_with_cli_args(config: RunConfig, args: argparse.Namespace) -> RunConfi
     expl = config.exploration
     coll = config.collection
     llm  = config.llm
-    sm   = config.screen_matching
 
     # exploration.strategy (validated like the YAML/env paths)
     strategy_arg = getattr(args, "strategy", None)
@@ -432,7 +316,6 @@ def merge_with_cli_args(config: RunConfig, args: argparse.Namespace) -> RunConfi
     budget_mode_arg = getattr(args, "budget_mode", None)
     seed = getattr(args, "seed", None)
     delay = getattr(args, "delay", None)
-    port = getattr(args, "port", None)
     data_dir = getattr(args, "data_dir", None)
     runtime_dir = getattr(args, "runtime_dir", None)
     if steps is not None:
@@ -460,56 +343,14 @@ def merge_with_cli_args(config: RunConfig, args: argparse.Namespace) -> RunConfi
         coll = replace(coll, seed=seed)
     if delay is not None:
         coll = replace(coll, action_delay_ms=delay)
-    if port is not None:
-        coll = replace(coll, port=port)
     if data_dir is not None:
         coll = replace(coll, data_dir=data_dir)
     if runtime_dir is not None:
         coll = replace(coll, runtime_dir=runtime_dir)
-    signal_timeout = getattr(args, "signal_timeout", None)
-    if signal_timeout is not None:
-        coll = replace(coll, signal_timeout_sec=float(signal_timeout))
 
     # llm
     input_mode = getattr(args, "input_mode", None)
     if input_mode is not None:
         llm = replace(llm, input_mode=input_mode)
 
-    # screen_matching
-    # luminance prefilter: --luminance-prefilter uses the {on,off} string sentinel;
-    # the rest are typed scalars.
-    lum = getattr(args, "luminance_prefilter", None)
-    lt = getattr(args, "luminance_threshold", None)
-    sdt = getattr(args, "screenshot_diff_threshold", None)
-    lrw = getattr(args, "luminance_low_res_width", None)
-    if lum is not None:
-        sm = replace(sm, luminance_prefilter=(lum == "on"))
-    if lt is not None:
-        sm = replace(sm, luminance_threshold=lt)
-    if sdt is not None:
-        sm = replace(sm, screenshot_diff_threshold=sdt)
-    if lrw is not None:
-        sm = replace(sm, luminance_low_res_width=lrw)
-    # persist_filtered: {on,off} string sentinel (like --luminance-prefilter).
-    pf = getattr(args, "persist_filtered", None)
-    if pf is not None:
-        sm = replace(sm, persist_filtered=(pf == "on"))
-
-    # BM25 unique-page matching knobs.
-    btk = getattr(args, "bm25_top_k", None)
-    ecrit = getattr(args, "element_criterion", None)
-    edm = getattr(args, "element_diff_max", None)
-    ejm = getattr(args, "element_jaccard_min", None)
-    ppdt = getattr(args, "page_pixel_diff_threshold", None)
-    if btk is not None:
-        sm = replace(sm, bm25_top_k=btk)
-    if ecrit is not None:
-        sm = replace(sm, element_criterion=_normalize_criterion(ecrit, source="--element-criterion"))
-    if edm is not None:
-        sm = replace(sm, element_diff_max=edm)
-    if ejm is not None:
-        sm = replace(sm, element_jaccard_min=ejm)
-    if ppdt is not None:
-        sm = replace(sm, page_pixel_diff_threshold=ppdt)
-
-    return RunConfig(exploration=expl, collection=coll, llm=llm, screen_matching=sm)
+    return RunConfig(exploration=expl, collection=coll, llm=llm)

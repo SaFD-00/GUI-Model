@@ -1,4 +1,4 @@
-"""Pure domain models: actions, tracking, page graph."""
+"""Pure domain models: actions, tracking."""
 
 from monkey_collector.domain.actions import (
     Action,
@@ -11,12 +11,6 @@ from monkey_collector.domain.actions import (
 )
 from monkey_collector.domain.activity_coverage import ActivityCoverageTracker
 from monkey_collector.domain.cost_tracker import CostTracker
-from monkey_collector.domain.page_graph import (
-    PageGraph,
-    PageNode,
-    TransitionEdge,
-    build_graph_from_session,
-)
 
 __all__ = [
     "Action",
@@ -28,8 +22,4 @@ __all__ = [
     "LongPress",
     "ActivityCoverageTracker",
     "CostTracker",
-    "PageGraph",
-    "PageNode",
-    "TransitionEdge",
-    "build_graph_from_session",
 ]
