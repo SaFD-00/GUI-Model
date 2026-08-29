@@ -6,8 +6,10 @@ yielding a component name that never matched a declared activity and froze
 coverage at 1/N. The parser restricts the component-name character class so
 ``}`` and whitespace act as boundaries.
 
-Call the staticmethod directly — AdbClient.__init__ resolves an emulator serial
-and must never run in a unit test.
+Call the staticmethod directly: these pin the parse helper in isolation, given
+raw ``dumpsys`` text. The shell-level path (``get_current_activity``, and its
+``AdbError``-swallowing when ``grep`` finds no match) is covered in
+``test_adb.py``.
 """
 
 from monkey_collector.adb import AdbClient

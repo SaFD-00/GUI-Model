@@ -9,8 +9,9 @@ dumpsys input_method`` run (Pixel6-2, API 33, google_apis image), captured
   shown:  "mShowRequested=true mShowExplicitlyRequested=false
             mShowForced=false mInputShown=true"
 
-Call the staticmethod directly — AdbClient.__init__ resolves an emulator
-serial and must never run in a unit test.
+Call the staticmethod directly: these pin the parse helper in isolation, in
+front of ``dumpsys`` text captured live. The shell-level paths (``is_keyboard_shown``,
+its ``AdbError``-swallowing, and construction) are covered in ``test_adb.py``.
 """
 
 from monkey_collector.adb import AdbClient
