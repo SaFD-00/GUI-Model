@@ -73,9 +73,9 @@ host-pull 은 기다릴 이유가 없다. 화면이 멎었는지는 호스트가
 | `domain/cost_tracker.py` | LLM 토큰 · 비용 CSV | DONE |
 | `llm/client.py` | OpenRouter Chat Completions (`qwen/qwen3.8-flash`) | DONE |
 | `text_input.py` | `input_text` action 의 입력값 생성 | DONE |
-| `semantic.py` | semantic state / element, same-function 그룹핑 | M3 |
-| `aig.py` | AIG 그래프 + `graph.json` | M3 |
-| `explore.py` | LLM-Explorer 탐색 정책 | M3 |
+| `semantic.py` | semantic state / element, same-function 그룹핑 | M3b |
+| `aig.py` | AIG 그래프 + `graph.json` | DONE |
+| `explore.py` | LLM-Explorer 탐색 정책 | M3a DONE (element·네비게이션); 정책은 M3b |
 | `loop.py` | host-pull 수집 루프 | M4 |
 | `export.py` / `_exp08_prompt.py` | EXP08 Stage-1 export | M5 |
 
