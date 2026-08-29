@@ -2,10 +2,31 @@
 
 import csv
 import os
+from contextlib import contextmanager
 
 import pytest
+from loguru import logger
 
 from monkey_collector.domain.cost_tracker import MODEL_PRICING, CostTracker
+
+
+@contextmanager
+def captured_warnings():
+    """Collect loguru WARNING messages emitted inside the block.
+
+    tests/conftest.py disables the "monkey_collector" logger namespace for the
+    whole session so other tests stay quiet; re-enable it for the duration of
+    the block, since these tests are pinning the WARNING itself, not treating
+    it as incidental noise.
+    """
+    messages: list[str] = []
+    handler_id = logger.add(messages.append, level="WARNING", format="{message}")
+    logger.enable("monkey_collector")
+    try:
+        yield messages
+    finally:
+        logger.disable("monkey_collector")
+        logger.remove(handler_id)
 
 
 class TestInitialize:
@@ -82,6 +103,28 @@ class TestCalcCost:
     def test_unknown_model(self):
         cost = CostTracker._calc_cost("unknown-model", 1000, 500)
         assert cost == 0.0
+
+    def test_unknown_model_warns_that_zero_means_unknown_not_free(self):
+        with captured_warnings() as messages:
+            CostTracker._calc_cost("some-unpriced-model", 1000, 500)
+        assert any(
+            "some-unpriced-model" in m and "unknown" in m.lower() for m in messages
+        ), messages
+
+    def test_known_model_does_not_warn(self):
+        with captured_warnings() as messages:
+            CostTracker._calc_cost("gpt-5-nano", 1000, 500)
+        assert messages == []
+
+    def test_qwen_flash_pricing(self):
+        # qwen/qwen3.8-flash: input=0.15/1M, output=0.47/1M (openrouter.ai/api/v1/models, 2026-08-29)
+        cost = CostTracker._calc_cost("qwen/qwen3.8-flash", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.15 + 0.47)
+
+    def test_qwen_plus_pricing(self):
+        # qwen/qwen3.7-plus: input=0.32/1M, output=1.28/1M (openrouter.ai/api/v1/models, 2026-08-29)
+        cost = CostTracker._calc_cost("qwen/qwen3.7-plus", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.32 + 1.28)
 
     def test_zero_tokens(self):
         cost = CostTracker._calc_cost("gpt-5-nano", 0, 0)
