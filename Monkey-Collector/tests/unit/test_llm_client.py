@@ -62,6 +62,20 @@ class TestChat:
         assert kwargs["temperature"] == 0.2
         assert kwargs["response_format"] == {"type": "json_object"}
 
+    def test_reasoning_disabled_by_default(self):
+        # qwen3.8-flash spends a tightly capped max_tokens on a reasoning trace
+        # and returns content=None; both consumers then degrade SILENTLY while
+        # still paying for the tokens. See the client module docstring.
+        client, oai = _client_with(_completion())
+        client.chat("hi")
+        kwargs = oai.chat.completions.create.call_args.kwargs
+        assert kwargs["extra_body"] == {"reasoning": {"enabled": False}}
+
+    def test_reasoning_opt_in_sends_nothing(self):
+        client, oai = _client_with(_completion(), reasoning=True)
+        client.chat("hi")
+        assert "extra_body" not in oai.chat.completions.create.call_args.kwargs
+
     def test_omits_unset_optionals(self):
         client, oai = _client_with(_completion())
         client.chat("hi")

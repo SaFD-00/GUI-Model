@@ -9,6 +9,30 @@ OpenRouter speaks the OpenAI **Chat Completions** API (``chat.completions``),
 not the Responses API — so this client uses ``client.chat.completions.create``
 and reads ``usage.prompt_tokens`` / ``usage.completion_tokens`` for cost
 tracking (the Responses API names them ``input_tokens`` / ``output_tokens``).
+
+REASONING IS OFF BY DEFAULT
+===========================
+
+``qwen/qwen3.8-flash`` is a reasoning model: left alone it spends its output
+budget on a reasoning trace and only then writes ``content``. Both consumers cap
+that budget tightly, so the trace consumes the whole cap and the reply arrives
+with ``content = None``. Measured against OpenRouter on 2026-08-30:
+
+    semantic labelling (max_tokens=800)   reasoning trace 3225 chars,
+        finish_reason "length", content None -> unparseable -> _degraded()
+    input text (max_tokens=50)            trace 227 chars, content None
+        -> "LLM returned empty text" -> canned fallback
+
+Neither consumer crashes — both degrade by design — so the failure is SILENT:
+same-function pruning disappears, every generated string becomes a canned one,
+and the run is billed the full token cap for each dead call. With
+``reasoning.enabled = false`` the same two prompts answer in 112 and 3 tokens
+with valid JSON and a usable string.
+
+So the disable is sent by default, and ``reasoning=True`` is the opt-in for a
+caller that wants a trace and has raised ``max_tokens`` to afford one. The knob
+rides in ``extra_body`` because ``reasoning`` is an OpenRouter extension, not an
+OpenAI Chat Completions field.
 """
 
 from __future__ import annotations
@@ -45,12 +69,14 @@ class LLMClient:
         base_url: str = DEFAULT_BASE_URL,
         cost_tracker: CostTracker | None = None,
         timeout: float = DEFAULT_TIMEOUT,
+        reasoning: bool = False,
     ):
         self._api_key = api_key
         self.model = model
         self.base_url = base_url
         self._cost_tracker = cost_tracker
         self._timeout = timeout
+        self.reasoning = reasoning
         self._client: OpenAI | None = None  # lazy-init
         self._current_step: int = 0
 
@@ -115,6 +141,11 @@ class LLMClient:
             kwargs["temperature"] = temperature
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if not self.reasoning:
+            # See the module docstring: without this the model answers with a
+            # reasoning trace and content=None, and both consumers degrade
+            # silently while still paying for the tokens.
+            kwargs["extra_body"] = {"reasoning": {"enabled": False}}
 
         client = self._get_client()
         if max_retries is not None:
