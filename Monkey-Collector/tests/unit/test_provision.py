@@ -12,16 +12,12 @@ not text: ``Path.read_text`` normalises newlines, so a text comparison would pas
 even if the writer turned the file's CRLF terminators into LF — which is exactly
 the reformat sync-installed must not commit.
 
-Ported from Atlas-Collector's ``tests/test_provision.py``. The "CLI wiring"
-section (``test_dry_run_writes_nothing`` and
-``test_provision_dry_run_installs_nothing_and_leaves_the_ledger_alone``) is
-deliberately NOT ported: both exercise ``atlas_collector.cli``'s
-``sync-installed``/``provision`` subcommands, and wiring ``catalog.py`` /
-``provision.py`` into Monkey-Collector's CLI is out of scope for this port
-(``monkey_collector.cli.main`` currently registers no subcommands at all). The
-status-survives-a-real-write property those two tests covered is still pinned
-at the library level by
-``test_sync_leaves_status_and_every_other_column_untouched``.
+Ported from Atlas-Collector's ``tests/test_provision.py``. The CLI-level
+``test_dry_run_writes_nothing`` and
+``test_provision_dry_run_installs_nothing_and_leaves_the_ledger_alone`` are
+included below now that ``monkey_collector.cli`` wires ``sync-installed`` and
+``provision`` — they exercise the ``--dry-run`` flag through ``cli.main``
+end-to-end.
 """
 
 from __future__ import annotations
@@ -172,6 +168,28 @@ def test_writer_reproduces_the_committed_catalog_byte_for_byte(tmp_path: Path) -
     out = tmp_path / "apps.csv"
     write_catalog(load_catalog(), out)
     assert out.read_bytes() == catalog_path().read_bytes()
+
+
+def test_dry_run_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Asserted on the file's BYTES, not on the exit code — exit-code-0 is what
+    a no-op flag returns too."""
+    from monkey_collector import cli
+
+    target = tmp_path / "apps.csv"
+    write_catalog(load_catalog(), target)
+    before = target.read_bytes()
+
+    fake = FakeAdb(packages=set())  # device has nothing: every true row would flip
+    monkeypatch.setattr(cli, "_device_packages", lambda args, command: (fake, set()))
+
+    assert cli.main(["sync-installed", "--catalog", str(target), "--dry-run"]) == 0
+    assert target.read_bytes() == before
+
+    assert cli.main(["sync-installed", "--catalog", str(target)]) == 0
+    assert target.read_bytes() != before
+    assert all(r.installed == "false" for r in load_catalog(target))
+    # ...and the curation column rode through the real write untouched.
+    assert [r.status for r in load_catalog(target)] == [r.status for r in load_catalog()]
 
 
 # ---------------------------------------------------------------------------
@@ -588,3 +606,41 @@ def test_a_broken_entry_is_caught_before_any_install(tmp_path: Path) -> None:
     path.write_text(json.dumps({"entries": {"com.a": {"reason": "x"}}}), encoding="utf-8")
     with pytest.raises(prov.LedgerError, match="no string 'source'"):
         prov.load_ledger(path)
+
+
+# ---------------------------------------------------------------------------
+# CLI wiring — provision --dry-run
+# ---------------------------------------------------------------------------
+
+
+def test_provision_dry_run_installs_nothing_and_leaves_the_ledger_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from monkey_collector import cli
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "org.tasks.apk").write_bytes(b"cached")
+    ledger = tmp_path / prov.LEDGER_NAME
+
+    fake = FakeAdb(packages=set())
+    monkeypatch.setattr(cli, "_device_packages", lambda args, command: (fake, set()))
+    _no_network(monkeypatch)
+
+    code = cli.main(
+        [
+            "provision",
+            "--only",
+            "org.tasks",
+            "--dry-run",
+            "--apk-cache",
+            str(cache),
+            "--android-world",
+            str(tmp_path / "absent"),
+            "--ledger",
+            str(ledger),
+        ]
+    )
+    assert code == 0
+    assert fake.installs == []
+    assert not ledger.exists()
