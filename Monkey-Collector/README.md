@@ -42,7 +42,7 @@ Android GUI world model 학습용 데이터를 수집하는 App + Server 파이�
   - `metadata.json` 의 `completed_at` 이 채워진 앱은 다음 `run` 에서 **자동으로 건너뛴다** (중단된 세션은 resume — 재개 시 기존 page 지식도 함께 복원).
   - `--force` 로 완료된 앱도 다시 수집 가능.
 - LLM 은 런타임에서 **입력 텍스트 생성 단 하나**에만 쓰인다 — page 식별은 항상 LLM-free 다.
-  - **OpenRouter Chat Completions** 공용 클라이언트(기본 모델 `qwen/qwen3.7-plus`)로 **input text 생성** (`--input-mode api`, 없으면 hardcoded `random`) 을 수행한다 — 프롬프트에 현재 탐색 중인 앱 설명(`catalog/apps.csv` 의 `app_name (category/sub_category) — notes`, csv 미등록 앱은 package_id 로 폴백)을 함께
+  - **OpenRouter Chat Completions** 공용 클라이언트(기본 모델 `qwen/qwen3.8-flash`)로 **input text 생성** (`--input-mode api`, 없으면 hardcoded `random`) 을 수행한다 — 프롬프트에 현재 탐색 중인 앱 설명(`catalog/apps.csv` 의 `app_name (category/sub_category) — notes`, csv 미등록 앱은 package_id 로 폴백)을 함께
     넣어 앱 도메인에 맞는 입력값(쇼핑앱 검색창→상품 검색어, 메모앱→메모 내용 등)을 생성한다.
   - page 식별은 **BM25 unique-page matching**(Mobile3M 메커니즘, LLM-free): encoded XML 을 element-line 문서로 직렬화 → BM25 로 후보 page 검색 → element diff(`|A△B|<element_diff_max` 또는 Jaccard) **AND** pixel 게이트(luminance 차이 `< page_pixel_diff_threshold`)로 확인 → 기존 page 병합(`BM25_MERGE`)하거나 새 page 발급.
   - 이 `page_key` 가 page_graph 와 탐색 abstract page 를 모두 결정한다.
@@ -81,7 +81,7 @@ cp .env.example .env
 
 `.env` 또는 환경변수에 `OPENROUTER_API_KEY` 를 넣으면 `--input-mode api` (입력 텍스트 생성)에서 LLM 을 사용한다.
 page 식별(BM25 unique-page matching)은 LLM 없이 동작한다.
-모델과 엔드포인트는 `OPENROUTER_MODEL` (기본 `qwen/qwen3.7-plus`), `OPENROUTER_BASE_URL` (기본 `https://openrouter.ai/api/v1`) 로 덮어쓸 수 있다.
+모델과 엔드포인트는 `OPENROUTER_MODEL` (기본 `qwen/qwen3.8-flash`), `OPENROUTER_BASE_URL` (기본 `https://openrouter.ai/api/v1`) 로 덮어쓸 수 있다.
 
 추가 전제:
 

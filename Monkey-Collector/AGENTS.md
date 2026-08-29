@@ -30,7 +30,7 @@
 | M1a | `pagematch` · `stabilize` · `session` 이식 | **DONE** |
 | M1b | device-push · Mobile3M · 구 export · 구 파서 · Android 앱 철거 | **DONE** |
 | M1c | host-pull `adb` · `paths` · `xml` 파서 · `catalog` · `provision` · `config` · `cli` | **DONE** |
-| M2 | LLM 클라이언트 재타깃(`qwen3.8-flash`) + cost 배선 + 입력 텍스트 | **미구현** |
+| M2 | LLM 클라이언트 재타깃(`qwen3.8-flash`) + cost 배선 + 입력 텍스트 | **DONE**(라이브러리 + 팩토리; `run` 루프에서 `CostTracker`/`LLMClient`/`TextGenerator` 를 실제로 엮는 배선은 M4) |
 | M3 | AIG + LLM-Explorer 탐색 정책 | **미구현** |
 | M4 | host-pull 수집 루프 + `monkey-collect run` | **미구현** |
 | M5 | EXP08 Stage-1 export + `monkey-collect export` | **미구현** |
@@ -244,12 +244,13 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 ./.venv/bin/python -m mypy src
 ```
 
-현재 기준선은 **442 passed** 다(2026-08-29, M1 완료 시점). ruff·mypy 는 **에러 0**.
+현재 기준선은 **469 passed** 다(2026-08-29, M2 완료 시점). ruff·mypy 는 **에러 0**.
 이 수가 줄면 회귀로 본다 — 단 **테스트를 의도적으로 삭제한 변경은 예외**이고, 그때는 삭제 개수까지
 세어 새 기준선을 여기에 갱신한다.
 
 > 기준선 이력: 858(기재) → **861**(실측) → 911(M1a 이식) → **274**(M1b 철거, 911 − 637)
-> → 363(M1c-1) → 378(M1c-2) → **442**(M1c-3).
+> → 363(M1c-1) → 378(M1c-2) → **442**(M1c-3) → **469**(M2, +27: `llm/client.py` 모델
+> 우선순위 4 + `text_input.py` 19 + `cost_tracker` 미확인 모델 경고/가격 4, 0 삭제).
 > 2026-08-29 시점에 `.venv` 의 editable 설치가 리포 이전 경로(`~/Desktop/Projects/...`)를 가리켜
 > 스위트가 **아예 실행되지 않는** 상태였다. `ModuleNotFoundError: No module named 'monkey_collector'`
 > 가 보이면 코드가 아니라 venv 를 먼저 의심하고 `uv sync --extra dev` 를 돌려라.
