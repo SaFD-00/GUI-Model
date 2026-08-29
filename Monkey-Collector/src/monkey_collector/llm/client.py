@@ -1,6 +1,6 @@
 """Shared OpenRouter (OpenAI-compatible Chat Completions) LLM client.
 
-The sole consumer is input text generation (``pipeline/text_generator.py``).
+The sole consumer is input text generation (``monkey_collector.text_input``).
 Modeled on the ``GPT`` helper from the reference ``LLM-Explorer`` project, but cleaned up:
 ``base_url`` / ``api_key`` / ``model`` are env-driven so the provider can be
 swapped without touching call sites.
@@ -21,10 +21,11 @@ from loguru import logger
 if TYPE_CHECKING:
     from openai import OpenAI
 
+    from monkey_collector.config import LlmConfig
     from monkey_collector.domain.cost_tracker import CostTracker
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "qwen/qwen3.7-plus"
+DEFAULT_MODEL = "qwen/qwen3.8-flash"
 DEFAULT_TIMEOUT = 30.0
 
 
@@ -143,7 +144,12 @@ class LLMClient:
         )
 
 
-def create_llm_client(cost_tracker: CostTracker | None = None) -> LLMClient | None:
+def create_llm_client(
+    cost_tracker: CostTracker | None = None,
+    *,
+    model: str | None = None,
+    config: LlmConfig | None = None,
+) -> LLMClient | None:
     """Build a shared :class:`LLMClient` from environment configuration.
 
     Reads (after loading ``.env`` if available):
@@ -151,7 +157,18 @@ def create_llm_client(cost_tracker: CostTracker | None = None) -> LLMClient | No
     * ``OPENROUTER_API_KEY`` — required; without it this returns ``None`` so
       callers fall back to random input text.
     * ``OPENROUTER_BASE_URL`` — defaults to ``https://openrouter.ai/api/v1``.
-    * ``OPENROUTER_MODEL`` — defaults to ``qwen/qwen3.7-plus``.
+
+    Model resolution order (first that is set wins)::
+
+        model (explicit arg) -> OPENROUTER_MODEL (env) -> config.model -> DEFAULT_MODEL
+
+    ``model`` lets a caller pin a model outright; ``config`` is the resolved
+    ``RunConfig.llm`` section (``config/run.yaml`` -> ``llm.model``, itself
+    already env/YAML-resolved by :mod:`monkey_collector.config`) so a run's
+    configured model is honored without every call site having to read
+    ``OPENROUTER_MODEL`` by hand. The env var still wins over ``config`` so an
+    operator can override a configured model for one invocation without
+    editing YAML.
 
     Returns ``None`` when no API key is configured.
     """
@@ -173,11 +190,16 @@ def create_llm_client(cost_tracker: CostTracker | None = None) -> LLMClient | No
         return None
 
     base_url = os.environ.get("OPENROUTER_BASE_URL", DEFAULT_BASE_URL)
-    model = os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
-    logger.info(f"LLM client ready (provider=OpenRouter, model={model})")
+    resolved_model = (
+        model
+        or os.environ.get("OPENROUTER_MODEL")
+        or (config.model if config is not None else None)
+        or DEFAULT_MODEL
+    )
+    logger.info(f"LLM client ready (provider=OpenRouter, model={resolved_model})")
     return LLMClient(
         api_key=api_key,
-        model=model,
+        model=resolved_model,
         base_url=base_url,
         cost_tracker=cost_tracker,
     )

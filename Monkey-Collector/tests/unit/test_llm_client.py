@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from monkey_collector.config import LlmConfig
 from monkey_collector.llm.client import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -174,3 +175,38 @@ class TestCreateLLMClient:
         with patch("dotenv.load_dotenv", return_value=None):
             client = create_llm_client(cost_tracker=tracker)
         assert client._cost_tracker is tracker
+
+
+class TestModelPriority:
+    """model priority: explicit arg -> OPENROUTER_MODEL env -> config.model -> DEFAULT_MODEL."""
+
+    def test_config_model_used_when_no_explicit_arg_or_env(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        config = LlmConfig(model="qwen/from-config")
+        with patch("dotenv.load_dotenv", return_value=None):
+            client = create_llm_client(config=config)
+        assert client.model == "qwen/from-config"
+
+    def test_explicit_arg_wins_over_env_and_config(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.setenv("OPENROUTER_MODEL", "qwen/from-env")
+        config = LlmConfig(model="qwen/from-config")
+        with patch("dotenv.load_dotenv", return_value=None):
+            client = create_llm_client(model="qwen/explicit", config=config)
+        assert client.model == "qwen/explicit"
+
+    def test_env_wins_over_config(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.setenv("OPENROUTER_MODEL", "qwen/from-env")
+        config = LlmConfig(model="qwen/from-config")
+        with patch("dotenv.load_dotenv", return_value=None):
+            client = create_llm_client(config=config)
+        assert client.model == "qwen/from-env"
+
+    def test_default_model_when_nothing_else_set(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+        with patch("dotenv.load_dotenv", return_value=None):
+            client = create_llm_client()
+        assert client.model == DEFAULT_MODEL == "qwen/qwen3.8-flash"
