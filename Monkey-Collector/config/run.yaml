@@ -65,6 +65,10 @@ collection:
   # 비교용 썸네일 가로 폭(px). 100 이면 1080x2400 이 100x222 로 줄어 비교가 빠르다.
   # Env: MC_COLLECTION_STABILIZE_LOW_RES_WIDTH
   stabilize_low_res_width: 100
+  # 앱을 실행/재실행한 뒤 첫 관측 전까지의 고정 대기(초). 안정화 폴링이 어차피 돌지만,
+  # cold start 직후에는 런처 애니메이션이 잠깐 멎어 앱처럼 보일 수 있어 그 창을 넘긴다.
+  # 0 이면 곧바로 폴링으로 넘어간다(테스트는 0 을 쓴다). Env: MC_COLLECTION_LAUNCH_SETTLE_SEC
+  launch_settle_sec: 2.0
 
 page_matching:
   # page 식별은 **LLM-Explorer 방법**이고 항상 LLM-free 다.

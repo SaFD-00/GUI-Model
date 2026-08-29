@@ -2,15 +2,15 @@
 
 Host-pull rebuild: the foundation (``adb.py``, ``paths.py``, ``xml/``,
 ``pagematch.py``, ``stabilize.py``, ``session.py``, ``catalog.py``,
-``provision.py``) is done. Four subcommands are wired here because their
-implementations already exist: ``catalog``, ``sync-installed``, ``provision``
-and ``reset``.
+``provision.py``) and the collection loop (``loop.py``, ``explore.py``,
+``aig.py``, ``semantic.py``) are done. Five subcommands are wired here because
+their implementations exist: ``catalog``, ``sync-installed``, ``provision``,
+``reset`` and ``run``.
 
-``run`` (the host-pull collection loop) and ``export`` (the Stage-1 jsonl
-export) do NOT exist yet. Neither is registered as a subcommand — not even as
-a placeholder that raises ``NotImplementedError`` — because a registered
-subcommand that only ever raises makes ``--help`` describe capabilities the
-tool does not have.
+``export`` (the Stage-1 jsonl export) does NOT exist yet and is NOT registered
+as a subcommand — not even as a placeholder that raises
+``NotImplementedError`` — because a registered subcommand that only ever raises
+makes ``--help`` describe capabilities the tool does not have.
 
 ``main()`` resolves the run config BEFORE dispatching, for every subcommand
 including ``catalog``. That is deliberate: ``--config`` naming a missing or
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from monkey_collector.paths import (
     DEFAULT_ROOT,
     collection_root,
@@ -38,6 +40,7 @@ from monkey_collector.paths import (
 
 if TYPE_CHECKING:  # imported for typing only; the runtime imports stay local
     from monkey_collector.adb import AdbClient
+    from monkey_collector.catalog import AppRow
 
 # ---------------------------------------------------------------------------
 # catalog
@@ -244,6 +247,314 @@ def cmd_provision(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# run — the host-pull collection loop
+# ---------------------------------------------------------------------------
+
+#: Device preconditions applied before a sweep, as (label, shell command).
+#: Both are documented in AGENTS §1 with the pilot they came from:
+#:
+#: * the screen locking makes every dump `com.android.systemui`, and the lock
+#:   survives nothing but a swipe -- `stayon` is the only thing that prevents it.
+#:   It is cleared by unplugging USB, so it is re-applied every run.
+#: * the GMS "System update needed" modal makes every dump
+#:   `com.google.android.gms`, and its ONLY button is "Download & install now".
+#:   This collector has no action guard by design (AGENTS §0.5), so an
+#:   unsuppressed modal is an explorer one tap away from a 1.35 GB download and
+#:   a reboot. Suppressing it is the one place that decision needed a fence.
+DEVICE_PREPARATION: tuple[tuple[str, str], ...] = (
+    ("keep the screen on", "svc power stayon true"),
+    ("suppress OTA prompts", "settings put global ota_disable_automatic_update 1"),
+)
+
+#: Read, never written: the first thing to look at when a session reports
+#: "stuck outside the app", which is far more often the device than the code.
+FOCUS_PROBE = "dumpsys window | grep mCurrentFocus"
+
+
+def prepare_device(adb: AdbClient) -> list[str]:
+    """Apply AGENTS §1's preconditions and probe the focused window.
+
+    Returns the log lines produced, so a caller (and a test) can see exactly
+    what was applied. Each command is independent: `grep` exits non-zero when it
+    matches nothing and :meth:`AdbClient.shell` turns that into an error, which
+    must not stop the other two from running.
+    """
+    lines: list[str] = []
+    for label, command in DEVICE_PREPARATION:
+        try:
+            adb.shell(command)
+            lines.append(f"  device: {label} ({command})")
+        except Exception as error:  # noqa: BLE001 - one refusal must not stop the sweep
+            lines.append(f"  device: {label} FAILED ({error})")
+    try:
+        focus = adb.shell(FOCUS_PROBE).strip().splitlines()
+    except Exception as error:  # noqa: BLE001 - a probe is never fatal
+        focus = [f"unavailable ({error})"]
+    lines.append(f"  device: focused window = {focus[0] if focus else '(none)'}")
+    for line in lines:
+        print(line)
+        # Also into `{root}/run.log`: what the device was doing at the start is
+        # the first thing to look at when a session reports "stuck outside the
+        # app", and stdout is gone by then.
+        logger.info(line.strip())
+    return lines
+
+
+def select_targets(
+    rows: list[AppRow], wanted: set[str], *, include_auth: bool
+) -> tuple[list[AppRow], list[AppRow]]:
+    """``(targets, skipped_for_auth)`` from the catalog.
+
+    ``account_required`` apps are skipped by default and included only under
+    ``--include-auth`` (AGENTS §3): a session that spends its budget stuck
+    against a login wall collects nothing but the login wall.
+    """
+    targets = [
+        row for row in rows if row.is_collectable and (not wanted or row.package_id in wanted)
+    ]
+    if include_auth:
+        return targets, []
+    skipped = [row for row in targets if row.needs_auth]
+    return [row for row in targets if not row.needs_auth], skipped
+
+
+def _declared_activities(adb: AdbClient, package: str) -> tuple[list[str], bool, dict[str, str]]:
+    """``(activities, fixed_denominator, aliases)`` for coverage.
+
+    ``catalog/activities.json`` (androguard over the APK manifest) is preferred
+    and gives a FIXED denominator. It covers 41 of the 48 collection targets;
+    the rest fall back to `dumpsys`, which lists only components carrying an
+    intent filter and so is structurally incomplete — an activity launched
+    internally never appears. A fixed denominator built from that scores a
+    perfectly healthy run at 0%, so the fallback is paired with a dynamic total.
+    """
+    from monkey_collector.catalog_activities import ActivityCatalog
+
+    catalog = ActivityCatalog.instance()
+    declared = catalog.get_declared(package)
+    if declared:
+        return declared, True, catalog.get_aliases(package) or {}
+    return adb.get_declared_activities(package), False, {}
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Host-pull collection loop over one or more catalog apps.
+
+    Owns the sweep's log sink and nothing else: one collection produces one
+    directory, log included, and the sink is released afterwards so a second
+    sweep in the same process does not write both roots at once.
+    """
+    from monkey_collector.paths import run_log
+
+    log_path = run_log(args.root)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    sink = logger.add(log_path, level="INFO")
+    try:
+        return _run_sweep(args)
+    finally:
+        logger.remove(sink)
+
+
+def _run_sweep(args: argparse.Namespace) -> int:
+    """The sweep itself: select targets, then drive each one to its budget."""
+    from dataclasses import replace
+
+    from monkey_collector.adb import AdbClient
+    from monkey_collector.aig import AIG
+    from monkey_collector.catalog import load_catalog
+    from monkey_collector.config import parse_duration
+    from monkey_collector.domain.activity_coverage import ActivityCoverageTracker
+    from monkey_collector.domain.cost_tracker import CostTracker
+    from monkey_collector.explore import Explorer
+    from monkey_collector.llm.client import create_llm_client
+    from monkey_collector.loop import CollectionLoop
+    from monkey_collector.pagematch import MergePolicy, PageRegistry
+    from monkey_collector.semantic import SemanticLabeler
+    from monkey_collector.session import Session
+    from monkey_collector.text_input import create_text_generator
+
+    config = args.run_config
+    collection = config.collection
+    matching = config.page_matching
+
+    rows = load_catalog()
+    targets, skipped = select_targets(rows, set(args.apps) - {"all"}, include_auth=args.include_auth)
+    if skipped:
+        print(
+            f"skipping {len(skipped)} account_required app(s); "
+            f"pass --include-auth to include them"
+        )
+    if not targets:
+        print("no collectable apps matched — nothing to do")
+        return 0
+
+    budget_mode = args.budget_mode or collection.budget_mode
+    duration = (
+        float(parse_duration(args.max_duration))
+        if args.max_duration
+        else float(collection.max_duration_sec)
+    )
+    max_steps = args.max_steps if args.max_steps else collection.max_steps
+    # The inactive budget must not also stop the run: `time` means time.
+    if budget_mode == "time":
+        max_steps = 0
+    else:
+        duration = float("inf")
+
+    seed = collection.seed if args.seed is None else args.seed
+    # --input-mode overrides llm.input_mode for this invocation, and it is the
+    # RESOLVED config that both the client and the generator see, so the flag
+    # cannot be parsed and then quietly ignored.
+    llm_config = replace(config.llm, input_mode=args.input_mode or config.llm.input_mode)
+
+    adb = AdbClient(serial=args.serial or config.device.serial)
+    print(f"device {adb.serial}: {len(targets)} app(s), budget {budget_mode}, seed {seed}")
+    if args.prepare_device:
+        prepare_device(adb)
+    else:
+        print("  device: preparation skipped (--no-prepare-device)")
+
+    # Every app the catalog collects, not just this invocation's targets: a
+    # screen of app B is not app A's data whether or not B is being collected
+    # today, and `--apps A` must behave the same as a full sweep.
+    catalog_packages = {row.package_id for row in rows if row.is_collectable}
+
+    # Nothing on the device may be carrying state into this sweep. Each session
+    # already starts its own app cold, but that says nothing about the OTHER 47:
+    # a task left open by a previous run is what an app hands off to, and it is
+    # what the launcher intent resumes. Measured on the sibling collector before
+    # this existed: 31 open tasks after a few attempts, and apps reached each
+    # other through them.
+    stopped = 0
+    for package in sorted(catalog_packages):
+        try:
+            adb.force_stop(package)
+            stopped += 1
+        except Exception as error:  # noqa: BLE001 - one refusal must not stop the sweep
+            print(f"  could not stop {package} ({error})")
+    print(f"stopped {stopped}/{len(catalog_packages)} catalog app(s) before starting")
+
+    failures = 0
+    for position, row in enumerate(targets, start=1):
+        session = Session(
+            row.package_id,
+            raw_root(args.root),
+            runtime_root(args.root),
+            episode=row.package_id,
+        )
+        if session.is_complete and not args.force:
+            print(f"[{position}/{len(targets)}] {row.package_id}: already complete, skipping")
+            continue
+
+        # open() creates runtime/apps/{package}/, which the two CSV trackers
+        # below write into, so it has to come first.
+        session.open(resume=not args.force)
+        # BOTH trackers take the same branch. `initialize` opens its CSV with
+        # "w": using it on a resumed session would truncate the file, and
+        # activity_coverage.csv is a TIME SERIES whose whole value is being one
+        # -- losing the earlier half leaves a plausible-looking curve that
+        # starts from zero, with nothing in the data to say why.
+        resumed = bool(session.observation_count) and not args.force
+        declared, fixed, aliases = _declared_activities(adb, row.package_id)
+        cost_tracker = CostTracker()
+        coverage = ActivityCoverageTracker()
+        if resumed:
+            cost_tracker.resume(str(session.runtime))
+            coverage.resume(
+                str(session.runtime),
+                declared,
+                package=row.package_id,
+                allow_dynamic_total=not fixed,
+                aliases=aliases,
+            )
+        else:
+            cost_tracker.initialize(str(session.runtime))
+            coverage.initialize(
+                str(session.runtime),
+                declared,
+                package=row.package_id,
+                allow_dynamic_total=not fixed,
+                aliases=aliases,
+            )
+
+        client = None
+        if config.llm.semantic_labeling or llm_config.input_mode == "api":
+            client = create_llm_client(cost_tracker, config=llm_config)
+        labeler = SemanticLabeler(
+            client=client,
+            app_name=row.app_name,
+            enabled=config.llm.semantic_labeling,
+            min_elements_for_grouping=config.exploration.min_elements_for_grouping,
+        )
+        # A fresh graph per run, deliberately — see loop.py's module docstring
+        # on why a resumed session must not load one.
+        graph = AIG(package=row.package_id, semantic_labeling=labeler.active)
+        if (session.root / "graph.json").exists():
+            logger.warning(
+                "{}: replacing an existing graph.json — page ids are minted per "
+                "run, so a resumed session's graph starts over",
+                row.package_id,
+            )
+
+        loop = CollectionLoop(
+            adb,
+            session,
+            registry=PageRegistry(
+                policy=MergePolicy(matching.merge_policy),
+                max_diff_elements=matching.max_diff_elements,
+                same_activity_only=matching.same_activity_only,
+            ),
+            graph=graph,
+            explorer=Explorer(
+                graph, row.package_id, config=config.exploration, seed=seed
+            ),
+            labeler=labeler,
+            coverage=coverage,
+            text_generator=create_text_generator(
+                llm_config, llm_client=client, seed=seed
+            ),
+            llm_client=client,
+            cost_tracker=cost_tracker,
+            max_duration_sec=duration,
+            max_steps=max_steps,
+            action_delay_ms=collection.action_delay_ms,
+            launch_settle_sec=collection.launch_settle_sec,
+            sibling_packages=catalog_packages,
+            seed=seed,
+            stabilize={
+                "max_wait_sec": collection.stabilize_max_wait_sec,
+                "poll_ms": collection.stabilize_poll_ms,
+                "pixel_threshold": collection.stabilize_pixel_threshold,
+                "luma_delta": collection.stabilize_luma_delta,
+                "low_res_width": collection.stabilize_low_res_width,
+            },
+        )
+        print(f"[{position}/{len(targets)}] {row.app_name} ({row.package_id})")
+        try:
+            stats = loop.run()
+        except KeyboardInterrupt:
+            # Metadata is written by run()'s own exit path only on a clean end,
+            # so record the interruption here — otherwise the session looks
+            # untouched and a resume would restart its numbering.
+            session.write_metadata(completed=False, extra={"stop_reason": "interrupted"})
+            print("interrupted — session left resumable")
+            raise
+        except Exception as error:  # noqa: BLE001 - one bad app must not end the sweep
+            failures += 1
+            session.write_metadata(completed=False, extra={"stop_reason": f"error: {error}"})
+            print(f"    FAILED: {error}")
+            continue
+
+        print(
+            f"    {stats.triples} triples / {stats.observations} observations / "
+            f"{stats.pages} pages / {stats.edges} edges / "
+            f"{coverage.get_visited_count()}/{len(coverage.total_activities)} activities / "
+            f"{stats.llm_calls} llm calls (${stats.cost_usd:.4f}) — {stats.stop_reason}"
+        )
+    return 1 if failures else 0
+
+
+# ---------------------------------------------------------------------------
 # reset — one root, one removal
 # ---------------------------------------------------------------------------
 
@@ -314,15 +625,20 @@ def build_parser() -> argparse.ArgumentParser:
         prog="monkey-collect",
         description=(
             "Monkey-Collector — host-pull Android GUI data collector. "
-            "`catalog`, `sync-installed`, `provision` and `reset` are implemented "
-            "against the finished host-pull foundation (adb.py, paths.py, xml/, "
-            "pagematch.py, stabilize.py, session.py, catalog.py, provision.py)."
+            "`catalog`, `sync-installed`, `provision`, `reset` and `run` are "
+            "implemented against the finished host-pull foundation (adb.py, "
+            "paths.py, xml/, pagematch.py, stabilize.py, session.py, catalog.py, "
+            "provision.py) and the LLM-Explorer collection loop (loop.py, "
+            "explore.py, aig.py, semantic.py)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Implemented: catalog, sync-installed, provision, reset.\n"
-            "NOT implemented yet: `run` (the collection loop) and `export` (the "
-            "Stage-1 jsonl export). Neither is registered as a subcommand."
+            "Implemented: catalog, sync-installed, provision, reset, run.\n"
+            "NOT implemented yet: `export` (the Stage-1 jsonl export). It is not "
+            "registered as a subcommand.\n"
+            "WARNING: `run` drives a REAL, logged-in device and has no action "
+            "guard by design (AGENTS \u00a70.5) — exploration can send messages or "
+            "post content."
         ),
     )
     from monkey_collector import __version__
@@ -438,6 +754,83 @@ def build_parser() -> argparse.ArgumentParser:
         help="Failure ledger path (default: catalog/PROVISION_MISSING.json).",
     )
     p_prov.set_defaults(func=cmd_provision)
+
+    # -- run ------------------------------------------------------------------
+    p_run = sub.add_parser(
+        "run",
+        help="Run the host-pull collection loop over the catalog.",
+        description=(
+            "Drive each collectable app with the LLM-Explorer policy, writing "
+            "observations, triples.jsonl and graph.json under one collection root. "
+            "account_required apps are skipped unless --include-auth."
+        ),
+    )
+    p_run.add_argument("--apps", nargs="+", default=["all"], help="Package ids, or 'all'.")
+    p_run.add_argument(
+        "--serial", default=None, help="Device serial (default: config device.serial)."
+    )
+    p_run.add_argument(
+        "--budget-mode",
+        choices=["steps", "time"],
+        default=None,
+        help="Override collection.budget_mode (default: time).",
+    )
+    p_run.add_argument(
+        "--max-duration",
+        default=None,
+        metavar="DURATION",
+        help='Override collection.max_duration, e.g. "2h" / "120m" / "7200s". '
+        "Used when budget_mode is time.",
+    )
+    p_run.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Override collection.max_steps. Used when budget_mode is steps.",
+    )
+    p_run.add_argument(
+        "--seed", type=int, default=None, help="Override collection.seed (explorer RNG)."
+    )
+    p_run.add_argument(
+        "--input-mode",
+        choices=["api", "random"],
+        default=None,
+        help=(
+            "Override llm.input_mode for input-text generation. `random` uses canned "
+            "samples and issues no API call for text; semantic labelling is separate "
+            "(llm.semantic_labeling)."
+        ),
+    )
+    p_run.add_argument(
+        "--root",
+        default=DEFAULT_ROOT,
+        help=(
+            f"The single collection root (default: {DEFAULT_ROOT}). Holds raw/, "
+            "runtime/, run.log and the export side by side, so one run is one directory."
+        ),
+    )
+    p_run.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-collect apps already marked complete, restarting their numbering.",
+    )
+    p_run.add_argument(
+        "--include-auth",
+        action="store_true",
+        help="Also collect account_required apps (skipped by default).",
+    )
+    p_run.add_argument(
+        "--no-prepare-device",
+        dest="prepare_device",
+        action="store_false",
+        help=(
+            "Skip the AGENTS §1 device preconditions (screen stay-on, OTA prompt "
+            "suppression). They CHANGE system settings on the target device; the "
+            "default is to apply them because a locked screen or a GMS update modal "
+            "makes every dump belong to another package."
+        ),
+    )
+    p_run.set_defaults(func=cmd_run, prepare_device=True)
 
     # -- reset ----------------------------------------------------------------
     p_reset = sub.add_parser(

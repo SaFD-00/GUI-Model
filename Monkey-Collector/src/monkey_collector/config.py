@@ -69,6 +69,7 @@ _BUILTIN_DEFAULTS: dict[str, dict[str, Any]] = {
         "stabilize_pixel_threshold": 0.005,
         "stabilize_luma_delta": 10,
         "stabilize_low_res_width": 100,
+        "launch_settle_sec": 2.0,
     },
     "page_matching": {
         "merge_policy": "similar_elements",
@@ -158,6 +159,12 @@ class CollectionConfig:
     stabilize_luma_delta: int = 10
     #: Width the comparison thumbnail is downscaled to.
     stabilize_low_res_width: int = 100
+    #: Fixed sleep after launching or relaunching the app, before the first
+    #: observation. Stabilization polls anyway, so this is belt-and-braces for
+    #: the cold-start window where a launcher animation can settle briefly and
+    #: look like the app. Exposed because it is otherwise unreachable from a
+    #: config, which made the test gate sleep through it on every run.
+    launch_settle_sec: float = 2.0
 
     @property
     def max_duration_sec(self) -> int:
@@ -435,6 +442,11 @@ def _validate(cfg: RunConfig) -> None:
     if cfg.collection.stabilize_poll_ms < 0:
         raise ConfigError(
             f"collection.stabilize_poll_ms must be >= 0, got {cfg.collection.stabilize_poll_ms!r}"
+        )
+    settle = cfg.collection.launch_settle_sec
+    if isinstance(settle, bool) or not isinstance(settle, (int, float)) or settle < 0:
+        raise ConfigError(
+            f"collection.launch_settle_sec must be a number >= 0 (seconds), got {settle!r}"
         )
 
     # -- page_matching: LLM-free page identity ------------------------------
