@@ -34,7 +34,7 @@
 | M3a | element 레이어(`explore.py`) + AIG(`aig.py`) + 네비게이션 — LLM 없음 | **DONE** |
 | M3b | `semantic.py`(라벨 + same-function 그룹핑) + 탐색 정책(`Explorer`) | **DONE** |
 | M4 | host-pull 수집 루프(`loop.py`) + `monkey-collect run` | **DONE** |
-| M5 | EXP08 Stage-1 export + `monkey-collect export` | **미구현** |
+| M5 | EXP08 Stage-1 export + `monkey-collect export` | **DONE** |
 
 **미구현을 구현된 것처럼 쓰지 마라.** 이 표와 `cli.py` 의 실제 서브파서와 README 의 CLI 표를
 **같이** 갱신한다. 셋 중 하나만 고치면 문서가 거짓말을 시작한다. 반대로 이미 구현된 것을
@@ -183,6 +183,9 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 → **Monkey 의 export 는 반드시 리스케일한다.** 하드코딩 금지: 세션이 기록한
 `device_width`/`device_height` 와 `smart_resize_dims` 로 파서와 **동일한 비균일 스케일**
 (`x_scale = new_w/orig_w`, `y_scale = new_h/orig_h`)을 적용한다. 재수집은 불필요하다.
+구현은 `export.translate_action`(좌표) + `export.resized_frame`(프레임 유도) 한 곳뿐이고,
+`export.target_size` 는 그 유도 결과를 **검증**할 뿐 대체하지 않는다 — 어긋나면 경고 +
+`export_meta.json` 의 `frames`. 반올림은 `round()` 다(`int()` 는 bbox 와 1px 어긋난다).
 
 또한 uiautomator 는 뷰포트 밖 내용에 **역전 bbox**(`bounds="[221,2390][650,2337]"`, top>bottom)를
 내고 파서는 충실히 통과시킨다. 코퍼스 3,000 레코드 266,407 박스에 역전 0 / 음수 0 이므로
@@ -245,7 +248,7 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 ./.venv/bin/python -m mypy src
 ```
 
-현재 기준선은 **680 passed** 다(2026-08-29, M4 완료 시점). ruff·mypy 는 **에러 0**.
+현재 기준선은 **728 passed** 다(2026-08-29, M5 완료 시점). ruff·mypy 는 **에러 0**.
 이 수가 줄면 회귀로 본다 — 단 **테스트를 의도적으로 삭제한 변경은 예외**이고, 그때는 삭제 개수까지
 세어 새 기준선을 여기에 갱신한다.
 
@@ -259,6 +262,11 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 > → **680**(M4, +52: `test_loop.py` 39 신설 + `test_cli.py` 21→34(+13: `run` 등록·
 > 플래그·타깃 선택·device 준비·sweep 산출물·`--input-mode` 소비·resume 시 coverage 보존),
 > 0 삭제 — `run`/`export` 미등록을 주장하던 테스트 3개는 삭제가 아니라 **새 사실로 갱신**했다).
+> → **728**(M5, +48: `test_export.py` 45 신설 + `test_cli.py` 34→37(+3), 0 삭제 —
+> `export` 미등록/미구현을 주장하던 3개(`test_export_is_not_a_registered_subcommand` ·
+> `test_help_epilog_names_what_is_and_is_not_implemented` ·
+> `test_module_docstring_does_not_promise_export`)는 **새 사실로 갱신**했고, 등록 1개가
+> 플래그·config 우선순위 4개로 갈라졌다).
 > 2026-08-29 시점에 `.venv` 의 editable 설치가 리포 이전 경로(`~/Desktop/Projects/...`)를 가리켜
 > 스위트가 **아예 실행되지 않는** 상태였다. `ModuleNotFoundError: No module named 'monkey_collector'`
 > 가 보이면 코드가 아니라 venv 를 먼저 의심하고 `uv sync --extra dev` 를 돌려라.

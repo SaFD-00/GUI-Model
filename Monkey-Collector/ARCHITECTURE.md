@@ -77,7 +77,7 @@ host-pull 은 기다릴 이유가 없다. 화면이 멎었는지는 호스트가
 | `aig.py` | AIG 그래프 + `graph.json` | DONE |
 | `explore.py` | LLM-Explorer 탐색 정책 (`Explorer` 6분기 + `Navigator`) | DONE |
 | `loop.py` | host-pull 수집 루프 | DONE |
-| `export.py` / `_exp08_prompt.py` | EXP08 Stage-1 export | M5 |
+| `export.py` / `_exp08_prompt.py` | EXP08 Stage-1 export (action 번역 + 좌표 리스케일) | DONE |
 
 ---
 
@@ -492,7 +492,10 @@ Stage-1 human turn 에 나오지 않으므로 emit 하지 않는다.
 | `provision` | DONE |
 | `reset` | DONE |
 | `run` | DONE |
-| `export` | **M5 — 미구현, 등록도 안 됨** |
+| `export` | DONE |
 
 `NotImplementedError` 를 던지는 유령 서브커맨드를 만들지 않는다. 구현이 생길 때 이 표와
 `cli.py` 의 서브파서와 README 의 CLI 절을 **같이** 갱신한다.
+
+`export` 플래그: `--root` · `--seed` · `--keep-unchanged` · `--ood-apps` · `--id-ratio`.
+디바이스를 건드리지 않는 유일한 수집-후 커맨드다 — 입력은 `{root}/raw/` 의 `triples.jsonl` 뿐이다.

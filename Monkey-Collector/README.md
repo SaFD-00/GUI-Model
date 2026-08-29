@@ -8,7 +8,7 @@
 > - "Android app" 설치·빌드 절차 — **Android 앱은 삭제됐다.** 디바이스에서 도는 우리 코드는 없다.
 > - `convert` · `convert-all` · `page-map` · `page-map-all` · `regenerate` 서브커맨드 —
 >   **현재 등록돼 있지 않다.** 지금 있는 것은 `catalog` · `sync-installed` · `provision` ·
->   `reset` · `run` 다섯이다. `run` 은 2026-08-29 에 host-pull 로 다시 만들어졌고 **플래그가
+>   `reset` · `run` · `export` 여섯이다. `run` 은 2026-08-29 에 host-pull 로 다시 만들어졌고 **플래그가
 >   전부 다르다** — 아래 「CLI」 §`run` 만 갱신돼 있고, 「4. 수집 실행」 절의 TCP/서버 서술은
 >   여전히 옛 구조다.
 > - `exploration.strategy` (DFS/BFS/GREEDY), `screen_matching.*` 설정 — **삭제됐다.**
@@ -300,6 +300,41 @@ monkey-collect reset --apps com.example.foo --dry-run
 - `--runtime-dir`: 휘발성 런타임 root (기본 `runtime`). `--apps` 스코프는 `{root}/apps/{package}/` 만 지우므로 `{root}/logs/` 는 남는다
 - `--dry-run`: 삭제 없이 대상 경로만 출력
 - `--yes`: 확인 프롬프트 스킵
+
+### `export`
+
+수집한 triple 을 **EXP08 Stage-1 (NEXT_STATE_PREDICTION) jsonl** 로 내보낸다. 계약은
+[ARCHITECTURE §8](ARCHITECTURE.md#8-export--exp08-stage-1-계약) 이고, 디바이스는 건드리지 않는다
+(입력은 `{root}/raw/` 뿐이다).
+
+```bash
+# 기본 (config 의 export.ood_apps / export.id_ratio 사용)
+monkey-collect export --root data/MonkeyCollection
+
+# 앱 단위 홀드아웃 30% + seen 앱마다 10% 를 ID eval 로
+monkey-collect export --ood-apps 0.3 --id-ratio 0.1
+
+# 화면이 안 바뀐 triple 도 포함
+monkey-collect export --keep-unchanged
+```
+
+산출물은 root 바로 아래에 놓인다: `stage1_train.jsonl` · `stage1_test_id.jsonl` ·
+`stage1_test_ood.jsonl` · `images/` · `export_meta.json`.
+
+주요 옵션:
+
+- `--root`: 수집 root (기본 `data/MonkeyCollection`)
+- `--ood-apps FRACTION`: **앱 단위**로 통째로 홀드아웃할 비율 (기본 `export.ood_apps`)
+- `--id-ratio FRACTION`: seen 앱 **각각에서 독립적으로** 뽑을 비율 (기본 `export.id_ratio`).
+  `--ood-apps` 와 완전히 독립적인 knob 이다
+- `--seed`: 분할 시드 (기본 `collection.seed`)
+- `--keep-unchanged`: `changed=false` triple 도 내보낸다 (기본 제외)
+
+**좌표는 export 가 리스케일한다.** `data-bbox` 와 action 의 `coordinate`/`coordinate1`/
+`coordinate2` 는 **같은 프레임**(1080x2400 기기 기준 840x1876)에 놓인다. 프레임은 세션이
+`metadata.json` 에 기록한 `device_width`/`device_height` 에서 `smart_resize_dims` 로 유도하며,
+`export.target_size` 는 그 유도 결과를 **검증하는 값**이지 대체하는 값이 아니다 — 어긋나면
+경고와 함께 `export_meta.json` 의 `frames` 에 양쪽이 다 남는다.
 
 ### `convert`
 
