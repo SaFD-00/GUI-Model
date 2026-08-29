@@ -610,9 +610,22 @@ class CollectionLoop:
                 if failures >= MAX_OBSERVE_FAILURES:
                     failures = 0
                     consecutive_recoveries += 1
-                    self._recover(
-                        "observation kept failing", clean=consecutive_recoveries > 1
-                    )
+                    # Cold at once, for the same reason the `_is_outside` branch
+                    # below is: when the observation ITSELF keeps failing the
+                    # loop knows nothing about what is on screen, and the one
+                    # measured cause of that is a foreign, never-idle activity
+                    # sitting on top of OUR task. `uiautomator dump` refuses
+                    # those outright ("ERROR: could not get idle state"), so
+                    # both dump paths fail and the loop goes blind exactly when
+                    # it needs to see. A LAUNCHER intent then resumes that task
+                    # and lands straight back on the same activity, so a soft
+                    # attempt is provably wasted -- and it is not cheap: each
+                    # wasted cycle is the full stabilization budget plus two
+                    # dump timeouts. Measured on the Pixel 6, Google Recorder's
+                    # RecordActivity reached through Markor's "Insert Image"
+                    # flow: 32 s per cycle, 96 s to earn the useless soft
+                    # recovery and 96 s more before the clean one escaped.
+                    self._recover("observation kept failing", clean=True)
                     previous = None
                     if consecutive_recoveries >= MAX_CONSECUTIVE_RECOVERIES:
                         self.stats.stop_reason = "could not stay in the app"

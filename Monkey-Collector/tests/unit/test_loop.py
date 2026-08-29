@@ -345,6 +345,23 @@ def test_repeated_dump_failures_relaunch_rather_than_crash(tmp_path):
     assert stats.recoveries >= 1
 
 
+def test_repeated_dump_failures_recover_cold_on_the_very_first_attempt(tmp_path):
+    """A soft resume is provably wasted when the observation itself is failing.
+
+    `uiautomator dump` refuses a screen that never goes idle ("ERROR: could not
+    get idle state"), so a foreign, never-idle activity sitting on top of OUR
+    task makes both dump paths fail and blinds the loop. A LAUNCHER intent then
+    resumes that task and lands straight back on the same activity. Measured on
+    the Pixel 6 -- Google Recorder's RecordActivity, reached through Markor's
+    "Insert Image" flow -- the soft attempt cost 96 s of dump timeouts and
+    changed nothing, and 96 s more passed before the clean recovery escaped.
+    """
+    adb = FakeAdb([Script(screen())], fail_dumps=3)
+    build(tmp_path, adb, max_steps=2).run()
+    assert adb.launches >= 1
+    assert adb.clean_launches == adb.launches, "every recovery here must be cold"
+
+
 def test_a_run_that_cannot_stay_in_the_app_gives_up(tmp_path):
     """Spending the rest of a 2h budget on an app that will not stay open costs
     the whole schedule."""
