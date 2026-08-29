@@ -244,12 +244,12 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 ./.venv/bin/python -m mypy src
 ```
 
-현재 기준선은 **378 passed** 다(2026-08-29, M1c-2 시점). ruff·mypy 는 **에러 0**.
+현재 기준선은 **442 passed** 다(2026-08-29, M1 완료 시점). ruff·mypy 는 **에러 0**.
 이 수가 줄면 회귀로 본다 — 단 **테스트를 의도적으로 삭제한 변경은 예외**이고, 그때는 삭제 개수까지
 세어 새 기준선을 여기에 갱신한다.
 
 > 기준선 이력: 858(기재) → **861**(실측) → 911(M1a 이식) → **274**(M1b 철거, 911 − 637)
-> → 363(M1c-1) → **378**(M1c-2).
+> → 363(M1c-1) → 378(M1c-2) → **442**(M1c-3).
 > 2026-08-29 시점에 `.venv` 의 editable 설치가 리포 이전 경로(`~/Desktop/Projects/...`)를 가리켜
 > 스위트가 **아예 실행되지 않는** 상태였다. `ModuleNotFoundError: No module named 'monkey_collector'`
 > 가 보이면 코드가 아니라 venv 를 먼저 의심하고 `uv sync --extra dev` 를 돌려라.
