@@ -97,6 +97,14 @@ class Triple:
     #: `changed`: a list can scroll (state differs) without leaving the page.
     page_changed: bool
     reason: str = ""
+    #: The AIG pages either side of the action (ARCHITECTURE §7), so a triple
+    #: and a `graph.json` edge can be traced to each other. Spelled as ints
+    #: exactly as §6/§7 do, while `pagematch` keys pages by str — the
+    #: conversion happens here, at the serialization boundary, and nowhere
+    #: else. ``-1`` marks a triple written before the fields existed; export
+    #: ignores unknown fields either way, so the Atlas contract is unchanged.
+    from_page: int = -1
+    to_page: int = -1
 
 
 class Session:
@@ -270,7 +278,16 @@ class Session:
         action: dict[str, Any],
         reason: str = "",
     ) -> Triple:
-        """Append one triple, deriving `changed` / `page_changed` from the pair."""
+        """Append one triple, deriving `changed` / `page_changed` from the pair.
+
+        ``from_page`` / ``to_page`` come from the observations' page keys —
+        never from a caller-supplied argument, so a triple can never disagree
+        with the observations it references. ``int()`` is unconditional on
+        purpose, matching :meth:`monkey_collector.aig.AIGEdge.to_dict`:
+        ``PageRegistry._mint`` is the only producer of page keys and always
+        mints decimal strings, so anything else is a bug that should fail
+        loudly rather than write a differently-typed field.
+        """
         triple = Triple(
             step=self._steps,
             before=before.index,
@@ -279,6 +296,8 @@ class Session:
             changed=before.state_str != after.state_str,
             page_changed=before.page_key != after.page_key,
             reason=reason,
+            from_page=int(before.page_key),
+            to_page=int(after.page_key),
         )
         with self.triples_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(triple), ensure_ascii=False) + "\n")
