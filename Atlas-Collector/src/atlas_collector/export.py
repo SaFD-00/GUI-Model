@@ -110,6 +110,8 @@ class ExportStats:
     dropped_missing_files: int = 0
     #: Records whose screen belonged to a DIFFERENT app than the session's.
     dropped_foreign: int = 0
+    #: Records whose image name was already claimed by an earlier record.
+    dropped_duplicate_step: int = 0
     ood_apps: list[str] = field(default_factory=list)
 
     @property
@@ -126,6 +128,7 @@ class ExportStats:
             "dropped_unparsable": self.dropped_unparsable,
             "dropped_missing_files": self.dropped_missing_files,
             "dropped_foreign": self.dropped_foreign,
+            "dropped_duplicate_step": self.dropped_duplicate_step,
             "ood_apps": sorted(self.ood_apps),
         }
 
@@ -290,6 +293,8 @@ class Exporter:
         #: "nothing happened" teaches the model to predict its own input.
         self.keep_unchanged = keep_unchanged
         self.stats = ExportStats()
+        #: Image names already written, so a repeated step cannot overwrite one.
+        self._image_names: set[str] = set()
 
     # -- discovery -----------------------------------------------------------
 
@@ -454,7 +459,18 @@ class Exporter:
             self.stats.dropped_unparsable += 1
             return None
 
+        # Two records must never claim one image. `image_name` derives the file
+        # from (package, step), so a repeated step silently overwrites the
+        # earlier JPEG and leaves that record pointing at another screen. A
+        # resume bug produced exactly that -- 22 duplicated steps in one
+        # session -- and nothing downstream noticed, which is the reason this
+        # check exists rather than a comment saying it cannot happen.
         name = image_name(package, triple.step)
+        if name in self._image_names:
+            logger.warning("{} step {}: duplicate image name {}", package, triple.step, name)
+            self.stats.dropped_duplicate_step += 1
+            return None
+        self._image_names.add(name)
         write_jpeg(before_png.read_bytes(), images_dir / name, self.frame)
         return build_record(
             before_xml=before_xml,

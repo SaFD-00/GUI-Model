@@ -259,18 +259,29 @@ class Session:
         ``completed_at`` is the skip signal for the next run, so it is set ONLY
         when a session ends on its own terms. An interrupted session leaves it
         null and is resumed rather than skipped.
+
+        ``extra`` is written UNDER the session's own fields, never over them.
+        `observations` is where the next resume starts writing, and the loop's
+        stats dict carries a key of the same name holding its per-run count --
+        so letting `extra` win made the resume point stick at the first run's
+        total. Measured: Markor resumed at observation 43 three times, so each
+        run overwrote the previous run's screens while triples.jsonl kept
+        appending. 108 triples ended up carrying 22 duplicate step numbers, and
+        `image_name` derives the image filename from the step, so two records
+        claimed one JPEG and older triples pointed at newer screens.
         """
-        meta: dict[str, Any] = {
-            "package": str(self.package),
-            "episode": self.episode,
-            "started_at": self._started_at,
-            "completed_at": time.time() if completed else None,
-            "observations": self._next_index,
-            "steps": self._steps,
-            "elapsed_sec": round(self.elapsed_sec, 1),
-        }
-        if extra:
-            meta.update(extra)
+        meta: dict[str, Any] = dict(extra or {})
+        meta.update(
+            {
+                "package": str(self.package),
+                "episode": self.episode,
+                "started_at": self._started_at,
+                "completed_at": time.time() if completed else None,
+                "observations": self._next_index,
+                "steps": self._steps,
+                "elapsed_sec": round(self.elapsed_sec, 1),
+            }
+        )
         self.metadata_path.write_text(
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
         )

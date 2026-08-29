@@ -198,3 +198,64 @@ def test_persistent_and_volatile_roots_are_separate(tmp_path):
     assert s.root.is_relative_to(tmp_path / "data")
     assert s.runtime.is_relative_to(tmp_path / "runtime")
     assert not s.runtime.is_relative_to(s.root)
+
+
+# ---------------------------------------------------------------------------
+# Resume numbering
+# ---------------------------------------------------------------------------
+
+
+def test_extra_cannot_move_the_resume_point(tmp_path):
+    """`extra` is the loop's stats dict, which carries its own `observations`
+    key holding a PER-RUN count. Letting it win pinned the resume point at the
+    first run's total: Markor resumed at observation 43 three times, each run
+    overwriting the last one's screens while triples.jsonl kept appending."""
+    session = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+    session.open(resume=False)
+    for index in range(5):
+        session.write_observation(
+            png=b"x",
+            raw_xml="<hierarchy/>",
+            page_key=str(index),
+            activity="com.a/.Main",
+            state_str=f"s{index}",
+            is_new_page=True,
+            match_kind="new",
+        )
+    session.write_metadata(completed=False, extra={"observations": 2, "steps": 1})
+    assert session.read_metadata()["observations"] == 5
+
+    resumed = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+    assert resumed.open(resume=True)
+    assert resumed.observation_count == 5, "a resume must not overwrite existing screens"
+
+
+def test_resuming_twice_keeps_step_numbers_unique(tmp_path):
+    """`image_name` derives the JPEG filename from the step, so a repeated step
+    means two records claiming one image."""
+    import json
+
+    steps = []
+    for _ in range(3):
+        session = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+        session.open(resume=True)
+        previous = None
+        for index in range(3):
+            observation = session.write_observation(
+                png=b"x",
+                raw_xml="<hierarchy/>",
+                page_key=str(index),
+                activity="com.a/.Main",
+                state_str=f"s{index}",
+                is_new_page=True,
+                match_kind="new",
+            )
+            if previous is not None:
+                session.write_triple(
+                    before=previous, after=observation, action={"action": "navigate_back"}
+                )
+            previous = observation
+        session.write_metadata(completed=False, extra={"observations": 3, "steps": 2})
+    rows = [json.loads(line) for line in session.triples_path.read_text().splitlines()]
+    steps = [row["step"] for row in rows]
+    assert len(steps) == len(set(steps)), f"duplicate step numbers: {steps}"

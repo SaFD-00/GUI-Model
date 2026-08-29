@@ -445,3 +445,24 @@ def test_an_untagged_dump_is_not_treated_as_foreign(tmp_path):
         tmp_path / "data", tmp_path / "runtime", tmp_path / "out", ood_apps=0.0, id_ratio=0.0
     ).run()
     assert stats.dropped_foreign == 0
+
+
+def test_two_triples_with_the_same_step_cannot_claim_one_image(tmp_path):
+    """A resume bug appended triples while restarting observation numbering, so
+    one session carried 22 duplicated steps. `image_name` is (package, step), so
+    the second write silently overwrote the first record's JPEG."""
+    import json
+
+    session = make_session(tmp_path, "com.a", steps=3)
+    # Replay the corruption: append a triple that reuses an existing step.
+    rows = session.triples_path.read_text().splitlines()
+    duplicate = json.loads(rows[0])
+    with session.triples_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(duplicate) + "\n")
+
+    stats = Exporter(
+        tmp_path / "data", tmp_path / "runtime", tmp_path / "out", ood_apps=0.0, id_ratio=0.0
+    ).run()
+    assert stats.dropped_duplicate_step == 1
+    images = sorted((tmp_path / "out" / "images").iterdir())
+    assert len(images) == stats.total_written, "one image per written record"
