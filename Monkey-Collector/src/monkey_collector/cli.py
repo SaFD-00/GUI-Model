@@ -2,15 +2,16 @@
 
 Host-pull rebuild: the foundation (``adb.py``, ``paths.py``, ``xml/``,
 ``pagematch.py``, ``stabilize.py``, ``session.py``, ``catalog.py``,
-``provision.py``) and the collection loop (``loop.py``, ``explore.py``,
-``aig.py``, ``semantic.py``) are done. Five subcommands are wired here because
-their implementations exist: ``catalog``, ``sync-installed``, ``provision``,
-``reset`` and ``run``.
+``provision.py``), the collection loop (``loop.py``, ``explore.py``, ``aig.py``,
+``semantic.py``) and the Stage-1 export (``export.py``) are done. Six
+subcommands are wired here because their implementations exist: ``catalog``,
+``sync-installed``, ``provision``, ``reset``, ``run`` and ``export``.
 
-``export`` (the Stage-1 jsonl export) does NOT exist yet and is NOT registered
-as a subcommand — not even as a placeholder that raises
-``NotImplementedError`` — because a registered subcommand that only ever raises
-makes ``--help`` describe capabilities the tool does not have.
+Every subcommand here is backed by a working implementation; a subcommand that
+only ever raises ``NotImplementedError`` would make ``--help`` describe
+capabilities the tool does not have, so none is ever registered ahead of its
+code. ``export`` (the Stage-1 jsonl export) joined them with M5 and is wired to
+:mod:`monkey_collector.export`.
 
 ``main()`` resolves the run config BEFORE dispatching, for every subcommand
 including ``catalog``. That is deliberate: ``--config`` naming a missing or
@@ -616,6 +617,59 @@ def cmd_reset(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# export — collected triples -> EXP08 Stage-1 jsonl
+# ---------------------------------------------------------------------------
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Convert collected triples into the Stage-1 (NEXT_STATE_PREDICTION) jsonl.
+
+    Reads ``{root}/raw`` and writes the three jsonl splits, ``images/`` and
+    ``export_meta.json`` at the root itself, so one collection stays one
+    directory. Touches no device: the corpus on disk is the only input.
+    """
+    from monkey_collector.export import SPLIT_ID, SPLIT_OOD, SPLIT_TRAIN, Exporter
+
+    config = args.run_config
+    exporter = Exporter(
+        raw_root(args.root),
+        runtime_root(args.root),
+        export_root(args.root),
+        target_size=config.export.target_size,
+        # Only a session that recorded no `wm size` falls back to this; the
+        # frame each app is actually written in comes from its own metadata.
+        device_size=(config.device.width, config.device.height),
+        ood_apps=args.ood_apps if args.ood_apps is not None else config.export.ood_apps,
+        id_ratio=args.id_ratio if args.id_ratio is not None else config.export.id_ratio,
+        seed=args.seed if args.seed is not None else config.collection.seed,
+        keep_unchanged=args.keep_unchanged,
+    )
+    stats = exporter.run()
+    if not stats.total_written:
+        print("nothing exported — no collected session produced a usable triple")
+        return 1
+
+    print(f"{stats.apps} app(s), {stats.triples_seen} triples seen")
+    for split in (SPLIT_TRAIN, SPLIT_ID, SPLIT_OOD):
+        print(f"  stage1_{split}.jsonl : {stats.written.get(split, 0)}")
+    print(
+        f"  dropped: {stats.dropped_unchanged} unchanged, "
+        f"{stats.dropped_unparsable} unparsable, "
+        f"{stats.dropped_missing_files} missing files, "
+        f"{stats.dropped_foreign} foreign, "
+        f"{stats.dropped_duplicate_step} duplicate step, "
+        f"{stats.dropped_unknown_action} unknown action"
+    )
+    # The contract's headline number (0 of 20,000 in the canonical corpus): if
+    # this is not 0, the rescale or a recorded device size is wrong.
+    print(f"  action coordinates outside their frame: {stats.coords_out_of_frame}")
+    if stats.ood_apps:
+        print(f"  held out for OOD: {', '.join(stats.ood_apps)}")
+    print(f"  -> {export_root(args.root)}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
@@ -625,17 +679,16 @@ def build_parser() -> argparse.ArgumentParser:
         prog="monkey-collect",
         description=(
             "Monkey-Collector — host-pull Android GUI data collector. "
-            "`catalog`, `sync-installed`, `provision`, `reset` and `run` are "
-            "implemented against the finished host-pull foundation (adb.py, "
-            "paths.py, xml/, pagematch.py, stabilize.py, session.py, catalog.py, "
-            "provision.py) and the LLM-Explorer collection loop (loop.py, "
-            "explore.py, aig.py, semantic.py)."
+            "`catalog`, `sync-installed`, `provision`, `reset`, `run` and "
+            "`export` are implemented against the finished host-pull foundation "
+            "(adb.py, paths.py, xml/, pagematch.py, stabilize.py, session.py, "
+            "catalog.py, provision.py), the LLM-Explorer collection loop "
+            "(loop.py, explore.py, aig.py, semantic.py) and the EXP08 Stage-1 "
+            "export (export.py)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Implemented: catalog, sync-installed, provision, reset, run.\n"
-            "NOT implemented yet: `export` (the Stage-1 jsonl export). It is not "
-            "registered as a subcommand.\n"
+            "Implemented: catalog, sync-installed, provision, reset, run, export.\n"
             "WARNING: `run` drives a REAL, logged-in device and has no action "
             "guard by design (AGENTS \u00a70.5) — exploration can send messages or "
             "post content."
@@ -844,6 +897,61 @@ def build_parser() -> argparse.ArgumentParser:
     p_reset.add_argument("--all", action="store_true", help="Delete every artifact under the root.")
     p_reset.add_argument("--dry-run", action="store_true", help="List what would go, delete nothing.")
     p_reset.set_defaults(func=cmd_reset)
+
+    # -- export ---------------------------------------------------------------
+    p_export = sub.add_parser(
+        "export",
+        help="Convert collected triples into the EXP08 Stage-1 jsonl.",
+        description=(
+            "Read {root}/raw and write stage1_train.jsonl, stage1_test_id.jsonl, "
+            "stage1_test_ood.jsonl, images/ and export_meta.json at the root. "
+            "Action coordinates and data-bbox are both rescaled into the frame "
+            "derived from the device size each session recorded (ARCHITECTURE §8.2) "
+            "— not into export.target_size, which is checked against it. "
+            "Reads the corpus only; no device is touched."
+        ),
+    )
+    p_export.add_argument(
+        "--root",
+        default=DEFAULT_ROOT,
+        help=f"The collection root to export (default: {DEFAULT_ROOT}).",
+    )
+    p_export.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Override collection.seed for the app split and the ID sample.",
+    )
+    p_export.add_argument(
+        "--keep-unchanged",
+        action="store_true",
+        help=(
+            "Also export triples whose screen did not change. Off by default: "
+            "they are real observations, but a corpus dominated by 'nothing "
+            "happened' teaches the model to predict its own input."
+        ),
+    )
+    p_export.add_argument(
+        "--ood-apps",
+        type=float,
+        default=None,
+        metavar="FRACTION",
+        help=(
+            "Fraction of APPS held out entirely for OOD eval "
+            "(default: export.ood_apps). Independent of --id-ratio."
+        ),
+    )
+    p_export.add_argument(
+        "--id-ratio",
+        type=float,
+        default=None,
+        metavar="FRACTION",
+        help=(
+            "Fraction of each SEEN app's triples reserved for ID eval, sampled per "
+            "app (default: export.id_ratio). Independent of --ood-apps."
+        ),
+    )
+    p_export.set_defaults(func=cmd_export)
 
     return parser
 

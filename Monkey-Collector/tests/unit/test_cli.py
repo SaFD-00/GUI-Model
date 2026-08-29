@@ -8,10 +8,11 @@ attaches to the namespace. Delete the ``load_run_config()`` call from
 ``main()`` and ``test_explicit_config_file_actually_reaches_the_command``
 fails immediately.
 
-Host-pull rebuild: five subcommands are wired — ``catalog``,
-``sync-installed``, ``provision``, ``reset`` and ``run`` — because only those
-have a working implementation behind them. ``export`` is not registered at all
-(see ``cli.py``'s module docstring for why no placeholder is used either).
+Host-pull rebuild: six subcommands are wired — ``catalog``, ``sync-installed``,
+``provision``, ``reset``, ``run`` and ``export`` — because each has a working
+implementation behind it. Nothing is registered ahead of its code (see
+``cli.py``'s module docstring for why no ``NotImplementedError`` placeholder is
+used either).
 
 Nothing here touches a device: ``run``'s tests drive :class:`tests.fakes.FakeAdb`
 and stub the LLM client away, because the collection target is a real,
@@ -188,13 +189,75 @@ def test_unknown_status_is_not_offered():
 
 
 # ---------------------------------------------------------------------------
-# run is registered; export still is not
+# run and export are both registered (M5)
 # ---------------------------------------------------------------------------
 
 
-def test_export_is_not_a_registered_subcommand():
-    with pytest.raises(SystemExit):
-        cli.main(["export"])
+def test_export_is_a_registered_subcommand_with_the_flags_the_export_needs():
+    args = cli.build_parser().parse_args(
+        [
+            "export", "--root", "/tmp/root", "--seed", "3",
+            "--keep-unchanged", "--ood-apps", "0.4", "--id-ratio", "0.2",
+        ]
+    )
+    assert args.func is cli.cmd_export
+    assert (args.root, args.seed, args.keep_unchanged) == ("/tmp/root", 3, True)
+    assert (args.ood_apps, args.id_ratio) == (0.4, 0.2)
+
+
+def test_export_defaults_leave_the_split_knobs_to_the_config():
+    args = cli.build_parser().parse_args(["export"])
+    assert args.keep_unchanged is False, "unchanged triples are opt-in"
+    assert args.ood_apps is None and args.id_ratio is None, "None means: use export.*"
+    assert args.seed is None
+
+
+def test_export_flags_outrank_the_config_and_reach_the_exporter(tmp_path, monkeypatch):
+    """A flag that is parsed and then ignored is worse than one that is missing."""
+    seen = {}
+
+    class _Recorder:
+        def __init__(self, *args, **kwargs):
+            seen.update(kwargs)
+            seen["dirs"] = args
+
+        def run(self):
+            from monkey_collector.export import ExportStats
+
+            return ExportStats()
+
+    import monkey_collector.export as export_module
+
+    monkeypatch.setattr(export_module, "Exporter", _Recorder)
+    # Nothing was written, so the empty-result exit code is expected.
+    assert cli.main(
+        ["export", "--root", str(tmp_path), "--seed", "5",
+         "--ood-apps", "0.4", "--id-ratio", "0.2", "--keep-unchanged"]
+    ) == 1
+    assert (seen["ood_apps"], seen["id_ratio"], seen["seed"]) == (0.4, 0.2, 5)
+    assert seen["keep_unchanged"] is True
+    assert seen["target_size"] == (840, 1876), "the contract frame comes from export.*"
+    assert seen["device_size"] == (1080, 2400), "only a fallback; the session's size wins"
+
+
+def test_export_without_the_flags_takes_the_configured_values(tmp_path, monkeypatch):
+    seen = {}
+
+    class _Recorder:
+        def __init__(self, *args, **kwargs):
+            seen.update(kwargs)
+
+        def run(self):
+            from monkey_collector.export import ExportStats
+
+            return ExportStats()
+
+    import monkey_collector.export as export_module
+
+    monkeypatch.setattr(export_module, "Exporter", _Recorder)
+    assert cli.main(["export", "--root", str(tmp_path)]) == 1
+    assert (seen["ood_apps"], seen["id_ratio"]) == (0.3, 0.1)
+    assert seen["seed"] == 42, "collection.seed"
 
 
 def test_run_is_registered_with_the_flags_the_runner_needs():
@@ -222,17 +285,17 @@ def test_run_defaults_are_the_safe_ones():
     assert args.prepare_device is True, "the device preconditions are the default"
 
 
-def test_help_epilog_names_what_is_and_is_not_implemented():
+def test_help_epilog_names_every_implemented_subcommand():
     epilog = cli.build_parser().epilog or ""
-    assert "Implemented: catalog, sync-installed, provision, reset, run." in epilog
-    assert "export" in epilog
-    assert "NOT implemented" in epilog
+    assert "Implemented: catalog, sync-installed, provision, reset, run, export." in epilog
+    assert "NOT implemented" not in epilog, "M5 shipped export; the epilog must not lag"
     assert "action guard" in epilog, "AGENTS §0.5 is a warning, not a footnote"
 
 
-def test_module_docstring_does_not_promise_export():
+def test_module_docstring_lists_export_as_implemented():
     doc = cli.__doc__ or ""
-    assert "does NOT exist yet" in doc
+    assert "does NOT exist yet" not in doc
+    assert "export" in doc
 
 
 # ---------------------------------------------------------------------------
