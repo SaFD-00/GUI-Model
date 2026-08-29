@@ -1,5 +1,26 @@
 # Monkey-Collector
 
+> ## ⚠️ 이 문서는 2026-08-29 재구축 이전 기준이다 (전면 개정 예정)
+>
+> 이 수집기는 **device-push(Android 앱 + AccessibilityService + TCP)에서 host-pull 로 전환**되는
+> 중이다. 아래 본문 중 다음은 **더 이상 사실이 아니다**:
+>
+> - "Android app" 설치·빌드 절차 — **Android 앱은 삭제됐다.** 디바이스에서 도는 우리 코드는 없다.
+> - `run` · `convert` · `convert-all` · `page-map` · `page-map-all` · `regenerate` 서브커맨드 —
+>   **현재 등록돼 있지 않다.** 지금 있는 것은 `catalog` · `sync-installed` · `provision` · `reset` 넷뿐이다.
+> - `exploration.strategy` (DFS/BFS/GREEDY), `screen_matching.*` 설정 — **삭제됐다.**
+> - `data/raw` + `runtime` 분리 저장 구조 — **하나의 collection root**(`data/MonkeyCollection`)로 합쳐졌다.
+> - 디바이스가 에뮬레이터라는 서술 — **수집 타깃은 실기기 Pixel 6 (`19101FDF6004EH`)** 이다.
+>   같은 머신의 `emulator-5556` 은 다른 작업이 점유 중이라 건드리면 안 된다.
+>
+> 현재 상태의 정본은 [ARCHITECTURE.md](./ARCHITECTURE.md)(설계)와 [AGENTS.md](./AGENTS.md)(작업 규칙)다.
+> 지금 실제로 되는 것을 보려면:
+>
+> ```bash
+> ./.venv/bin/python -m monkey_collector.cli --help
+> ./.venv/bin/python -m monkey_collector.cli catalog --stats
+> ```
+
 Android GUI world model 학습용 데이터를 수집하는 App + Server 파이프라인이다. Android AccessibilityService 앱이 화면 전환을 감지해 screenshot 과 XML 을 보내고, Python 서버가 다음 action 을 선택해 ADB 로 실행한다.
 
 ## 개요
