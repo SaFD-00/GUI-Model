@@ -6,8 +6,11 @@
 > 중이다. 아래 본문 중 다음은 **더 이상 사실이 아니다**:
 >
 > - "Android app" 설치·빌드 절차 — **Android 앱은 삭제됐다.** 디바이스에서 도는 우리 코드는 없다.
-> - `run` · `convert` · `convert-all` · `page-map` · `page-map-all` · `regenerate` 서브커맨드 —
->   **현재 등록돼 있지 않다.** 지금 있는 것은 `catalog` · `sync-installed` · `provision` · `reset` 넷뿐이다.
+> - `convert` · `convert-all` · `page-map` · `page-map-all` · `regenerate` 서브커맨드 —
+>   **현재 등록돼 있지 않다.** 지금 있는 것은 `catalog` · `sync-installed` · `provision` ·
+>   `reset` · `run` 다섯이다. `run` 은 2026-08-29 에 host-pull 로 다시 만들어졌고 **플래그가
+>   전부 다르다** — 아래 「CLI」 §`run` 만 갱신돼 있고, 「4. 수집 실행」 절의 TCP/서버 서술은
+>   여전히 옛 구조다.
 > - `exploration.strategy` (DFS/BFS/GREEDY), `screen_matching.*` 설정 — **삭제됐다.**
 >   `config/run.yaml` 에 `exploration` 섹션이 다시 생겼지만 **완전히 다른 키들**이다
 >   (LLM-Explorer 정책 상수 — `max_explore_current_state` 등). `strategy` 를 되살리지 마라.
@@ -220,40 +223,45 @@ monkey-collect run --apps all --config config/run.yaml
 
 ### `run`
 
-서버 드리븐 수집. `catalog/apps.csv` 의 `installed=true` 앱 전부 또는 지정한 패키지 목록을 순차 수집한다.
+host-pull 수집. `catalog/apps.csv` 의 **`is_collectable`** 인 앱(installed AND package 해소됨
+AND `status != excluded`)을 순차 수집한다. `auth_required=account_required` 는 **기본 스킵**이고
+`--include-auth` 로만 포함된다(AGENTS §3).
+
+> ⚠️ 수집 대상은 **실계정으로 로그인된 개인 기기**이고 이 수집기에는 **action guard 가 없다**.
+> 탐색기는 전송 버튼도 그냥 버튼으로 누른다 — 의도된 결정이다(AGENTS §0.5).
 
 ```bash
-monkey-collect run --apps all                                   # 기본: 시간 예산 앱당 2h
-monkey-collect run --apps all --budget-mode time --duration 2h  # 시간 예산 명시
-monkey-collect run --apps com.google.android.deskclock --budget-mode steps --steps 1500
+monkey-collect run --apps all                                    # 기본: 시간 예산 앱당 2h
+monkey-collect run --apps all --budget-mode time --max-duration 2h
+monkey-collect run --apps net.gsantner.markor --budget-mode steps --max-steps 300
+monkey-collect run --apps all --input-mode random                # 입력 텍스트 API 호출 없이
 ```
 
 주요 옵션:
 
-- `--apps` (필수): `all` 이면 `catalog/apps.csv` 의 `installed=true` 전부. 아니면 하나 이상의 package_id.
-- `--strategy`: 탐색 전략 `DFS` / `BFS` / `GREEDY` 선택 (canonical 기본 `BFS`). 미지정 시 `config/run.yaml` 의 `exploration.strategy` 를 따른다 (의미는 「설정」 섹션 참조).
-- `--config`: 사용할 config YAML 경로 (기본 `config/run.yaml`).
-- `--budget-mode {time,steps}`: 세션 종료 조건. `time` = `--duration` 벽시계 예산, `steps` = `--steps` action 수. 미지정 시 `--steps`/`--duration` 중 준 쪽으로 추론(둘 다 있고 모드 미지정이면 config 값 유지 + 경고). 기본 `config/run.yaml` 의 `budget_mode`(제품 기본 `time`)
-- `--duration`: `budget_mode=time` 일 때 앱 세션당 벽시계 예산. 형식 `2h`/`120m`/`7200s`/`7200`(맨숫자=초). 기본 `config` 의 `max_duration`(`2h`)
-- `--steps`: `budget_mode=steps` 일 때 세션당 최대 step 수 (기본 1500)
-- `--seed`: explorer 랜덤 시드 (기본 42)
-- `--delay`: action 사이 대기 시간(ms, 기본 1500)
-- `--port`: TCP server port (기본 12345)
-- `--data-dir`: 영속 데이터 루트 — pages/observations, page_graph (기본 `data`)
-- `--runtime-dir`: 휘발성 런타임 **root** (기본 `runtime`) — 앱별 상태가 `{root}/apps/{package}/` 에 쌓인다. 실행 로그는 예외로 이 플래그를 따르지 않고 항상 repo 루트의 `runtime/logs/` 에 남는다(로그 싱크가 config 로드보다 먼저 붙어야 하므로)
-- `--input-mode`: 입력 텍스트 생성 모드 `api` (LLM, 현재 앱 설명을 프롬프트에 포함) 또는 `random` (hardcoded). 기본 `api`
-- `--luminance-prefilter`: luminance `on` / `off`. 기본 `on` — OBSERVATION dedup + PAGE pixel 게이트 지문 공급(off 면 pixel 게이트 abstain → element 기준 단독)
-- `--luminance-threshold`: 픽셀 밝기 차이 `|ΔY|` 임계값 0–255 (기본 10)
-- `--screenshot-diff-threshold`: 같은 **observation** 으로 볼 차이 픽셀 비율 (기본 0.02)
-- `--luminance-low-res-width`: luminance 지문 다운스케일 너비 px (기본 100)
-- `--persist-filtered`: 필터된(prefilter/dedup) 재방문을 그 page 아래 자체 observation(방문마다 `0,1,2,…`)으로 저장 `on` / `off`. 기본 `on` — `off` 면 재사용 관측은 파일을 안 쓰는 기존 절약 동작
-- `--bm25-top-k`: BM25 로 화면당 검증할 후보 page 수 (기본 5)
-- `--element-criterion`: element 동일-page 기준 `diff`(`|A△B|<--element-diff-max`) / `jaccard`(`>--element-jaccard-min`) (기본 `diff`)
-- `--element-diff-max`: 같은 page 로 볼 최대 상이 element-line 수 (기본 5)
-- `--element-jaccard-min`: 같은 page 로 볼 최소 element-line Jaccard (`jaccard` 모드, 기본 0.5)
-- `--page-pixel-diff-threshold`: PAGE 병합을 확정하는 pixel 게이트 차이 픽셀 비율 (기본 0.3)
-- `--new-session`: 해당 패키지의 기존 세션을 삭제하고 새로 시작
-- `--force`: `completed_at` 이 채워진 앱도 다시 수집 (기본은 완료 앱 skip)
+- `--apps`: `all`(기본) 이면 collectable 전부. 아니면 package_id 목록.
+- `--serial`: 디바이스 시리얼. 기본은 `config/run.yaml` 의 `device.serial`(실기기 고정).
+- `--budget-mode {time,steps}`: 세션 종료 조건. 미지정 시 config 의 `budget_mode`(기본 `time`).
+  **켜지지 않은 쪽 예산은 종료에 관여하지 않는다** — `time` 이면 step 예산은 무시된다.
+- `--max-duration`: `time` 모드의 앱당 벽시계 예산 (`2h`/`120m`/`7200s`/맨숫자=초).
+- `--max-steps`: `steps` 모드의 앱당 최대 action 수.
+- `--seed`: 탐색기 RNG 시드 (기본 `collection.seed`=42).
+- `--input-mode {api,random}`: `input_text` 값 생성 모드. `llm.input_mode` 를 이 실행에 한해 덮는다.
+  semantic 라벨링은 별개 스위치(`llm.semantic_labeling`)다.
+- `--root`: 하나의 collection root (기본 `data/MonkeyCollection`). `raw/` · `runtime/` ·
+  `run.log` · export 가 전부 이 아래 있다.
+- `--force`: `completed_at` 이 채워진 앱도 다시 수집 (기본은 완료 앱 skip, 미완료 세션은 resume).
+- `--include-auth`: `account_required` 앱도 수집.
+- `--no-prepare-device`: 기기 사전 준비를 건너뛴다. **기본은 적용**이고, 적용되는 것은
+  `svc power stayon true`(화면 꺼짐→잠금이면 dump 가 `com.android.systemui` 가 된다)와
+  `settings put global ota_disable_automatic_update 1`(GMS 업데이트 모달은 버튼이
+  "Download & install now" 하나뿐이라 가드 없는 탐색기가 눌러버릴 수 있다) 두 가지다.
+  둘 다 **기기의 시스템 설정을 바꾼다.** 시작 시 `dumpsys window | grep mCurrentFocus` 도
+  한 번 찍어 로그에 남긴다 — "stuck outside the app" 진단의 첫 단서다.
+
+앱 하나가 실패해도 sweep 은 계속되고, 그 세션은 `completed_at=null` 로 남아 다음 실행에서 resume 된다.
+산출물은 앱마다 `{root}/raw/{pkg}/` 아래 `observations/` · `triples.jsonl` · `graph.json`(AIG) ·
+`metadata.json`, 그리고 `{root}/runtime/apps/{pkg}/` 아래 `activity_coverage.csv` · `cost.csv` 다.
 
 ### `sync-installed`
 

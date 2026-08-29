@@ -76,7 +76,7 @@ host-pull 은 기다릴 이유가 없다. 화면이 멎었는지는 호스트가
 | `semantic.py` | semantic state / element, same-function 그룹핑 | DONE |
 | `aig.py` | AIG 그래프 + `graph.json` | DONE |
 | `explore.py` | LLM-Explorer 탐색 정책 (`Explorer` 6분기 + `Navigator`) | DONE |
-| `loop.py` | host-pull 수집 루프 | M4 |
+| `loop.py` | host-pull 수집 루프 | DONE |
 | `export.py` / `_exp08_prompt.py` | EXP08 Stage-1 export | M5 |
 
 ---
@@ -92,7 +92,7 @@ host-pull 은 기다릴 이유가 없다. 화면이 멎었는지는 호스트가
 6. explore.select(...)                        다음 action 결정 (규칙 기반)
 7. adb.tap / swipe / text / key               실행
 8. (다음 루프의 1~3 이 관측 N+1 을 만든다)
-9. session.write_triple(N, N+1, action, …)    + aig.add_transition(...)
+9. session.write_triple(N, N+1, action, …)    + aig.record_transition(...)
 ```
 
 **dump 는 정착 후 한 번만 뜬다.** Pixel 6 실측으로 `uiautomator dump` 는 2.341s, `screencap -p` 는
@@ -231,7 +231,15 @@ DiGraph, `utg.js` 로 덤프) 하나뿐이다. **AIG 는 그 UTG 를 이 프로�
 
 ### 6.1 위치와 형식
 
-`{root}/raw/{package}/graph.json` — 세션당 하나. 새 노드·엣지가 생길 때 갱신한다.
+`{root}/raw/{package}/graph.json` — 세션당 하나. **매 관측마다 다시 쓴다** — 몇 kB 짜리
+쓰기라 step 비용(dump 만 2.34s)에 묻히고, 그래프가 가장 필요한 순간(세션이 중간에 죽었을 때)에
+디스크에 남아 있다.
+
+**resume 은 그래프를 복원하지 않는다.** page id 를 발급하는 `PageRegistry` 는 상태를 저장하지
+않으므로, 새 registry 는 처음 본 화면에 `"0"` 을 준다 — 그게 이전 run 의 노드 `"0"` 이라는 보장이
+없다. `AIG.load` 로 이어붙이면 이번 run 의 엣지와 coverage 가 **다른 page 에 귀속**되어 시도한 적
+없는 action 이 explored 로 찍힌다(수집 데이터만 봐서는 발견 불가). 그래서 재개 세션은 새 AIG 로
+시작하고 `graph.json` 을 덮어쓴다 — observation/triple 코퍼스는 정상적으로 이어진다.
 
 ```json
 {
@@ -309,7 +317,8 @@ triple 에는 Atlas 스키마에 **`from_page` / `to_page` 두 필드만 추가*
 │   ├── apps/{package}/
 │   │   ├── activity_coverage.csv
 │   │   └── cost.csv
-│   └── logs/run_*.log               휘발성 — 스캐폴딩
+│   └── logs/                        `paths.logs_root` 만 있고 `run` 은 쓰지 않는다
+├── run.log                          `run` 의 실행 로그 — root 안에 둔다
 ├── stage1_train.jsonl               export 산출물
 ├── stage1_test_id.jsonl
 ├── stage1_test_ood.jsonl
@@ -482,7 +491,7 @@ Stage-1 human turn 에 나오지 않으므로 emit 하지 않는다.
 | `sync-installed` | DONE |
 | `provision` | DONE |
 | `reset` | DONE |
-| `run` | **M4 — 미구현, 등록도 안 됨** |
+| `run` | DONE |
 | `export` | **M5 — 미구현, 등록도 안 됨** |
 
 `NotImplementedError` 를 던지는 유령 서브커맨드를 만들지 않는다. 구현이 생길 때 이 표와
