@@ -75,9 +75,19 @@ _BUILTIN_DEFAULTS: dict[str, dict[str, Any]] = {
         "max_diff_elements": 2,
         "same_activity_only": True,
     },
+    "exploration": {
+        "max_explore_current_state": 10,
+        "max_steps_outside": 3,
+        "max_navigate_steps": 10,
+        "max_activity_stagnation": 100,
+        "random_explore_prob": 0.0,
+        "skip_similar_elements": True,
+        "min_elements_for_grouping": 5,
+    },
     "llm": {
         "model": "qwen/qwen3.8-flash",
         "input_mode": "api",
+        "semantic_labeling": True,
     },
     "export": {
         "target_size": [840, 1876],
@@ -173,11 +183,46 @@ class PageMatchingConfig:
 
 
 @dataclass
+class ExplorationConfig:
+    """LLM-Explorer policy knobs (ARCHITECTURE §5), consumed by
+    :class:`~monkey_collector.explore.Explorer` and
+    :class:`~monkey_collector.semantic.SemanticLabeler`."""
+
+    #: Consecutive observations of the same structure frame tolerated before the
+    #: explorer presses Back to escape.
+    max_explore_current_state: int = 10
+    #: Consecutive steps spent outside the app before Back is pressed.
+    max_steps_outside: int = 3
+    #: Step budget for one navigation plan before it is abandoned.
+    max_navigate_steps: int = 10
+    #: Steps without activity-coverage growth before an app restart is requested.
+    max_activity_stagnation: int = 100
+    #: Probability of skipping the frontier branches and acting at random.
+    #: 0.0 is the reference default (``RANDOM_EXPLORE_PROB``).
+    random_explore_prob: float = 0.0
+    #: Whether same-function groups prune the frontier at all. Turning this off
+    #: disables the ONE way an LLM can change what gets explored (§5.2).
+    skip_similar_elements: bool = True
+    #: Screens with fewer actionable elements than this get no grouping.
+    #: A SCREEN size floor, not a group size floor — the reference's constant is
+    #: named ``MIN_SIZE_SAME_FUNCTION_ELEMENT_GROUP`` but compares
+    #: ``len(elements)``. See ``semantic.py``'s module docstring.
+    min_elements_for_grouping: int = 5
+
+
+@dataclass
 class LlmConfig:
-    """LLM settings. The LLM is used for input-text generation ONLY."""
+    """LLM settings. Used in exactly three places (AGENTS §2(c)): semantic page
+    and element labelling, same-function element grouping, and ``input_text``
+    value generation. NEVER page identity, and never the choice of what to do
+    next."""
 
     model: str = "qwen/qwen3.8-flash"
     input_mode: str = "api"  # api | random
+    #: Whether to ask the model for page labels and same-function groups.
+    #: False (or a missing API key) degrades to structure-hash labels and no
+    #: pruning; exploration continues either way.
+    semantic_labeling: bool = True
 
 
 @dataclass
@@ -209,6 +254,7 @@ class RunConfig:
     device: DeviceConfig = field(default_factory=DeviceConfig)
     collection: CollectionConfig = field(default_factory=CollectionConfig)
     page_matching: PageMatchingConfig = field(default_factory=PageMatchingConfig)
+    exploration: ExplorationConfig = field(default_factory=ExplorationConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
     #: The run.yaml actually read, or None when builtin defaults stood alone.
@@ -320,6 +366,27 @@ def _require_positive_int(name: str, value: Any) -> None:
         )
 
 
+def _require_non_negative_int(name: str, value: Any) -> None:
+    """Reject negatives and non-ints for a step/element COUNT.
+
+    Zero is legal here, unlike :func:`_require_positive_int`: a budget of 0 is a
+    meaningful "never do this" for every exploration knob, whereas a zero pixel
+    dimension is always a bug.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ConfigError(f"{name} must be a non-negative int, got {value!r}.")
+
+
+def _require_bool(name: str, value: Any) -> None:
+    """Reject a non-bool for a flag.
+
+    ``"false"`` is truthy, so a YAML quoting slip would otherwise turn a
+    disabled feature into an enabled one with nothing to show for it.
+    """
+    if not isinstance(value, bool):
+        raise ConfigError(f"{name} must be true or false, got {value!r}.")
+
+
 def _require_unit_interval(name: str, value: Any) -> None:
     """Reject anything outside the closed interval [0.0, 1.0] for a ratio/threshold."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -384,7 +451,24 @@ def _validate(cfg: RunConfig) -> None:
             f"(content-free signature symmetric-difference budget), got {budget!r}"
         )
 
+    # -- exploration ---------------------------------------------------------
+    for knob, budget in (
+        ("max_explore_current_state", cfg.exploration.max_explore_current_state),
+        ("max_steps_outside", cfg.exploration.max_steps_outside),
+        ("max_navigate_steps", cfg.exploration.max_navigate_steps),
+        ("max_activity_stagnation", cfg.exploration.max_activity_stagnation),
+        ("min_elements_for_grouping", cfg.exploration.min_elements_for_grouping),
+    ):
+        _require_non_negative_int(f"exploration.{knob}", budget)
+    _require_unit_interval(
+        "exploration.random_explore_prob", cfg.exploration.random_explore_prob
+    )
+    _require_bool(
+        "exploration.skip_similar_elements", cfg.exploration.skip_similar_elements
+    )
+
     # -- llm -----------------------------------------------------------------
+    _require_bool("llm.semantic_labeling", cfg.llm.semantic_labeling)
     if cfg.llm.input_mode not in VALID_INPUT_MODES:
         raise ConfigError(
             f"llm.input_mode must be one of {sorted(VALID_INPUT_MODES)}, "
@@ -490,6 +574,7 @@ def load_run_config(path: str | Path | None = None) -> RunConfig:
             device=DeviceConfig(**device_raw),
             collection=CollectionConfig(**merged["collection"]),
             page_matching=PageMatchingConfig(**merged["page_matching"]),
+            exploration=ExplorationConfig(**merged["exploration"]),
             llm=LlmConfig(**merged["llm"]),
             export=ExportConfig(**export_raw),
             source_path=source,
@@ -512,6 +597,7 @@ __all__ = [
     "CollectionConfig",
     "ConfigError",
     "DeviceConfig",
+    "ExplorationConfig",
     "ExportConfig",
     "LlmConfig",
     "PageMatchingConfig",

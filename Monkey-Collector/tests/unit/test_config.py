@@ -441,3 +441,113 @@ def test_max_duration_can_be_overridden_by_file_and_env(tmp_path, monkeypatch):
 
     monkeypatch.setenv("MC_COLLECTION_MAX_DURATION", "90m")
     assert load_run_config(path).collection.max_duration_sec == 5400
+
+
+# ---------------------------------------------------------------------------
+# exploration — the LLM-Explorer policy knobs (ARCHITECTURE §5)
+# ---------------------------------------------------------------------------
+
+
+def test_exploration_defaults_are_the_reference_constants():
+    """Every default here is a named constant in ``input_policy3.py``:
+    ``MAX_EXPLORE_CURRENT_STATE_TIME`` 10, ``MAX_NUM_STEPS_OUTSIDE`` 3,
+    ``MAX_NAVIGATE_NUM_AT_ONE_TIME`` 10,
+    ``MAX_EXPLORED_ACTIVITIES_NOT_INCREASE_TIME`` 100, ``RANDOM_EXPLORE_PROB``
+    0.0, ``MIN_SIZE_SAME_FUNCTION_ELEMENT_GROUP`` 5.
+    """
+    exploration = load_run_config().exploration
+    assert exploration.max_explore_current_state == 10
+    assert exploration.max_steps_outside == 3
+    assert exploration.max_navigate_steps == 10
+    assert exploration.max_activity_stagnation == 100
+    assert exploration.random_explore_prob == 0.0
+    assert exploration.skip_similar_elements is True
+    assert exploration.min_elements_for_grouping == 5
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "max_explore_current_state",
+        "max_steps_outside",
+        "max_navigate_steps",
+        "max_activity_stagnation",
+        "min_elements_for_grouping",
+    ],
+)
+@pytest.mark.parametrize("value", [-1, 0.5, "many"])
+def test_negative_and_non_int_exploration_budgets_are_rejected(tmp_path, key, value):
+    path = write_yaml(tmp_path, f"exploration:\n  {key}: {value}\n")
+    with pytest.raises(ConfigError, match=key):
+        load_run_config(path)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "max_explore_current_state",
+        "max_steps_outside",
+        "max_navigate_steps",
+        "max_activity_stagnation",
+        "min_elements_for_grouping",
+    ],
+)
+def test_zero_exploration_budgets_are_accepted(tmp_path, key):
+    """Unlike a pixel dimension, 0 is a meaningful "never" for every one of
+    these — e.g. ``min_elements_for_grouping: 0`` groups on any screen."""
+    path = write_yaml(tmp_path, f"exploration:\n  {key}: 0\n")
+    assert getattr(load_run_config(path).exploration, key) == 0
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.5])
+def test_random_explore_prob_outside_the_unit_interval_is_rejected(tmp_path, value):
+    path = write_yaml(tmp_path, f"exploration:\n  random_explore_prob: {value}\n")
+    with pytest.raises(ConfigError, match="random_explore_prob"):
+        load_run_config(path)
+
+
+@pytest.mark.parametrize("value", ["0.0", "1.0", "0.25"])
+def test_random_explore_prob_accepts_the_closed_unit_interval(tmp_path, value):
+    path = write_yaml(tmp_path, f"exploration:\n  random_explore_prob: {value}\n")
+    assert load_run_config(path).exploration.random_explore_prob == float(value)
+
+
+@pytest.mark.parametrize(
+    ("section", "key"),
+    [("exploration", "skip_similar_elements"), ("llm", "semantic_labeling")],
+)
+def test_a_quoted_flag_is_rejected_rather_than_read_as_true(tmp_path, section, key):
+    """``bool("false")`` is ``True``. A YAML quoting slip would otherwise turn a
+    disabled feature back on with nothing to show for it."""
+    path = write_yaml(tmp_path, f'{section}:\n  {key}: "false"\n')
+    with pytest.raises(ConfigError, match=key):
+        load_run_config(path)
+
+
+@pytest.mark.parametrize(
+    ("section", "key"),
+    [("exploration", "skip_similar_elements"), ("llm", "semantic_labeling")],
+)
+def test_flags_load_from_yaml(tmp_path, section, key):
+    path = write_yaml(tmp_path, f"{section}:\n  {key}: false\n")
+    assert getattr(getattr(load_run_config(path), section), key) is False
+
+
+def test_semantic_labeling_defaults_on(tmp_path):
+    assert load_run_config().llm.semantic_labeling is True
+
+
+def test_exploration_knobs_take_env_overrides(monkeypatch):
+    monkeypatch.setenv("MC_EXPLORATION_MAX_STEPS_OUTSIDE", "9")
+    monkeypatch.setenv("MC_EXPLORATION_SKIP_SIMILAR_ELEMENTS", "false")
+    monkeypatch.setenv("MC_LLM_SEMANTIC_LABELING", "0")
+    cfg = load_run_config()
+    assert cfg.exploration.max_steps_outside == 9
+    assert cfg.exploration.skip_similar_elements is False
+    assert cfg.llm.semantic_labeling is False
+
+
+def test_an_unknown_exploration_key_is_rejected(tmp_path):
+    path = write_yaml(tmp_path, "exploration:\n  max_explore_current_stat: 3\n")
+    with pytest.raises(ConfigError):
+        load_run_config(path)

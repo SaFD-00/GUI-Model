@@ -86,8 +86,41 @@ page_matching:
   # Env: MC_PAGE_MATCHING_SAME_ACTIVITY_ONLY
   same_activity_only: true
 
+exploration:
+  # LLM-Explorer 탐색 정책 (ARCHITECTURE §5). "다음에 무엇을 누를지" 는 100% 규칙 기반이고
+  # LLM 이 탐색에 개입하는 지점은 same-function 그룹핑 하나뿐이다 (skip_similar_elements).
+  #
+  # 같은 구조 프레임(structure_str)을 연속으로 이만큼 본 뒤에도 화면이 안 바뀌면 BACK 으로 탈출.
+  # Env: MC_EXPLORATION_MAX_EXPLORE_CURRENT_STATE
+  max_explore_current_state: 10
+  # 앱 밖에서 연속으로 이만큼 step 을 보내면 BACK 으로 되돌린다. 임계 이하에서는 그냥 탐색을
+  # 계속한다 — 일시적인 시스템 화면은 스스로 사라지는 쪽이 흔해서 첫 프레임에 BACK 을 치면
+  # step 만 버린다. Env: MC_EXPLORATION_MAX_STEPS_OUTSIDE
+  max_steps_outside: 3
+  # 네비게이션 계획 하나가 쓸 수 있는 최대 step. 초과하면 계획을 버리고 재계획한다.
+  # Env: MC_EXPLORATION_MAX_NAVIGATE_STEPS
+  max_navigate_steps: 10
+  # activity coverage 가 이만큼의 step 동안 늘지 않으면 앱 재시작을 **요청**한다
+  # (정책은 결정만 내고 디바이스는 수집 루프가 몬다). Env: MC_EXPLORATION_MAX_ACTIVITY_STAGNATION
+  max_activity_stagnation: 100
+  # 미탐색 우선 분기를 건너뛰고 곧바로 무작위 action 을 낼 확률. 레퍼런스 기본값 0.0.
+  # Env: MC_EXPLORATION_RANDOM_EXPLORE_PROB
+  random_explore_prob: 0.0
+  # same-function 그룹 가지치기 on/off. **LLM 이 탐색 결과를 되돌릴 수 없게 바꾸는 유일한
+  # 스위치다** — 끄면 라벨은 계속 붙지만 후보는 하나도 줄지 않는다.
+  # Env: MC_EXPLORATION_SKIP_SIMILAR_ELEMENTS
+  skip_similar_elements: true
+  # 화면의 **actionable element 수**가 이 값 미만이면 그룹핑을 적용하지 않는다.
+  # 그룹 크기 하한이 아니라 **화면 크기 하한**이다 (레퍼런스 상수 이름이
+  # MIN_SIZE_SAME_FUNCTION_ELEMENT_GROUP 이지만 실제로는 len(elements) 를 본다).
+  # 자세한 내막은 src/monkey_collector/semantic.py 의 모듈 docstring.
+  # Env: MC_EXPLORATION_MIN_ELEMENTS_FOR_GROUPING
+  min_elements_for_grouping: 5
+
 llm:
-  # LLM 은 **입력 텍스트 생성 단 하나**에만 쓰인다. page 식별에는 절대 쓰지 않는다.
+  # LLM 이 쓰이는 곳은 정확히 셋이다 (AGENTS §2(c)): semantic 라벨 생성, same-function
+  # element 그룹핑, input_text 값 생성. **page 식별에는 절대 쓰지 않는다**, 그리고
+  # "다음에 무엇을 누를지" 도 고르지 않는다.
   # OpenRouter Chat Completions 모델 id. Env: MC_LLM_MODEL
   model: qwen/qwen3.8-flash
   # 입력 텍스트 생성 모드. Options: api | random
@@ -95,6 +128,11 @@ llm:
   #   random = hardcoded fallback (API 비용 없음)
   # Env: MC_LLM_INPUT_MODE
   input_mode: api
+  # semantic 라벨 + same-function 그룹핑을 LLM 에 물어볼지. false 이거나
+  # OPENROUTER_API_KEY 가 없으면 라벨은 structure_str, 그룹은 빈 집합으로 열화한다
+  # (가지치기만 사라지고 탐색은 그대로 계속된다). 활성 여부는 graph.json 의
+  # semantic_labeling 에 기록된다. Env: MC_LLM_SEMANTIC_LABELING
+  semantic_labeling: true
 
 export:
   # Stage-1 export 좌표 프레임 [width, height]. 840x1876 = smart_resize_dims(2400, 1080).
