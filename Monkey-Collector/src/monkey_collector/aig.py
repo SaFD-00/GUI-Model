@@ -37,13 +37,16 @@ WHAT SURVIVES save() -> load(), AND WHAT DOES NOT
     ``explored`` — which is exactly the set of edge keys, because
     :meth:`record_transition` is the only thing that writes it.
 
-NOT restored: ``nav_failed`` (routing failures), and the UNTRIED part of
-``known`` — the actionable elements of a page are only knowable while standing
-on it, so the frontier's denominator has to be re-observed. Both losses push the
-SAFE way: a resumed session may re-try a route it had given up on, or
-under-report ``unexplored_actions`` until it revisits the page. Neither can mark
-an untried action explored, which is the failure mode that would corrupt the
-corpus silently.
+NOT restored: ``nav_failed`` (routing failures), the UNTRIED part of ``known``,
+and ``known_elements`` — the actionable elements of a page are only knowable
+while standing on it, so the frontier's denominator has to be re-observed. The
+consequence of the last one is concrete: after :meth:`load`, the explorer's
+navigate-to-a-remote-target branch proposes nothing until pages are revisited,
+because there is no remembered element to route toward. All three losses push
+the SAFE way: a resumed session may re-try a route it had given up on, explore
+only what is in front of it for a while, or under-report
+``unexplored_actions``. None of them can mark an untried action explored, which
+is the failure mode that would corrupt the corpus silently.
 """
 
 from __future__ import annotations
@@ -84,7 +87,9 @@ class AIGNode:
     #: order. A list, not a set, because §6 says so and order is reproducible.
     state_strs: list[str] = field(default_factory=list)
     structure_strs: list[str] = field(default_factory=list)
-    #: LLM-supplied, and therefore None for the whole of M3a.
+    #: Human-readable name from ``semantic.py``; None until a state on this page
+    #: has been labelled, and the structure hash when labelling is degraded.
+    #: NEVER part of page identity (AGENTS §2(b)).
     semantic_title: str | None = None
     first_observation: int | None = None
     visits: int = 0
@@ -172,13 +177,16 @@ class AIGEdge:
 class SameFunctionGroup:
     """Audit record for the one place an LLM prunes exploration (§5.2).
 
-    Empty for the whole of M3a: the grouping is M3b's. The slot exists now
-    because §5.2 requires every group to be recorded WITH the state that minted
-    it — a wrong grouping is invisible in the collected data (the action is
-    simply never attempted), so if it is not written down when it is made it can
-    never be found afterwards. ``source`` distinguishes ``"llm"`` from
-    ``"none"``, which is how a reader tells pruning-was-off from
-    pruning-found-nothing.
+    Written by :class:`~monkey_collector.semantic.SemanticLabeler`. §5.2 requires
+    every group to be recorded WITH the state that minted it — a wrong grouping
+    is invisible in the collected data (the action is simply never attempted),
+    so if it is not written down when it is made it can never be found
+    afterwards. ``source`` distinguishes ``"llm"`` from ``"none"``, which is how
+    a reader tells pruning-was-off from pruning-found-nothing.
+
+    A row with EMPTY ``members`` is a no-pruning-here marker rather than a
+    group, emitted once for any labelled state that produced none. Do not read
+    ``len(same_function_groups)`` as a group count.
     """
 
     minted_in_state: str
@@ -247,6 +255,18 @@ class AIG:
         #: page_id -> {(signature, action)} ever SEEN on that page. Only the
         #: denominator for ``stats.unexplored_actions``; never routed over.
         self.known: dict[str, set[EdgeKey]] = {}
+        #: page_id -> signature -> the Element as FIRST seen there. This is how
+        #: the frontier of a page you are not standing on can be enumerated at
+        #: all (``unexplored_elsewhere``), and it is a dict rather than the
+        #: ``known`` set on purpose: set iteration order varies with
+        #: PYTHONHASHSEED, so building a shuffled candidate list from a set
+        #: makes a seeded run reproducible only WITHIN one process.
+        #:
+        #: The remembered ``bounds``/``index`` are from that first visit and are
+        #: stale. Nothing may act on them — a remote candidate is a routing
+        #: target only, and the element that finally executes comes from
+        #: ``Navigator.next_action`` re-matching the LIVE screen by signature.
+        self.known_elements: dict[str, dict[str, Element]] = {}
         self.same_function_groups: list[SameFunctionGroup] = []
 
     # -- pages ---------------------------------------------------------------
@@ -306,6 +326,15 @@ class AIG:
     def mark_nav_failed(self, page_id: str, signature: str, action: ActionType) -> None:
         self.nav_failed.setdefault(page_id, set()).add((signature, action))
 
+    def is_explored(self, page_id: str, signature: str, action: ActionType) -> bool:
+        """Was this action actually PERFORMED on this page?
+
+        Narrower than :meth:`is_blocked` and deliberately so: same-function
+        pruning must fire on evidence of what an action DOES, and a navigation
+        failure is evidence only that we could not reach it.
+        """
+        return (signature, action) in self.explored.get(page_id, ())
+
     def is_blocked(self, page_id: str, signature: str, action: ActionType) -> bool:
         pair = (signature, action)
         return pair in self.explored.get(page_id, ()) or pair in self.nav_failed.get(
@@ -321,7 +350,12 @@ class AIG:
         :meth:`unexplored` calls it.
         """
         seen = self.known.setdefault(page_id, set())
+        remembered = self.known_elements.setdefault(page_id, {})
         for element in elements:
+            # setdefault, not assignment: keeping the first sighting keeps the
+            # dict's iteration order stable across visits, which is what makes a
+            # seeded shuffle over this frontier reproducible.
+            remembered.setdefault(element.signature, element)
             for action in element.allowed_actions:
                 seen.add((element.signature, action))
 
@@ -344,6 +378,42 @@ class AIG:
                 if action is ActionType.LONG_TOUCH and not touched:
                     continue
                 candidates.append((page_id, element, action))
+        return candidates
+
+    def unexplored_elsewhere(
+        self, current_page: str, *, package: str = ""
+    ) -> list[Candidate]:
+        """Frontier of every page EXCEPT *current_page*, from memory.
+
+        The caller already holds the live elements of the page it is standing
+        on, so excluding it here keeps this method's stale-coordinate elements
+        (see :attr:`known_elements`) out of the one place they could do harm.
+
+        *package* is the reference's ``ONLY_EXPLORE_IN_APP`` guard: pages that
+        are known to belong to another app are not routed to. A node whose
+        package was never recorded is kept, since dropping it would silently
+        shrink the frontier.
+
+        The same ``long_touch`` deferral :meth:`unexplored` applies is applied
+        here too, so a page's frontier does not depend on whether you are
+        looking at it from on it or from across the graph.
+        """
+        candidates: list[Candidate] = []
+        for page_id, remembered in self.known_elements.items():
+            if page_id == current_page:
+                continue
+            node = self.nodes.get(page_id)
+            if package and node is not None and node.package and node.package != package:
+                continue
+            explored = self.explored.get(page_id, set())
+            for signature, element in remembered.items():
+                touched = (signature, ActionType.TOUCH) in explored
+                for action in element.allowed_actions:
+                    if self.is_blocked(page_id, signature, action):
+                        continue
+                    if action is ActionType.LONG_TOUCH and not touched:
+                        continue
+                    candidates.append((page_id, element, action))
         return candidates
 
     # -- transitions ---------------------------------------------------------

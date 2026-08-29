@@ -71,11 +71,13 @@ space is a fixed contract and nothing may be added to it.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
+from monkey_collector.config import ExplorationConfig
 from monkey_collector.domain.actions import (
     Action,
     InputText,
@@ -86,7 +88,10 @@ from monkey_collector.domain.actions import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, types only
+    from collections.abc import Mapping, Sequence
+
     from monkey_collector.aig import AIG
+    from monkey_collector.pagematch import ScreenState
 
 #: Cap on consecutive navigation steps before a plan is abandoned, from
 #: ``MAX_NAVIGATE_NUM_AT_ONE_TIME`` (input_policy3.py:44).
@@ -195,6 +200,25 @@ def element_signature(node: ET.Element) -> str:
         "checked" if node.get("checked") == _TRUE else "",
         "selected" if node.get("selected") == _TRUE else "",
     )
+
+
+def signature_label(signature: str) -> str:
+    """The human-readable label inside an :func:`element_signature`.
+
+    COSMETIC ONLY — this exists so the semantic layer can put a readable name in
+    a prompt without a second identity function or a new field on
+    :class:`Element`. It lives here rather than in the consumer so that the
+    signature's layout stays knowledge of exactly one module. Never route,
+    dedup, or key anything on the result; the signature itself is the identity.
+    """
+    head = signature.find("[label]")
+    if head < 0:
+        return ""
+    body = signature[head + len("[label]") :]
+    tail = body.rfind("[")
+    if tail >= 0:
+        body = body[:tail]
+    return "" if body == "None" else body
 
 
 def parse_bounds(raw: str) -> tuple[int, int, int, int]:
@@ -358,6 +382,10 @@ class Navigator:
     graph: AIG
     _queue: list[tuple[str, str, ActionType]] = field(default_factory=list)
     _steps: int = 0
+    #: Per-plan step budget (``exploration.max_navigate_steps``). Declared LAST
+    #: so no positional construction shifts, and defaulted to the module
+    #: constant so M3a's behaviour is unchanged when nobody passes it.
+    max_steps: int = MAX_NAVIGATE_STEPS
 
     @property
     def is_navigating(self) -> bool:
@@ -404,7 +432,7 @@ class Navigator:
         """
         if not self._queue:
             return None
-        if self._steps >= MAX_NAVIGATE_STEPS:
+        if self._steps >= self.max_steps:
             self.clear()
             return None
 
@@ -431,10 +459,239 @@ class Decision:
     element: Element | None
     action: ActionType | None
     reason: str
+    #: Ask the caller to restart the app instead of acting on this screen.
+    #: The policy never DRIVES the device — that is the collection loop's job —
+    #: so a restart is expressed as a request and nothing here executes it.
+    #: A restart decision carries no element, so a consumer that ignores this
+    #: flag silently degrades it into a Back press; check it FIRST.
+    restart: bool = False
 
     @property
     def is_fallback(self) -> bool:
         return self.element is None
+
+
+# ---------------------------------------------------------------------------
+# The policy
+# ---------------------------------------------------------------------------
+
+
+class Explorer:
+    """ARCHITECTURE §5.1's six branches, in order, one action per step.
+
+    Nothing here calls an LLM or touches a device. The semantic layer's only
+    entry point is *groups_by_page*, a plain mapping of page id to sets of
+    element signatures, passed into :meth:`select`; that keeps the pruning rule
+    testable without a model and keeps this module free of an import cycle.
+
+    WHY ``long_touch`` IS SPLIT ACROSS TWO BRANCHES
+    ===============================================
+
+    Branch 4 (act on the current screen) drops ``long_touch`` outright, exactly
+    as the reference's ``pick_target`` does (input_policy3.py:1409-1422): a long
+    press seldom does anything a tap has not already done, so spending the
+    cheapest slot on it is waste.
+
+    That deferral is only a deferral because branch 5 considers the CURRENT page
+    alongside the remote ones. The reference gets this by calling
+    ``get_unexplored_actions(find_in_states=all_states(...))``, which includes
+    the state it is standing on, and then appending the target action to a
+    zero-hop route. A branch 5 restricted to other pages would turn "defer" into
+    "never": branch 4 refuses it here, and every other page becomes "here" the
+    moment you arrive. So a current-page candidate is executed immediately —
+    a zero-hop route is trivially the shortest — and only if there is none does
+    the navigator plan toward another page.
+
+    STALE COORDINATES NEVER ESCAPE
+    ==============================
+
+    Remote candidates are built from the elements the graph REMEMBERS seeing on
+    those pages, so their ``bounds`` and ``index`` are from an earlier visit and
+    are meaningless now. They are safe because such a candidate is only ever a
+    routing target: the element that reaches a :class:`Decision` always comes
+    back from :meth:`Navigator.next_action`, which re-matches by signature
+    against the live screen. Nothing may shortcut that — ``to_domain_action``
+    reads ``element.center``, so one leak taps a coordinate from a screen that
+    is no longer there and the corpus is wrong without any error.
+    """
+
+    def __init__(
+        self,
+        graph: AIG,
+        package: str = "",
+        *,
+        config: ExplorationConfig | None = None,
+        seed: int = 42,
+    ) -> None:
+        self.graph = graph
+        self.package = package
+        self.config = config or ExplorationConfig()
+        #: Seeded from ``collection.seed`` so a run is reproducible. Every
+        #: random choice in this class draws from here and nowhere else.
+        self.rng = random.Random(seed)
+        self.navigator = Navigator(graph, max_steps=self.config.max_navigate_steps)
+        self._steps_outside = 0
+        self._stagnation = 0
+        self._frame: str | None = None
+        self._frame_streak = 0
+
+    # -- the six branches ----------------------------------------------------
+
+    def select(
+        self,
+        page_id: str,
+        state: ScreenState,
+        elements: list[Element],
+        *,
+        groups_by_page: Mapping[str, Sequence[frozenset[str]]] | None = None,
+        new_activity: bool = False,
+    ) -> Decision:
+        """Decide this step's action. First matching branch wins and returns.
+
+        *new_activity* is whether this observation raised activity coverage; the
+        collection loop owns the tracker, so it reports the delta rather than
+        this module reaching for it.
+        """
+        groups = groups_by_page or {}
+
+        # 0. Activity coverage has stalled: ask for a restart. The reference
+        #    checks this before everything else (input_policy3.py:1220).
+        if new_activity:
+            self._stagnation = 0
+        else:
+            self._stagnation += 1
+        if self._stagnation > self.config.max_activity_stagnation:
+            self._stagnation = 0
+            self.navigator.clear()
+            return Decision(None, None, "restart_activity_stagnation", restart=True)
+
+        # 1. Continue an in-flight route. next_action returns None when the plan
+        #    drifted or died, having already cleared itself, so falling through
+        #    replans on this same step rather than wasting one.
+        if self.navigator.is_navigating:
+            step = self.navigator.next_action(page_id, elements)
+            if step is not None:
+                return Decision(step[0], step[1], "navigate")
+
+        # 2. Outside the app. Below the threshold we keep exploring what is on
+        #    screen, as the reference does: a transient system surface often
+        #    resolves itself, and Back on the first frame off-app throws away a
+        #    step. Only a sustained absence is worth a Back.
+        if not state.is_in_app(self.package):
+            self._steps_outside += 1
+            if self._steps_outside > self.config.max_steps_outside:
+                self.navigator.clear()
+                return Decision(None, None, "return_to_app")
+        else:
+            self._steps_outside = 0
+
+        # 3. The same structure frame over and over: Back out.
+        if state.structure_str == self._frame:
+            self._frame_streak += 1
+        else:
+            self._frame = state.structure_str
+            self._frame_streak = 1
+        if self._frame_streak > self.config.max_explore_current_state:
+            # DEVIATION from the reference, which never resets this counter and
+            # therefore presses Back every step forever on a screen where Back
+            # does nothing — burning the whole budget on one action. Resetting
+            # buys the screen another full window before escaping again.
+            self._frame_streak = 0
+            self.navigator.clear()
+            return Decision(None, None, "escape_repeated_frame")
+
+        # Register the frontier of this page whatever branch wins below, so the
+        # denominator of ``stats.unexplored_actions`` does not depend on which
+        # one did.
+        self.graph.note_elements(page_id, elements)
+
+        if self.rng.random() > self.config.random_explore_prob:
+            here = self._prune(self.graph.unexplored(page_id, elements), groups)
+
+            # 4. Something untried right here, long_touch excepted.
+            immediate = [c for c in here if c[2] is not ActionType.LONG_TOUCH]
+            if immediate:
+                _, element, action = self.rng.choice(immediate)
+                return Decision(element, action, "explore_current")
+
+            # 5. The whole known frontier, nearest first. Shuffling first is
+            #    what makes ties random: Navigator.plan keeps a route only when
+            #    it is STRICTLY shorter, so among equals the first wins.
+            targets = [*here, *self._remote(page_id, groups)]
+            self.rng.shuffle(targets)
+            local = next((t for t in targets if t[0] == page_id), None)
+            if local is not None:
+                # Zero hops: nothing can be shorter. This is where a deferred
+                # long_touch finally executes.
+                return Decision(local[1], local[2], "explore_deferred")
+            if targets and self.navigator.plan(page_id, targets):
+                step = self.navigator.next_action(page_id, elements)
+                if step is not None:
+                    return Decision(step[0], step[1], "navigate_to_target")
+                self.navigator.clear()
+
+        # 6. Anything executable on this screen; Back when there is nothing.
+        return self._fallback(elements)
+
+    # -- helpers -------------------------------------------------------------
+
+    def _prune(
+        self,
+        candidates: list[Candidate],
+        groups_by_page: Mapping[str, Sequence[frozenset[str]]],
+    ) -> list[Candidate]:
+        """Drop candidates a same-function sibling has already covered (§5.2).
+
+        Per ACTION TYPE, as the reference does (input_policy3.py:1049-1070):
+        having tapped one row of a list says nothing about long-pressing
+        another, so a group member's ``touch`` never suppresses a peer's
+        ``long_touch``.
+
+        Only ``explored`` counts, never ``nav_failed``: a routing failure means
+        we could not GET there, which is no evidence about what the action does.
+        """
+        if not self.config.skip_similar_elements or not groups_by_page:
+            return list(candidates)
+        kept: list[Candidate] = []
+        for page_id, element, action in candidates:
+            group = next(
+                (g for g in groups_by_page.get(page_id) or () if element.signature in g),
+                None,
+            )
+            if group is not None and any(
+                sibling != element.signature
+                and self.graph.is_explored(page_id, sibling, action)
+                for sibling in group
+            ):
+                continue
+            kept.append((page_id, element, action))
+        return kept
+
+    def _remote(
+        self,
+        page_id: str,
+        groups_by_page: Mapping[str, Sequence[frozenset[str]]],
+    ) -> list[Candidate]:
+        return self._prune(
+            self.graph.unexplored_elsewhere(page_id, package=self.package),
+            groups_by_page,
+        )
+
+    def _fallback(self, elements: list[Element]) -> Decision:
+        """The reference's ``get_executable_action`` (input_policy3.py:1126).
+
+        A random element, and a random one of its actions with ``long_touch``
+        removed unless it is the only thing on offer.
+        """
+        if not elements:
+            return Decision(None, None, "fallback_back")
+        element = self.rng.choice(elements)
+        actions = list(element.allowed_actions)
+        if len(actions) > 1 and ActionType.LONG_TOUCH in actions:
+            actions.remove(ActionType.LONG_TOUCH)
+        if not actions:
+            return Decision(None, None, "fallback_back")
+        return Decision(element, self.rng.choice(actions), "fallback_random")
 
 
 __all__ = [
@@ -446,12 +703,14 @@ __all__ = [
     "Candidate",
     "Decision",
     "Element",
+    "Explorer",
     "Navigator",
     "action_type_from_domain",
     "domain_action_type",
     "element_signature",
     "elements_of",
     "parse_bounds",
+    "signature_label",
     "subtree_text",
     "to_domain_action",
 ]
