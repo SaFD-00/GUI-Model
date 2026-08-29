@@ -262,9 +262,25 @@ def cmd_provision(args: argparse.Namespace) -> int:
 #:   This collector has no action guard by design (AGENTS §0.5), so an
 #:   unsuppressed modal is an explorer one tap away from a 1.35 GB download and
 #:   a reboot. Suppressing it is the one place that decision needed a fence.
+#: * the rotation lock came from the first real-device pilot: something during
+#:   exploration set `user_rotation=1`, the display went to 2400x1080, and it
+#:   STAYED there -- 23 of 77 observations were landscape and the setting
+#:   persisted after the run, so the next run would have started rotated.
+#:
+#:   What this buys and what it does not: it stops INCIDENTAL rotation. It does
+#:   NOT override an app that declares `screenOrientation="landscape"` (VLC,
+#:   YouTube, Open Camera and Retro Music are all collection targets and will
+#:   still rotate). Making a rotated screen export CORRECTLY is the export's
+#:   job, not this lock's -- see `export.frame_for_observation`.
+#:
+#: Nothing here is restored afterwards, and that is deliberate: `stayon` and the
+#: OTA suppression already outlive the run, and a sweep that dies mid-flight is
+#: better off leaving the device portrait-locked than landscape.
 DEVICE_PREPARATION: tuple[tuple[str, str], ...] = (
     ("keep the screen on", "svc power stayon true"),
     ("suppress OTA prompts", "settings put global ota_disable_automatic_update 1"),
+    ("disable auto-rotate", "settings put system accelerometer_rotation 0"),
+    ("lock the display to portrait", "settings put system user_rotation 0"),
 )
 
 #: Read, never written: the first thing to look at when a session reports

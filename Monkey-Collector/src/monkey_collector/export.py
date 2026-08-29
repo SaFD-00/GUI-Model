@@ -66,20 +66,42 @@ parser's arithmetic exactly (``structured_parser._resize_and_add_point``):
 relative to the boxes it is supposed to land in. The scale is ANISOTROPIC (for
 1080x2400: 0.77778 and 0.78167) — a single factor is wrong.
 
-THE FRAME IS DERIVED, NEVER CONFIGURED
-======================================
+THE FRAME IS DERIVED PER OBSERVATION, NEVER CONFIGURED
+=====================================================
 
 Three things must agree or the record contradicts itself: the ``data-bbox``
 scale, the action coordinate scale, and the JPEG's pixel size. So all three come
-from ONE :func:`resized_frame` call per app, fed by the ``device_width`` /
-``device_height`` the SESSION recorded (``Session.device_size``). A session
-predating that field falls back to the configured device size with a warning,
-because a wrong guess rescales everything silently.
+from ONE :func:`resized_frame` call -- fed by the dimensions of THAT
+observation's own screenshot (:func:`observation_size`).
+
+Not the session's ``device_width`` / ``device_height``, which is what this used
+to do and what the first real-device pilot broke. ``Session.device_size`` comes
+from ``wm size``, which reports the PHYSICAL display (1080x2400 on a Pixel 6)
+and does not change when the display rotates. The dump and the screenshot are
+properties of the CURRENT display and do change. In the pilot something set
+``user_rotation=1`` mid-session, and 23 of 77 observations came back 2400x1080
+while the session still said 1080x2400. Every one of them was rescaled by the
+portrait factors and its screenshot squashed into an 840x1876 canvas: the JPEG,
+the boxes and the action each landed in a different space, with a ``data-bbox``
+of ``100 58 1867 795`` sitting in a frame 840 wide. Reading the frame off the
+screenshot makes that case correct by construction rather than detected.
+
+``before`` and ``after`` get their frames INDEPENDENTLY, because the action can
+be what rotated the screen: the prompt's XML belongs to the screen the action
+was taken on, and the target XML belongs to the screen it produced. The action
+coordinates and the JPEG both follow ``before`` -- that is the screen the tap
+happened on.
+
+An observation whose screenshot cannot be measured falls back to the session's
+recorded size, and then to the configured device size, each with a warning: a
+wrong guess rescales everything silently.
 
 ``export.target_size`` is therefore an ASSERTION about the contract
-(840x1876 = ``smart_resize_dims(2400, 1080)``), not the frame's source: when the
-derived frame disagrees with it, that is logged and recorded in
-``export_meta.json`` rather than being used to override the arithmetic.
+(840x1876 = ``smart_resize_dims(2400, 1080)``), not the frame's source: when a
+derived frame disagrees with it, that is counted in ``export_meta.json``'s
+``observation_frames`` rather than being used to override the arithmetic. A
+landscape record at 1876x840 is a valid Qwen-VL input; the reference corpus
+being portrait-only is a property of that corpus, not a constraint on this one.
 
 TWO TRAPS THAT FAIL SILENTLY
 ============================
@@ -193,6 +215,14 @@ class ExportStats:
     frames: dict[str, list[int]] = field(default_factory=dict)
     #: Apps whose session recorded no device size, so the config's was assumed.
     assumed_device_size: list[str] = field(default_factory=list)
+    #: How many exported records each derived frame produced, keyed
+    #: ``"1080x2400->840x1876"``. A corpus that is not one frame throughout says
+    #: so here rather than in nobody's head: the pilot that motivated
+    #: per-observation frames was 30% landscape and looked uniform.
+    observation_frames: dict[str, int] = field(default_factory=dict)
+    #: Observations whose screenshot could not be measured and fell back to the
+    #: session's recorded size. Every one of these is a rescale on a guess.
+    unmeasured_observations: int = 0
     #: Exported points outside their own frame. The contract's headline number
     #: (0 of 20,000 in the canonical corpus); anything but 0 means the rescale
     #: or the recorded device size is wrong.
@@ -217,6 +247,8 @@ class ExportStats:
             "ood_apps": sorted(self.ood_apps),
             "frames": dict(self.frames),
             "assumed_device_size": sorted(self.assumed_device_size),
+            "observation_frames": dict(sorted(self.observation_frames.items())),
+            "unmeasured_observations": self.unmeasured_observations,
             "coords_out_of_frame": self.coords_out_of_frame,
         }
 
@@ -238,6 +270,43 @@ def resized_frame(
         height=device_height, width=device_width, max_pixels=max_pixels
     )
     return new_width, new_height
+
+
+def observation_size(
+    screenshot: Path, fallback: tuple[int, int]
+) -> tuple[tuple[int, int], bool]:
+    """``((width, height), measured)`` for one observation's screen.
+
+    The screenshot is the authority, not ``wm size``: see the module docstring.
+    ``measured`` is False when the file is missing or unreadable and *fallback*
+    was used, so the caller can count how much of an export rests on a guess.
+
+    Only the PNG header is touched -- ``Image.open`` is lazy and ``.size`` does
+    not decode the pixels, so this costs one small read per observation rather
+    than a full decode.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(screenshot) as image:
+            width, height = image.size
+        # A size that cannot produce a frame is not a measurement. `smart_resize_dims`
+        # aligns to a 28px block and returns (0, 0) below it, which would reach
+        # `Image.resize` as "height and width must be > 0" -- one truncated PNG
+        # would end the whole export instead of costing one fallback.
+        if width > 0 and height > 0 and all(resized_frame(int(width), int(height))):
+            return (int(width), int(height)), True
+        logger.warning(
+            "{}: {}x{} does not resize to a usable frame; falling back to {}x{}",
+            screenshot,
+            width,
+            height,
+            fallback[0],
+            fallback[1],
+        )
+    except Exception as error:  # noqa: BLE001 - a guess is better than no record
+        logger.debug("could not measure {} ({})", screenshot, error)
+    return fallback, False
 
 
 def translate_action(
@@ -656,11 +725,9 @@ class Exporter:
         frame: tuple[int, int],
     ) -> dict[str, Any] | None:
         # Translated first: it is pure, and an action with no EXP08 name is a
-        # property of the triple alone, decidable before touching the disk.
-        payload = translate_action(
-            triple.action, device_size=device_size, max_pixels=self.max_pixels
-        )
-        if payload is None:
+        # property of the triple alone, decidable before touching the disk. The
+        # frame it needs is this observation's, resolved just below.
+        if translate_action(triple.action, device_size=device_size) is None:
             logger.warning(
                 "{} step {}: no EXP08 name for action_type {!r}; dropped",
                 package,
@@ -678,6 +745,26 @@ class Exporter:
         if not (before_dump.is_file() and after_dump.is_file() and before_png.is_file()):
             self.stats.dropped_missing_files += 1
             return None
+
+        # The frames come from the screenshots, not from the session: `wm size`
+        # is the PHYSICAL display and does not rotate, the screenshot does. See
+        # the module docstring for the 23-of-77 pilot this is answering.
+        # `before` and `after` are resolved independently because the action can
+        # be what rotated the screen.
+        before_size, before_measured = observation_size(before_png, device_size)
+        after_size, after_measured = observation_size(after_dir / SCREENSHOT_NAME, device_size)
+        self.stats.unmeasured_observations += (not before_measured) + (not after_measured)
+        # Only `before` needs an explicit frame here (the JPEG and the action
+        # coordinates). `after` needs none: `encode_screen` takes the DEVICE
+        # size and derives the frame inside the parser, out of the same
+        # `smart_resize_dims` budget.
+        before_frame = resized_frame(before_size[0], before_size[1], self.max_pixels)
+        # The action was taken on `before`, so its coordinates and the JPEG both
+        # live in that frame; `frame` (the session's) is only the fallback now.
+        payload = translate_action(
+            triple.action, device_size=before_size, max_pixels=self.max_pixels
+        )
+        assert payload is not None  # decided above, on the same action_type
 
         # A screen that belongs to ANOTHER app must not be exported as this
         # app's. The loop deliberately tolerates a few foreign frames because an
@@ -703,10 +790,10 @@ class Exporter:
                     self.stats.dropped_foreign += 1
                     return None
             before_xml = encode_screen(
-                before_raw, device_size[0], device_size[1], self.max_pixels
+                before_raw, before_size[0], before_size[1], self.max_pixels
             )
             after_xml = encode_screen(
-                after_raw, device_size[0], device_size[1], self.max_pixels
+                after_raw, after_size[0], after_size[1], self.max_pixels
             )
         except Exception as error:  # noqa: BLE001 - one bad dump must not stop the export
             logger.warning(
@@ -730,11 +817,13 @@ class Exporter:
             self.stats.dropped_duplicate_step += 1
             return None
         self._image_names.add(name)
-        write_jpeg(before_png.read_bytes(), images_dir / name, frame)
+        write_jpeg(before_png.read_bytes(), images_dir / name, before_frame)
         # Counted here and not at translation time: the stat means "points in the
         # SHIPPED corpus", so a record that was dropped afterwards must not
         # inflate the one number that says whether the rescale is right.
-        self.stats.coords_out_of_frame += out_of_frame_points(payload, frame)
+        self.stats.coords_out_of_frame += out_of_frame_points(payload, before_frame)
+        key = f"{before_size[0]}x{before_size[1]}->{before_frame[0]}x{before_frame[1]}"
+        self.stats.observation_frames[key] = self.stats.observation_frames.get(key, 0) + 1
         return build_record(
             before_xml=before_xml,
             after_xml=after_xml,

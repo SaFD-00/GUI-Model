@@ -434,7 +434,10 @@ def test_prepare_device_survives_a_refused_command():
 
     adb = Grumpy([Script(screen())])
     lines = cli.prepare_device(adb)
-    assert len(adb.shell_commands) == 3, "one refusal must not stop the others"
+    # Derived, not a literal: adding a precondition must not need this edited.
+    expected = len(cli.DEVICE_PREPARATION) + 1  # + the focus probe
+    assert len(adb.shell_commands) == expected, "one refusal must not stop the others"
+    assert all(command in adb.shell_commands for _, command in cli.DEVICE_PREPARATION)
     assert any("FAILED" in line for line in lines)
 
 

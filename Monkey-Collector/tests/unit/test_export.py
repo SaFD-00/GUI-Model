@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,9 @@ FRAME = (840, 1876)
 #: wrong scale factor.
 TARGET_BOUNDS = (704, 1811, 968, 1907)
 TARGET_CENTER = (836, 1859)  # what the explorer's `element.center` would record
+
+#: Every ``data-bbox`` in a rendered turn, as four integer strings.
+BBOX = re.compile(r'data-bbox="(-?\d+) (-?\d+) (-?\d+) (-?\d+)"')
 
 
 # ---------------------------------------------------------------------------
@@ -68,12 +72,26 @@ def dump(
     device: tuple[int, int] = DEVICE,
     extra: str = "",
 ) -> str:
-    """A raw uiautomator dump with one label and one small clickable target."""
+    """A raw uiautomator dump with one label and one small clickable target.
+
+    A landscape *device* transposes the child boxes, because a real rotated dump
+    is self-consistent: leaving portrait bounds inside a 2400x1080 root would
+    make the FIXTURE the thing out of frame, and a frame test written against it
+    would be measuring the fixture's bug rather than the export's.
+    """
     width, height = device
+    turn = width > height
+
+    def box(bounds: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        left, top, right, bottom = bounds
+        return (top, left, bottom, right) if turn else bounds
+
     body = (
-        _node("android.widget.TextView", (100, 300, 600, 360), text=label, package=package)
+        _node(
+            "android.widget.TextView", box((100, 300, 600, 360)), text=label, package=package
+        )
         + _node(
-            "android.widget.Button", TARGET_BOUNDS, text="Save",
+            "android.widget.Button", box(TARGET_BOUNDS), text="Save",
             package=package, clickable="true",
         )
         + extra
@@ -89,12 +107,18 @@ def dump(
     )
 
 
-def png_bytes() -> bytes:
-    """A tiny PNG. ``write_jpeg`` resizes whatever it is given to the frame."""
+def png_bytes(size: tuple[int, int] = (1080, 2400)) -> bytes:
+    """A PNG the size of the screen it stands for.
+
+    The dimensions matter: the export reads its frame off the SCREENSHOT, not
+    off the session's ``wm size`` (which is the physical display and does not
+    rotate). A stand-in of some other size would silently exercise a frame no
+    real observation produces.
+    """
     from PIL import Image
 
     buffer = io.BytesIO()
-    Image.new("RGB", (8, 16), (10, 20, 30)).save(buffer, format="PNG")
+    Image.new("RGB", size, (10, 20, 30)).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -124,7 +148,9 @@ def write_session(
         raw = (dumps or {}).get(index, dump(package=package, label=f"screen {index}"))
         if raw is not None:
             (obs / "raw.xml").write_text(raw, encoding="utf-8")
-        image = (screenshots or {}).get(index, png_bytes())
+        # The screenshot is written at the session's device size because that
+        # is what a real one is, and the export now reads its frame off it.
+        image = (screenshots or {}).get(index, png_bytes(device or DEVICE))
         if image is not None:
             (obs / "screenshot.png").write_bytes(image)
     with (app_dir / "triples.jsonl").open("w", encoding="utf-8") as handle:
@@ -298,6 +324,97 @@ def test_device_size_recorded_by_the_session_beats_the_config_default(tmp_path):
 
     with Image.open(out / "images" / "episode_com.example.app_step_0000.jpg") as image:
         assert image.size == frame
+
+
+def test_a_rotated_observation_exports_in_its_own_frame_not_the_sessions(tmp_path):
+    """The pilot's bug: `wm size` is the PHYSICAL display and does not rotate.
+
+    A Pixel 6 that rotates mid-session keeps reporting 1080x2400 while its dumps
+    and screenshots come back 2400x1080. Rescaling those by the portrait factors
+    put the JPEG, the boxes and the action in three different spaces: 23 of 77
+    observations in the first real-device run, with a data-bbox of
+    `100 58 1867 795` inside a frame 840 wide. Nothing downstream could tell.
+    """
+    from PIL import Image
+
+    landscape = (2400, 1080)
+    write_session(
+        tmp_path / "raw",
+        PACKAGE,
+        # the transposed target's centre: (1859, 836)
+        [triple(0, {"action_type": "tap", "element_index": 1, "x": 1859, "y": 836})],
+        dumps={0: dump(device=landscape), 1: dump(device=landscape, label="next")},
+        screenshots={0: png_bytes(landscape), 1: png_bytes(landscape)},
+        device=DEVICE,  # the session still believes it is portrait
+    )
+    stats, out = run_export(tmp_path, device_size=DEVICE)
+
+    frame = ex.resized_frame(*landscape)
+    assert frame == (1876, 840) != FRAME
+    # The action follows the SCREENSHOT's frame, so it stays inside it.
+    assert action_of(records(out)[0])["coordinate"] == [
+        round(1859 * 1876 / 2400),
+        round(836 * 840 / 1080),
+    ]
+    assert stats.coords_out_of_frame == 0
+    # ... and so does the JPEG, so the pixels agree with the boxes.
+    with Image.open(out / "images" / "episode_com.example.app_step_0000.jpg") as image:
+        assert image.size == frame
+    # Every data-bbox is inside that frame too.
+    human = records(out)[0]["messages"][1]["value"]
+    boxes = [tuple(map(int, m)) for m in re.findall(BBOX, human)]
+    assert boxes and all(
+        0 <= x1 <= x2 <= frame[0] and 0 <= y1 <= y2 <= frame[1] for x1, y1, x2, y2 in boxes
+    )
+    assert stats.observation_frames == {"2400x1080->1876x840": 1}
+
+
+def test_before_and_after_get_independent_frames_when_the_action_rotates_the_screen(tmp_path):
+    """The action itself can be what rotated the screen (a video going full screen).
+
+    The prompt's XML belongs to the screen the action was taken ON; the target
+    XML belongs to the screen it PRODUCED. One frame for both would misplace
+    every box in whichever half disagreed.
+    """
+    landscape = (2400, 1080)
+    write_session(
+        tmp_path / "raw",
+        PACKAGE,
+        [triple(0, tap())],
+        dumps={0: dump(device=DEVICE), 1: dump(device=landscape, label="next")},
+        screenshots={0: png_bytes(DEVICE), 1: png_bytes(landscape)},
+        device=DEVICE,
+    )
+    _, out = run_export(tmp_path)
+
+    record = records(out)[0]
+    for turn, frame in ((1, FRAME), (2, ex.resized_frame(*landscape))):
+        boxes = [tuple(map(int, m)) for m in re.findall(BBOX, record["messages"][turn]["value"])]
+        assert boxes, f"turn {turn} has no data-bbox"
+        widest = max(x2 for _, _, x2, _ in boxes)
+        tallest = max(y2 for _, _, _, y2 in boxes)
+        assert (widest, tallest) == frame, f"turn {turn} is not in {frame}"
+
+
+def test_an_unmeasurable_screenshot_falls_back_to_the_session_and_is_counted(tmp_path):
+    """A truncated PNG costs one fallback, never the export.
+
+    `smart_resize_dims` returns (0, 0) below its 28px block, which would reach
+    `Image.resize` as "height and width must be > 0" and end the run.
+    """
+    write_session(
+        tmp_path / "raw",
+        PACKAGE,
+        [triple(0, tap())],
+        screenshots={0: png_bytes((8, 16))},
+        device=DEVICE,
+    )
+    stats, out = run_export(tmp_path)
+
+    assert stats.unmeasured_observations == 1
+    assert len(records(out)) == 1
+    assert stats.observation_frames == {"1080x2400->840x1876": 1}
+    assert stats.coords_out_of_frame == 0
 
 
 def test_session_without_a_recorded_device_size_falls_back_and_says_so(tmp_path):
