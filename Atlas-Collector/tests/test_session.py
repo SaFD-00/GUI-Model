@@ -259,3 +259,60 @@ def test_resuming_twice_keeps_step_numbers_unique(tmp_path):
     rows = [json.loads(line) for line in session.triples_path.read_text().splitlines()]
     steps = [row["step"] for row in rows]
     assert len(steps) == len(set(steps)), f"duplicate step numbers: {steps}"
+
+
+def test_a_session_killed_mid_run_resumes_past_what_is_on_disk(tmp_path):
+    """Metadata is only rewritten when a run ENDS, so a killed session leaves it
+    saying 0 -- and the supervisor restarts on exactly that kind of death."""
+    import json
+
+    session = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+    session.open(resume=False)
+    previous = None
+    for index in range(4):
+        observation = session.write_observation(
+            png=b"x",
+            raw_xml="<hierarchy/>",
+            page_key=str(index),
+            activity="com.a/.Main",
+            state_str=f"s{index}",
+            is_new_page=True,
+            match_kind="new",
+        )
+        if previous is not None:
+            session.write_triple(
+                before=previous, after=observation, action={"action": "navigate_back"}
+            )
+        previous = observation
+    # Killed: metadata still holds what open() wrote.
+    assert json.loads(session.metadata_path.read_text())["observations"] == 0
+
+    resumed = Session("com.a", tmp_path / "data", tmp_path / "runtime", episode="com.a")
+    assert resumed.open(resume=True), "an existing session must be recognised"
+    assert resumed.observation_count == 4
+
+    observation = resumed.write_observation(
+        png=b"y",
+        raw_xml="<hierarchy/>",
+        page_key="4",
+        activity="com.a/.Main",
+        state_str="s4",
+        is_new_page=True,
+        match_kind="new",
+    )
+    assert observation.index == 4, "the first screen after a crash must not overwrite one"
+    after = resumed.write_observation(
+        png=b"z",
+        raw_xml="<hierarchy/>",
+        page_key="5",
+        activity="com.a/.Main",
+        state_str="s5",
+        is_new_page=True,
+        match_kind="new",
+    )
+    resumed.write_triple(
+        before=observation, after=after, action={"action": "navigate_back"}
+    )
+    rows = [json.loads(line) for line in resumed.triples_path.read_text().splitlines()]
+    steps = [row["step"] for row in rows]
+    assert len(steps) == len(set(steps)), f"duplicate step numbers: {steps}"

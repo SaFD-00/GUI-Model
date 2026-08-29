@@ -157,8 +157,13 @@ class Session:
         resumed = False
         if resume and self.metadata_path.exists():
             meta = json.loads(self.metadata_path.read_text(encoding="utf-8"))
-            self._next_index = int(meta.get("observations", 0))
-            self._steps = int(meta.get("steps", 0))
+            # Metadata is only rewritten when a run ENDS, so a session killed
+            # mid-flight leaves it saying 0 -- and resuming from 0 overwrites
+            # every screen already on disk while triples.jsonl keeps appending.
+            # The supervisor restarts on exactly that kind of death, so the
+            # filesystem, not the metadata, is the authority on what exists.
+            self._next_index = max(int(meta.get("observations", 0)), self._observations_on_disk())
+            self._steps = max(int(meta.get("steps", 0)), self._steps_on_disk())
             resumed = self._next_index > 0
             if resumed:
                 logger.info(
@@ -177,6 +182,33 @@ class Session:
         self._started_monotonic = time.monotonic()
         self.write_metadata(completed=False)
         return resumed
+
+    def _observations_on_disk(self) -> int:
+        """One past the highest observation index actually written."""
+        highest = -1
+        if self.observations_dir.is_dir():
+            for child in self.observations_dir.iterdir():
+                if child.is_dir() and child.name.isdigit():
+                    highest = max(highest, int(child.name))
+        return highest + 1
+
+    def _steps_on_disk(self) -> int:
+        """One past the highest step in ``triples.jsonl``.
+
+        Read rather than counted: a resumed session's triples are appended, so
+        the line count and the step numbering are not the same thing.
+        """
+        if not self.triples_path.is_file():
+            return 0
+        highest = -1
+        for line in self.triples_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                highest = max(highest, int(json.loads(line)["step"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+        return highest + 1
 
     @property
     def is_complete(self) -> bool:
