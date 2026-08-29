@@ -73,9 +73,9 @@ host-pull 은 기다릴 이유가 없다. 화면이 멎었는지는 호스트가
 | `domain/cost_tracker.py` | LLM 토큰 · 비용 CSV | DONE |
 | `llm/client.py` | OpenRouter Chat Completions (`qwen/qwen3.8-flash`) | DONE |
 | `text_input.py` | `input_text` action 의 입력값 생성 | DONE |
-| `semantic.py` | semantic state / element, same-function 그룹핑 | M3b |
+| `semantic.py` | semantic state / element, same-function 그룹핑 | DONE |
 | `aig.py` | AIG 그래프 + `graph.json` | DONE |
-| `explore.py` | LLM-Explorer 탐색 정책 | M3a DONE (element·네비게이션); 정책은 M3b |
+| `explore.py` | LLM-Explorer 탐색 정책 (`Explorer` 6분기 + `Navigator`) | DONE |
 | `loop.py` | host-pull 수집 루프 | M4 |
 | `export.py` / `_exp08_prompt.py` | EXP08 Stage-1 export | M5 |
 
@@ -170,7 +170,12 @@ structure_str  = md5(activity + sorted(content_free_signature))[:6]
 - **감사 가능성**: 모든 그룹을 그것이 만들어진 state 와 함께 `graph.json` 에 기록한다. 잘못된
   그룹핑은 수집된 데이터만 봐서는 절대 발견되지 않는다 — 시도조차 안 한 action 이 explored 로
   찍혀 있을 뿐이다. 기록이 없으면 사후에도 못 찾는다.
-- **열화 경로**: LLM 이 없어도(`OPENROUTER_API_KEY` 없음, `input_mode=random`, API 실패) 탐색은
+  라벨링이 닿은 state 는 그룹이 하나도 없어도 `members: []` 행을 남긴다. **빈 `members` 는
+  그룹이 아니라 "여기서는 가지치기가 없었다" 는 표식**이므로 `len(same_function_groups)` 를
+  그룹 수로 읽지 마라. 이 표식이 있어야 30개 중 1개 state 만 열화된 경우를 사후에 찾을 수 있다
+  (최상위 `semantic_labeling` 플래그로는 알 수 없다).
+- **열화 경로**: LLM 이 없어도(`OPENROUTER_API_KEY` 없음, `llm.semantic_labeling: false`,
+  API 실패, 응답이 JSON 이 아니거나 스키마가 어긋남) 탐색은
   계속돼야 한다. 라벨은 구조 해시로, 그룹은 빈 집합으로 떨어진다 — 즉 **가지치기가 없어질 뿐**이다.
   그리고 **semantic 라벨링이 실제로 활성이었는지를 `metadata.json` 에 기록한다.** 안 그러면 같은
   앱의 두 run 이 다른 결과를 내는데 그 이유를 알 방법이 없다.
@@ -184,6 +189,20 @@ structure_str  = md5(activity + sorted(content_free_signature))[:6]
 구조 프레임이 이미 아는 state 의 것과 같으면 GPT 를 부르지 않고 기존 정보를 재사용한다.
 **이 가드를 반드시 같이 이식한다.** 그리고 앱당 호출 수를 로그에 남겨, 첫 실제 세션이 청구서가
 아니라 로그로 그 숫자를 알려주게 한다.
+
+이 리포의 재사용 키는 `pagematch` 의 **`structure_str`** 이다 — activity + content-free
+signature 집합의 md5 로, 레퍼런스의 구조 프레임과 같은 것을 6글자로 나타낸다. 따라서 호출 수는
+step 수도 page 수도 아닌 **distinct structure 수**다. Atlas 실측 세션 3개를 이 키로 다시 센 결과:
+
+| 앱 | observations | distinct `structure_str` |
+|---|---|---|
+| `org.tasks` | 1,047 | **39** |
+| `net.gsantner.markor` | 1,532 | **40** |
+| `net.cozic.joplin` | 272 | **19** |
+
+(그 코퍼스에 activity 가 기록돼 있지 않아 `activity=""` 로 계산했다. 실제 activity 를 넣으면
+구조가 더 쪼개질 수 있고 상한은 distinct `state_str`(118 / 353 / 58)이다.) 호출이 수백 단위로
+나오면 앱이 복잡한 게 아니라 **가드가 안 먹는 것**이다.
 
 ### 5.4 element 정체성 — 단 하나의 함수
 
@@ -443,10 +462,12 @@ Stage-1 human turn 에 나오지 않으므로 emit 하지 않는다.
 | `device` | `serial`(실기기 고정) · `width` · `height` |
 | `collection` | `budget_mode` · `max_duration` · `max_steps` · `seed` · `action_delay_ms` · `stabilize_*`(5) |
 | `page_matching` | `merge_policy` · `max_diff_elements` · `same_activity_only` |
-| `llm` | `model` · `input_mode` |
+| `exploration` | `max_explore_current_state` · `max_steps_outside` · `max_navigate_steps` · `max_activity_stagnation` · `random_explore_prob` · `skip_similar_elements` · `min_elements_for_grouping` |
+| `llm` | `model` · `input_mode` · `semantic_labeling` |
 | `export` | `target_size` · `ood_apps` · `id_ratio` |
 
-`exploration` 섹션은 M3 에서 탐색기와 함께 들어온다. **소비자 없는 키를 미리 만들지 않는다.**
+`exploration` 은 M3b 에서 소비자(`Explorer`·`SemanticLabeler`)와 **함께** 들어왔다.
+**소비자 없는 키를 미리 만들지 않는다.**
 
 알 수 없는 최상위 섹션은 키 오타와 똑같이 거부한다 — 잘못 설정된 실행이 성공한 것처럼 보이는 게
 최악이다. `--config` 가 없거나 깨진 파일을 가리키면 **exit 2**.

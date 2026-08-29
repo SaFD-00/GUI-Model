@@ -9,6 +9,8 @@
 > - `run` · `convert` · `convert-all` · `page-map` · `page-map-all` · `regenerate` 서브커맨드 —
 >   **현재 등록돼 있지 않다.** 지금 있는 것은 `catalog` · `sync-installed` · `provision` · `reset` 넷뿐이다.
 > - `exploration.strategy` (DFS/BFS/GREEDY), `screen_matching.*` 설정 — **삭제됐다.**
+>   `config/run.yaml` 에 `exploration` 섹션이 다시 생겼지만 **완전히 다른 키들**이다
+>   (LLM-Explorer 정책 상수 — `max_explore_current_state` 등). `strategy` 를 되살리지 마라.
 > - `data/raw` + `runtime` 분리 저장 구조 — **하나의 collection root**(`data/MonkeyCollection`)로 합쳐졌다.
 > - 디바이스가 에뮬레이터라는 서술 — **수집 타깃은 실기기 Pixel 6 (`19101FDF6004EH`)** 이다.
 >   같은 머신의 `emulator-5556` 은 다른 작업이 점유 중이라 건드리면 안 된다.
