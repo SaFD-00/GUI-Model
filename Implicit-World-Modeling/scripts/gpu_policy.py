@@ -129,16 +129,20 @@ _FORCE_HALF_BATCH_DATASETS: frozenset[str] = frozenset(
         "AndroidControl_EXP07",
         "AndroidControl_EXP07_v1",
         "AndroidControl_EXP07_v2",
-        # ★ AndroidControl_EXP08 은 2026-08-31 에 **빠졌다** (사용자 결정).
-        #   EXP07 과 같은 좌표계·budget·cutoff 라 처음에는 EXP07 의 판정을 승계했지만,
-        #   80GB × 3-4B × lora 에서 실측한 여유가 그 승계를 지지하지 않는다:
-        #   pdbs=1 정상 학습 중 GPU 당 reserved 가 30.7 GB 에서 평평했고 (allocator
-        #   high-water mark 이 증가하지 않음) 49 GB 가 남았다. EXP07 을 죽인 logits
-        #   단일 할당 23.77 GiB 는 그 여유 안에 들어간다.
-        #   즉 EXP08 은 half-batch 면제를 받아 pdbs=2 / ga=16 으로 돈다 (global 64 불변).
-        #   **EXP07 의 OOM 실측 자체는 유효하며 EXP07 은 그대로 강제 절반이다** — 두
-        #   실험군은 데이터 길이 분포가 달라 한쪽의 실측이 다른 쪽을 재지 못한다.
-        #   OOM 이 재발하면 되돌릴 자리는 여기 한 줄이다.
+        # EXP08 은 EXP07 과 같은 좌표계·image budget·cutoff 라 activation(logits)
+        # 압박도 같다 → 같은 강제 half-batch 대상.
+        #
+        # ⚠️ 2026-08-31 에 이 줄을 한 번 뺐다가 **되돌렸다. 다시 빼지 마라.**
+        #   뺀 근거는 "pdbs=1 로 도는 중 GPU 당 30.7 GB 만 쓰고 49 GB 가 남으니
+        #   EXP07 을 죽인 23.77 GiB 스파이크가 들어간다" 였다. 그 추론이 틀렸다 —
+        #   **pdbs 를 2 배로 하면 스파이크만 커지는 게 아니라 baseline 도 같이 커진다.**
+        #   실측(A100×2, stage2 lora, 두 계보 동시): baseline 이 30.7 → 63.2 GB 로
+        #   따라 올라가 남은 여유가 14.10 GiB 였고, 거기에 24.49 GiB 단일 할당이
+        #   들어와 **두 계보가 똑같이 step 31 에서 OOM** 했다 (EXP07 은 step 28).
+        #   즉 헤드룸은 `pdbs=1 의 여유` 가 아니라 `pdbs=2 의 여유` 로 재야 한다.
+        #   step 20 근처에서 메모리가 63/57 GB 로 평평해 보이는 것도 근거가 못 된다 —
+        #   그건 수렴이 아니라 그 구간 샘플이 짧았을 뿐이다 (데이터 max 는 p99 의 2.5 배).
+        "AndroidControl_EXP08",
     }
 )
 
@@ -256,7 +260,6 @@ def resolve_gpu_policy(
     # no-offload 조합은 offload 를 끄고도 여유가 있어 half-batch 예외를 면제한다.
     # 단 _FORCE_HALF_BATCH_DATASETS (EXP07) 는 activation(logits) OOM 때문에 면제를
     # 다시 취소한다 — offload 결정과 독립적으로 pdbs 를 절반으로 낮춘다.
-    # (EXP08 은 2026-08-31 에 이 집합에서 빠졌다 — 위 상수의 근거 블록 참조.)
     force_half = ds_name in _FORCE_HALF_BATCH_DATASETS
     if ds_name in _HALF_BATCH_DATASETS and (not no_offload_combo or force_half):
         per_device = max(1, per_device // 2)
