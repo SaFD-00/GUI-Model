@@ -230,6 +230,8 @@ python scripts/filter_long_samples.py --dataset AC_EXP03 --threshold 24576 --rep
 | A100 / H100 (80GB) | {1, 2, 4, 8} | **7-9B** | **lora** | **2** | **2** (반감 **면제**) | **no-offload** |
 | A100 / H100 (80GB) | {1, 2, 4, 8} | **3-4B** | full / lora | **2** | **2** (반감 **면제**) | **no-offload** |
 
+> **표 밖의 예외 하나 — `_FORCE_HALF_BATCH_DATASETS` (EXP07 전용).** 위 표의 "반감 면제" 는 optimizer state 메모리 근거인데, half-batch 는 activation(LM head logits = seq_len × vocab) 문제라 **축이 다르다**. EXP07 은 1080×2400 + cutoff 24576 조합에서 `pdbs=2` 일 때 step 28 에 **logits 23.77 GiB 단일 할당으로 확정 OOM** 했다 (2026-07-28 stage2 base 실측) → 면제를 다시 취소해 `pdbs=1 / ga=32` 로 강제한다. **EXP08 은 2026-08-31 에 이 예외에서 빠졌다** (사용자 결정): 같은 하드웨어에서 `pdbs=1` 정상 학습 중 GPU 당 reserved 가 30.7 GB 에서 평평했고 (allocator high-water mark 미증가) 49 GB 가 남아, EXP07 을 죽인 23.77 GiB 가 그 여유에 들어간다. 두 실험군은 데이터 길이 분포가 달라 한쪽 실측이 다른 쪽을 재지 못하므로 EXP07 의 강제는 유지된다. 정본은 `scripts/gpu_policy.py::_FORCE_HALF_BATCH_DATASETS` 이고 `tests/test_gpu_policy.py` 가 양쪽 방향을 모두 고정한다.
+
 아래 두 행이 no-offload 경로다 (`_is_no_offload_combo`): **80GB × (3-4B 이거나 lora)**. 그 조합은 optimizer state 를 GPU 에 올려도 들어가므로 offload 를 끄고 half-batch 예외도 면제한다 — 두 결정이 같은 메모리 실측(함정 7)에서 나오므로 코드도 한 술어로 함께 판정한다. **남는 offload 경로는 `7-9B × full` 과 RTX5090 전부** 뿐이며, 이 둘을 가르는 것은 정확히 optimizer state 의 크기다 (lora 는 어댑터만 학습 → 작다, full 7B 는 모델 상태만 GPU 당 ~77 GiB → 확정 OOM).
 
 **global batch 불변식:**
