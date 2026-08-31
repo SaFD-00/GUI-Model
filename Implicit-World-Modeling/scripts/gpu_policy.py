@@ -129,9 +129,16 @@ _FORCE_HALF_BATCH_DATASETS: frozenset[str] = frozenset(
         "AndroidControl_EXP07",
         "AndroidControl_EXP07_v1",
         "AndroidControl_EXP07_v2",
-        # EXP08 은 EXP07 과 같은 좌표계·image budget·cutoff 라 activation(logits)
-        # 압박도 같다 → 같은 강제 half-batch 대상.
-        "AndroidControl_EXP08",
+        # ★ AndroidControl_EXP08 은 2026-08-31 에 **빠졌다** (사용자 결정).
+        #   EXP07 과 같은 좌표계·budget·cutoff 라 처음에는 EXP07 의 판정을 승계했지만,
+        #   80GB × 3-4B × lora 에서 실측한 여유가 그 승계를 지지하지 않는다:
+        #   pdbs=1 정상 학습 중 GPU 당 reserved 가 30.7 GB 에서 평평했고 (allocator
+        #   high-water mark 이 증가하지 않음) 49 GB 가 남았다. EXP07 을 죽인 logits
+        #   단일 할당 23.77 GiB 는 그 여유 안에 들어간다.
+        #   즉 EXP08 은 half-batch 면제를 받아 pdbs=2 / ga=16 으로 돈다 (global 64 불변).
+        #   **EXP07 의 OOM 실측 자체는 유효하며 EXP07 은 그대로 강제 절반이다** — 두
+        #   실험군은 데이터 길이 분포가 달라 한쪽의 실측이 다른 쪽을 재지 못한다.
+        #   OOM 이 재발하면 되돌릴 자리는 여기 한 줄이다.
     }
 )
 
@@ -249,6 +256,7 @@ def resolve_gpu_policy(
     # no-offload 조합은 offload 를 끄고도 여유가 있어 half-batch 예외를 면제한다.
     # 단 _FORCE_HALF_BATCH_DATASETS (EXP07) 는 activation(logits) OOM 때문에 면제를
     # 다시 취소한다 — offload 결정과 독립적으로 pdbs 를 절반으로 낮춘다.
+    # (EXP08 은 2026-08-31 에 이 집합에서 빠졌다 — 위 상수의 근거 블록 참조.)
     force_half = ds_name in _FORCE_HALF_BATCH_DATASETS
     if ds_name in _HALF_BATCH_DATASETS and (not no_offload_combo or force_half):
         per_device = max(1, per_device // 2)

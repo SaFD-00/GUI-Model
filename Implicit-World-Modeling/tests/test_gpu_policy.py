@@ -207,19 +207,20 @@ def test_half_batch_rule_general():
                     )
 
 
-def test_exp07_exp08_force_half_batch_overrides_no_offload_exemption():
-    """EXP07/EXP08 은 no-offload 조합(A100/H100 × 3-4B)이어도 pdbs 를 강제로 절반으로 낮춘다.
+def test_exp07_force_half_batch_overrides_no_offload_exemption():
+    """EXP07 은 no-offload 조합(A100/H100 × 3-4B)이어도 pdbs 를 강제로 절반으로 낮춘다.
 
     offload 면제 근거는 optimizer state 메모리지만, half-batch 는 activation
     (LM head logits) 메모리 문제라 독립이다. EXP07(1080×2400 + cutoff 24576)은
     pdbs=2 에서 logits 단일 할당 OOM 하여(2026-07-28 stage2 base 실측) 강제 절반.
-    EXP08 은 같은 좌표계·budget·cutoff 라 같은 판정을 승계한다.
     offload 는 여전히 꺼져 있어야 한다 (ds_z3_config, 3-4B optimizer 는 80GB 에 들어감).
+
+    EXP08 은 2026-08-31 에 이 집합에서 빠졌다 — 아래 전용 테스트가 그 반대를 고정한다.
     """
     for ds in (
+        "AndroidControl_EXP07",
         "AndroidControl_EXP07_v1",
         "AndroidControl_EXP07_v2",
-        "AndroidControl_EXP08",
     ):
       for gpu_type in ("A100", "H100"):
         for mode in ("full", "lora"):
@@ -231,6 +232,35 @@ def test_exp07_exp08_force_half_batch_overrides_no_offload_exemption():
             assert (
                 p.per_device_train_batch_size * p.gradient_accumulation_steps * 2 == 64
             )
+
+
+def test_exp08_keeps_half_batch_exemption_on_80gb():
+    """EXP08 은 80GB × 3-4B 에서 half-batch 면제를 **받는다** (pdbs=2 / ga=16).
+
+    EXP07 의 판정을 승계하던 것을 2026-08-31 에 되돌렸다 (사용자 결정). 근거는
+    같은 하드웨어에서 실측한 여유다 — pdbs=1 정상 학습 중 GPU 당 reserved 가
+    30.7 GB 에서 평평했고 49 GB 가 남았다. EXP07 을 죽인 logits 단일 할당
+    23.77 GiB 가 그 안에 들어간다. EXP07 의 실측은 그대로 유효하며 위 테스트가
+    지킨다 — 두 실험군은 데이터 길이 분포가 달라 서로를 재지 못한다.
+
+    global batch 는 64 로 불변이다 (2 × 16 × 2) — 이 테스트의 핵심은 pdbs 를
+    올리면서 grad_accum 이 함께 내려가 학습 semantics 가 안 바뀐다는 것이다.
+    """
+    for gpu_type in ("A100", "H100"):
+        for mode in ("full", "lora"):
+            p = resolve_gpu_policy(
+                gpu_type, 2, "3-4B", "AndroidControl_EXP08", mode
+            )
+            assert p.per_device_train_batch_size == 2, (gpu_type, mode)
+            assert p.gradient_accumulation_steps == 16, (gpu_type, mode)
+            assert p.offload is False, (gpu_type, mode)
+            assert (
+                p.per_device_train_batch_size * p.gradient_accumulation_steps * 2 == 64
+            )
+
+    # RTX5090 은 변하지 않는다 — pdbs 가 이미 최소(1) 라 half-batch 가 그대로 적용된다.
+    p = resolve_gpu_policy("RTX5090", 2, "3-4B", "AndroidControl_EXP08", "lora")
+    assert (p.per_device_train_batch_size, p.gradient_accumulation_steps) == (1, 32)
 
 
 # --- 4. mode 축: 80GB × 7-9B 에서만 full ≠ lora ------------------------------
