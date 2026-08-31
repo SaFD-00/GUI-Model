@@ -271,7 +271,7 @@ def filter_rows(
 
 
 def catalog_stats(rows: Sequence[AppRow]) -> dict[str, object]:
-    """Summary counts used by ``atlas-collect catalog --stats``."""
+    """Summary counts used by ``monkey-collect catalog --stats``."""
     return {
         "total": len(rows),
         "tier": dict(Counter(r.tier for r in rows)),

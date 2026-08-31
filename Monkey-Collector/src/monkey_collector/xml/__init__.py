@@ -1,8 +1,8 @@
 """XML encoding for Monkey-Collector — raw ``uiautomator dump`` -> EXP08 html-like XML.
 
-Ported from ``Atlas-Collector/src/atlas_collector/xml/`` verbatim (see
-``structured_parser``'s docstring for the exact deltas that module carries
-relative to the original reference). Nothing here was re-derived.
+Vendored verbatim (see ``structured_parser``'s docstring for the exact deltas
+that module carries relative to the original reference). Nothing here was
+re-derived.
 
 The transform itself lives, frozen and vendored, in :mod:`structured_parser`
 (see that module's docstring for provenance and for the forest/JSON door).

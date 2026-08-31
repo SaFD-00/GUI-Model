@@ -1,10 +1,5 @@
 """Prove the vendored parser emits the EXP08 dialect from REAL device dumps.
 
-Ported from ``Atlas-Collector/tests/test_parser.py`` verbatim, save for the
-``atlas_collector`` -> ``monkey_collector`` import and the fixture/cwd path
-fixes needed because this file lives one directory deeper (``tests/unit/``
-instead of ``tests/``).
-
 Every fixture here is a live ``uiautomator dump`` off the target Pixel 6
 (serial 19101FDF6004EH, oriole, Android 16 / SDK 36, ``wm size`` 1080x2400).
 No CONTRACT assertion here runs on a synthesised dump — if a fixture goes missing

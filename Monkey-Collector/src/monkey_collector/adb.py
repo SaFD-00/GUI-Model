@@ -3,32 +3,25 @@
 Host-pull: every observation is fetched by the host, on the host's schedule.
 Nothing runs on the device beyond stock ``uiautomator`` / ``screencap`` / ``input``.
 
-PROVENANCE: this module is Atlas-Collector's ``adb.py``
-(``Atlas-Collector/src/atlas_collector/adb.py``), carried over algorithm-for-
-algorithm, PLUS the action-space actuators that only Monkey needs (see MERGE
-NOTES below). The old Monkey ``AdbClient`` resolved a required AVD (``Pixel6-2``,
-overridable via env ``MC_AVD``) at construction time and raised when it was not
-running. The collection target is now a *physical* Pixel 6, so that autodetect
-is gone; construction takes ``serial: str | None = None`` and must not touch USB
--- otherwise merely importing this module in a test would need a device attached.
+Construction takes ``serial: str | None = None`` and must not touch USB --
+otherwise merely importing this module in a test would need a device attached.
 The serial is resolved **lazily, on first command**.
 
 The USB link to the physical Pixel 6 has been observed to drop mid-session;
 :meth:`AdbClient.reconnect` performs ``kill-server`` / ``start-server`` /
 ``wait-for-device`` and re-resolves the serial. Callers own the retry policy.
 
-MERGE NOTES
------------
-Monkey's action space (``domain/actions.py``) needs actuators Atlas never had a
-call site for, because Atlas inlines the equivalent gestures into its own
-explore loop rather than exposing them as client methods:
+ACTUATORS
+---------
+Monkey's action space (``domain/actions.py``) is served by the following
+actuators:
 
 - :meth:`long_press` -- the ``LongPress`` action, a zero-movement :meth:`swipe`.
 - :meth:`press_back` / :meth:`press_home` -- ``PressBack`` / ``PressHome``,
   thin wrappers over the generic :meth:`key`.
 - :meth:`input_text` / :meth:`clear_text_field` -- the ``InputText`` action.
-  Atlas's own text-typing method is kept as :meth:`text`, now a plain alias of
-  :meth:`input_text`, so the two never drift into subtly different escaping.
+  :meth:`text` is a plain alias of :meth:`input_text`, so the two never drift
+  into subtly different escaping.
 - :meth:`is_keyboard_shown` (+ :meth:`_parse_keyboard_shown`) and
   :meth:`hide_keyboard` -- IME handling after a text-input action.
 - :meth:`get_current_activity` (+ :meth:`_parse_current_activity`) and
@@ -36,23 +29,17 @@ explore loop rather than exposing them as client methods:
   denominator of activity coverage; ``catalog_activities.py`` names
   ``get_declared_activities`` as its documented dumpsys fallback.
 
-Where the two clients had the SAME method with a different signature (``tap``,
-``swipe``, ``launch_app``, ``force_stop``, ``shell``), Atlas's wins: it returns
-``None`` instead of the shell stdout, because nothing that will call this class
-next depends on that return value, and Atlas's ``shell`` additionally RAISES
-:class:`AdbError` on a nonzero exit instead of just logging -- a behavior the
-old Monkey client did not have. That raising surfaced a real bug in the two
-preserved dumpsys-based query methods: piping through ``grep`` makes "no match"
-a nonzero exit, which used to just come back as empty output and now has to be
-caught explicitly (see :meth:`get_current_activity`, :meth:`is_keyboard_shown`)
+``tap``/``swipe``/``launch_app``/``force_stop``/``shell`` return ``None`` instead
+of the shell stdout, because nothing that calls this class depends on that
+return value. ``shell`` RAISES :class:`AdbError` on a nonzero exit instead of
+just logging -- that raising surfaced a real bug in the two dumpsys-based query
+methods: piping through ``grep`` makes "no match" a nonzero exit, which has to
+be caught explicitly (see :meth:`get_current_activity`, :meth:`is_keyboard_shown`)
 so they keep their documented "empty/false on failure" contract instead of
 raising on a common, not exotic, path.
 
-``get_current_package`` (the old Monkey method) was dropped in favor of Atlas's
-:meth:`current_package`, which does the same job over a different dumpsys query
-and already returns ``None`` on failure -- keeping both would reproduce exactly
-the two-subtly-different-implementations trap this note just described for
-``text``/``input_text``.
+:meth:`current_package` reads the foreground package over a dumpsys query and
+returns ``None`` on failure.
 
 Milestone status: this module is infrastructure for the collection loop, which
 is NOT implemented yet.

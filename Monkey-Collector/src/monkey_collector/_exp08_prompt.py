@@ -3,8 +3,6 @@
 Copied byte-for-byte from the first record of
 ``data/AndroidControl/EXP08_stage1_state.jsonl`` on ubuntu1.fclab, where it is
 identical across all 60,871 records (md5 2b25a54f5ace1e15a94640ef64481809).
-The same literal ships in ``Atlas-Collector/src/atlas_collector/_exp08_prompt.py``;
-both collectors target one corpus, so the two files must stay byte-identical.
 
 It is a LITERAL, not a template. The screen size, the action space and the
 observability note are baked into the text, and a record whose system turn

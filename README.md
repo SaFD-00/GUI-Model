@@ -1,24 +1,19 @@
 # Implicit-World-Modeling
 
-모바일 GUI **World Modeling** 이 Action Prediction 성능에 미치는 영향을 검증하는 연구 모노레포다. 세 개의 독립 하위 프로젝트로 구성된다 — **두 개의 수집기**가 같은 기기에서 서로 다른 탐색 정책으로 데이터를 모으고, 나머지 하나가 그 데이터로 2-stage VLM 파이프라인을 **학습·평가**한다.
+모바일 GUI **World Modeling** 이 Action Prediction 성능에 미치는 영향을 검증하는 연구 모노레포다. 두 개의 독립 하위 프로젝트로 구성된다 — 하나는 실기기에서 GUI 데이터를 모으는 **수집기**, 나머지 하나가 그 데이터로 2-stage VLM 파이프라인을 **학습·평가**한다.
 
 ## 하위 프로젝트
 
 | 디렉토리 | 역할 | 문서 트리오 |
 |---------|------|------------|
 | [`Implicit-World-Modeling/`](./Implicit-World-Modeling) | 메인 **2-stage fine-tuning 파이프라인** (Qwen 계열 VLM × 데이터셋 매트릭스). Stage 1 = World Modeling, Stage 2 = Action Prediction. LlamaFactory 백엔드 + 단일 노트북/`scripts/` 자동화. | [README](./Implicit-World-Modeling/README.md) · [ARCHITECTURE](./Implicit-World-Modeling/ARCHITECTURE.md) · [AGENTS](./Implicit-World-Modeling/AGENTS.md) |
-| [`Atlas-Collector/`](./Atlas-Collector) | Android **GUI 수집기 — coverage-guided 탐색**. 호스트 Python 이 ADB 로 `uiautomator dump` + `screencap` 을 끌어오는 host-pull 구조. 탐색은 완전히 LLM-free. | [README](./Atlas-Collector/README.md) · [ARCHITECTURE](./Atlas-Collector/ARCHITECTURE.md) · [AGENTS](./Atlas-Collector/AGENTS.md) |
-| [`Monkey-Collector/`](./Monkey-Collector) | Android **GUI 수집기 — LLM-Explorer 탐색 + AIG**. 같은 host-pull 구조·같은 카탈로그·같은 export 계약을 쓰고 **탐색 정책만 다르다**. semantic 추상화로 후보를 가지치고 `graph.json` 을 남긴다. | [README](./Monkey-Collector/README.md) · [ARCHITECTURE](./Monkey-Collector/ARCHITECTURE.md) · [AGENTS](./Monkey-Collector/AGENTS.md) |
+| [`Monkey-Collector/`](./Monkey-Collector) | Android **GUI 수집기 — LLM-Explorer 탐색 + AIG**. 호스트 Python 이 ADB 로 `uiautomator dump` + `screencap` 을 끌어오는 host-pull 구조. semantic 추상화로 후보를 가지치고 `graph.json` 을 남긴다. | [README](./Monkey-Collector/README.md) · [ARCHITECTURE](./Monkey-Collector/ARCHITECTURE.md) · [AGENTS](./Monkey-Collector/AGENTS.md) |
 
-> 환경·툴체인이 다르다. **Implicit-World-Modeling** 은 conda env (`implicit-world-modeling`) + LlamaFactory editable 설치, **두 수집기**는 각각 uv 가 관리하는 자체 `.venv` (Python 3.10+) 를 쓴다. 작업 대상에 맞는 하위 트리오를 본다.
->
-> **두 수집기는 대조군이다.** 같은 실기기(Pixel 6 `19101FDF6004EH`) · 같은 52행 카탈로그 · 같은 파서 · 같은 page 식별 · 같은 EXP08 Stage-1 export 계약을 쓰고, 의도적으로 다른 것은 **탐색 정책 하나뿐**이다. 한쪽에만 변경을 넣으면 그 변수가 늘어난다.
+> 환경·툴체인이 다르다. **Implicit-World-Modeling** 은 conda env (`implicit-world-modeling`) + LlamaFactory editable 설치, **Monkey-Collector** 는 uv 가 관리하는 자체 `.venv` (Python 3.10+) 를 쓴다. 작업 대상에 맞는 하위 트리오를 본다.
 
 ## 현재 상태 (2026-08-29)
 
-- **Monkey-Collector**: device-push(Android 앱 + AccessibilityService + TCP)에서 **host-pull 로 전면 재구축 완료**. 앱 목록은 Atlas 의 52행 카탈로그로, 파서는 EXP08 `data-bbox` dialect 로, page 식별은 LLM-Explorer 방식으로 교체했고, 탐색을 **LLM-Explorer 정책 + AIG(`graph.json`)** 로 새로 만들었다. Action space 는 기존 7종 그대로 유지. 728 tests.
-- **Atlas-Collector**: 실기기 파일럿 완료, 수집 진행 중.
-- **알려진 결함**: Atlas 의 export 는 action 좌표를 **기기 픽셀 그대로** 내보낸다. 코퍼스 실측 결과 정답은 `data-bbox` 와 같은 **840x1876 리사이즈 프레임**이다(정본 입력 20,000 레코드 중 프레임 밖 0건). Monkey 는 export 시점에 리스케일해 이를 피한다. **Atlas 도 같은 수정이 필요하다** — 재수집은 불필요하고 export 만 고치면 된다.
+- **Monkey-Collector**: device-push(Android 앱 + AccessibilityService + TCP)에서 **host-pull 로 전면 재구축 완료**. 파서는 EXP08 `data-bbox` dialect 로, page 식별은 LLM-Explorer 방식으로 교체했고, 탐색을 **LLM-Explorer 정책 + AIG(`graph.json`)** 로 새로 만들었다. Action space 는 기존 7종 그대로 유지. 728 tests.
 - 이전 device-push 시절 ablation 기록: [iter6 통제 ablation 보고](./.claude/analysis/2026-07-14_04-05-29_iter6-controlled-ablation/README.md) · [DEVLOG](./docs/DEVLOG.md)
 
 ## 핵심 아이디어 — 2-stage 파이프라인 (메인 프로젝트)
@@ -35,7 +30,6 @@
 ```
 Implicit-World-Modeling/                 # ← 모노레포 루트 (this README)
 ├── Implicit-World-Modeling/             # 메인 2-stage VLM 파이프라인 (하위 프로젝트)
-├── Atlas-Collector/                     # GUI 수집기 — coverage-guided 탐색 (하위 프로젝트)
 ├── Monkey-Collector/                    # GUI 수집기 — LLM-Explorer 탐색 + AIG (하위 프로젝트)
 ├── data/                                # 대용량 데이터 정본 (gitignore) — 하위 프로젝트가 심볼릭 링크로 참조
 ├── outputs/                             # 학습/평가 산출물 정본 (gitignore) — 하위 프로젝트가 심볼릭 링크로 참조
@@ -56,8 +50,7 @@ conda create -n implicit-world-modeling python=3.12 -y && conda activate implici
 pip install -e ".[llamafactory]" && pip install -e ./LlamaFactory
 #   → 이후 실행은 scripts/ (build_exp0N_data.py · stage{1,2}_{train,merge,eval}.sh)
 
-# 데이터 수집기 (둘 다 uv, 서로 독립)
-cd Atlas-Collector  && uv sync --extra dev   #   → atlas-collect  CLI
+# 데이터 수집기 (uv)
 cd Monkey-Collector && uv sync --extra dev   #   → monkey-collect CLI
 ```
 

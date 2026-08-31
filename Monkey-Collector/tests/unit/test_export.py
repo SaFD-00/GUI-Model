@@ -5,10 +5,10 @@ canonical corpus on ubuntu1.fclab. Two of its invariants fail SILENTLY when
 broken, so they get the most attention here:
 
 **The action frame.** ``coordinate`` / ``coordinate1`` / ``coordinate2`` are in
-the same resized frame as ``data-bbox``. Atlas-Collector writes device pixels
-instead; 67 of its 657 coordinates land outside the frame and the rest point at
-the wrong place while staying inside it. Nothing downstream can detect the
-second kind, so ``test_action_coordinate_lands_inside_the_tapped_elements_bbox``
+the same resized frame as ``data-bbox``. Writing device pixels straight through
+would put some coordinates outside the frame and the rest pointing at the wrong
+place while staying inside it. Nothing downstream can detect the second kind, so
+``test_action_coordinate_lands_inside_the_tapped_elements_bbox``
 is the real contract and
 ``test_rescale_is_anisotropic_and_matches_the_parsers_own_factors`` is what
 catches a uniform or transposed scale that containment alone would tolerate.
@@ -223,7 +223,7 @@ def test_system_prompt_states_the_frame_as_a_literal_not_a_placeholder():
 
 
 # ---------------------------------------------------------------------------
-# 2. coordinates — the part Atlas gets wrong
+# 2. coordinates — the resized frame
 # ---------------------------------------------------------------------------
 
 
@@ -258,7 +258,7 @@ def test_every_exported_action_coordinate_is_inside_the_frame(tmp_path):
 def test_action_coordinate_lands_inside_the_tapped_elements_bbox(tmp_path):
     """THE contract: the action and the boxes must be in one frame.
 
-    Atlas's remaining 590 in-frame coordinates fail exactly this while passing
+    A naive device-pixel passthrough would fail exactly this while passing
     the bounds check above, which is why this test exists separately.
     """
     write_session(tmp_path / "raw", PACKAGE, [triple(0)])

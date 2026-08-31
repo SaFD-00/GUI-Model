@@ -1,9 +1,8 @@
 """AdbClient contract tests. No device, no real subprocess, ever.
 
-Ported from ``Atlas-Collector/tests/test_adb.py`` (the FakeDevice section below
-is that file, renamed to this package) and merged with the surviving cases from
-Monkey-Collector's pre-host-pull ``tests/integration/test_adb.py`` -- the ones
-that still exercise a method that exists in the merged client. Cases that
+Merged with the surviving cases from Monkey-Collector's pre-host-pull
+``tests/integration/test_adb.py`` -- the ones that still exercise a method that
+exists in the current client. Cases that
 pinned removed API (``_escape_text_for_adb``, ``_resolve_avd_serial``, the
 no-arg ``AdbClient()`` autodetecting an AVD, ``get_device_resolution``,
 ``get_current_package``, the old two-call ``launch_app``) are gone: there is

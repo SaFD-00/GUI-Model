@@ -102,7 +102,7 @@ class Triple:
     #: exactly as §6/§7 do, while `pagematch` keys pages by str — the
     #: conversion happens here, at the serialization boundary, and nowhere
     #: else. ``-1`` marks a triple written before the fields existed; export
-    #: ignores unknown fields either way, so the Atlas contract is unchanged.
+    #: ignores unknown fields either way, so the schema contract is unchanged.
     from_page: int = -1
     to_page: int = -1
 

@@ -58,7 +58,7 @@ same stage-2 transform. That stage 2 is byte-identical to this file's except tha
 it (a) omits ``_normalize_ws`` and (b) HARDCODES the ``_renumber`` tail. It has no
 ``coord_mode`` parameter at all, so it emits ``bounds="[l,t][r,b]"`` plus ``index``
 and CANNOT produce ``data-bbox`` as-is — it would need the ``_add_point_*`` /
-``_resize_and_add_point`` tail grafted on. Atlas-Collector is HOST-PULL and reads
+``_resize_and_add_point`` tail grafted on. This project is HOST-PULL and reads
 ``uiautomator dump`` XML directly, so the forest path is not needed; this note
 exists so a future device-side/forest source can be wired in without
 re-deriving the difference.

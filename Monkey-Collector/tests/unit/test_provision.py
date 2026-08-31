@@ -12,7 +12,7 @@ not text: ``Path.read_text`` normalises newlines, so a text comparison would pas
 even if the writer turned the file's CRLF terminators into LF — which is exactly
 the reformat sync-installed must not commit.
 
-Ported from Atlas-Collector's ``tests/test_provision.py``. The CLI-level
+The CLI-level
 ``test_dry_run_writes_nothing`` and
 ``test_provision_dry_run_installs_nothing_and_leaves_the_ledger_alone`` are
 included below now that ``monkey_collector.cli`` wires ``sync-installed`` and
