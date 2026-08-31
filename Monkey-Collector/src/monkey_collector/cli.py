@@ -24,6 +24,7 @@ re-reading the file.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -36,8 +37,14 @@ from monkey_collector.paths import (
     collection_root,
     export_root,
     raw_root,
+    review_root,
     runtime_root,
 )
+
+#: An app contributing fewer records than this is called out by `export`. Not a
+#: threshold on quality: a number this small usually means the collection got
+#: stuck, and the reviewer's filter made that visible rather than causing it.
+THIN_APP_RECORDS = 25
 
 if TYPE_CHECKING:  # imported for typing only; the runtime imports stay local
     from monkey_collector.adb import AdbClient
@@ -633,6 +640,33 @@ def cmd_reset(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# review — human filtering of the collected corpus
+# ---------------------------------------------------------------------------
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """Serve the review UI over ``{root}/raw``, writing verdicts to ``{root}/review``.
+
+    Read-only against the corpus by construction (see
+    :mod:`monkey_collector.review`), so it is safe to open while a sweep is
+    still collecting the apps further down the list. Touches no device.
+    """
+    from monkey_collector.review.server import serve
+    from monkey_collector.review.store import sanitize_reviewer
+
+    config = args.run_config
+    return serve(
+        raw_root(args.root),
+        review_root(args.root),
+        host=args.host,
+        port=args.port,
+        device_size=(config.device.width, config.device.height),
+        reviewer=sanitize_reviewer(args.reviewer or os.environ.get("USER") or "anon"),
+        open_browser=not args.no_browser,
+    )
+
+
+# ---------------------------------------------------------------------------
 # export — collected triples -> EXP08 Stage-1 jsonl
 # ---------------------------------------------------------------------------
 
@@ -659,8 +693,22 @@ def cmd_export(args: argparse.Namespace) -> int:
         id_ratio=args.id_ratio if args.id_ratio is not None else config.export.id_ratio,
         seed=args.seed if args.seed is not None else config.collection.seed,
         keep_unchanged=args.keep_unchanged,
+        review_dir=review_root(args.root),
+        use_review=not args.ignore_review,
+        strict_review=args.strict_review,
     )
     stats = exporter.run()
+    if stats.review_stale and args.strict_review:
+        # Checked first: under --strict-review the exporter refuses before
+        # writing, so "nothing was written" here is the REFUSAL, not an empty
+        # corpus, and must not be reported as one.
+        print(
+            f"monkey-collect: {stats.review_stale} verdict(s) no longer match their "
+            "screens; nothing was exported. Re-review those apps, or drop "
+            "--strict-review to export without them.",
+            file=sys.stderr,
+        )
+        return 2
     if not stats.total_written:
         print("nothing exported — no collected session produced a usable triple")
         return 1
@@ -674,8 +722,38 @@ def cmd_export(args: argparse.Namespace) -> int:
         f"{stats.dropped_missing_files} missing files, "
         f"{stats.dropped_foreign} foreign, "
         f"{stats.dropped_duplicate_step} duplicate step, "
-        f"{stats.dropped_unknown_action} unknown action"
+        f"{stats.dropped_unknown_action} unknown action, "
+        f"{stats.dropped_excluded} excluded by review"
     )
+    if stats.review:
+        print(
+            f"  review: {stats.review.get('verdicts', 0)} verdict(s), "
+            f"{stats.reviewed_kept} kept, {stats.dropped_excluded} excluded"
+        )
+    elif not args.ignore_review:
+        print("  review: no verdicts yet — run `monkey-collect review` to filter by hand")
+    if stats.review_stale:
+        # Loud, and never silently applied: these verdicts were made about
+        # screens that are no longer at those steps.
+        print(
+            f"  WARNING: {stats.review_stale} verdict(s) no longer match their screens "
+            "and were NOT applied — the corpus was re-collected under an old review/. "
+            "Re-review those apps.",
+            file=sys.stderr,
+        )
+    # An app filtered to almost nothing is otherwise only visible as a smaller
+    # grand total — and if it is the OOD holdout, that number IS the eval set.
+    thin = sorted(
+        (count, package)
+        for package, count in stats.written_by_app.items()
+        if count < THIN_APP_RECORDS
+    )
+    for count, package in thin:
+        print(
+            f"  WARNING: {package} contributed only {count} record(s)"
+            f"{' — it is held out for OOD' if package in stats.ood_apps else ''}",
+            file=sys.stderr,
+        )
     # The contract's headline number (0 of 20,000 in the canonical corpus): if
     # this is not 0, the rescale or a recorded device size is wrong.
     print(f"  action coordinates outside their frame: {stats.coords_out_of_frame}")
@@ -695,16 +773,16 @@ def build_parser() -> argparse.ArgumentParser:
         prog="monkey-collect",
         description=(
             "Monkey-Collector — host-pull Android GUI data collector. "
-            "`catalog`, `sync-installed`, `provision`, `reset`, `run` and "
-            "`export` are implemented against the finished host-pull foundation "
+            "`catalog`, `sync-installed`, `provision`, `reset`, `run`, `review` "
+            "and `export` are implemented against the finished host-pull foundation "
             "(adb.py, paths.py, xml/, pagematch.py, stabilize.py, session.py, "
             "catalog.py, provision.py), the LLM-Explorer collection loop "
-            "(loop.py, explore.py, aig.py, semantic.py) and the EXP08 Stage-1 "
-            "export (export.py)."
+            "(loop.py, explore.py, aig.py, semantic.py), the human filtering UI "
+            "(review/) and the EXP08 Stage-1 export (export.py)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Implemented: catalog, sync-installed, provision, reset, run, export.\n"
+            "Implemented: catalog, sync-installed, provision, reset, run, review, export.\n"
             "WARNING: `run` drives a REAL, logged-in device and has no action "
             "guard by design (AGENTS \u00a70.5) — exploration can send messages or "
             "post content."
@@ -915,6 +993,47 @@ def build_parser() -> argparse.ArgumentParser:
     p_reset.set_defaults(func=cmd_reset)
 
     # -- export ---------------------------------------------------------------
+    # -- review ----------------------------------------------------------------
+    p_review = sub.add_parser(
+        "review",
+        help="Open the human-filtering UI over a collected corpus.",
+        description=(
+            "Serve a local web UI over {root}/raw so a person can look at every "
+            "before/action/after triple, per app, and exclude the ones that must "
+            "not reach the export. READ-ONLY against raw/ and runtime/: safe to "
+            "open while a sweep is still collecting. Verdicts are appended to "
+            "{root}/review/by-<reviewer>.jsonl and `export` applies them by "
+            "default. Excluding never deletes collected bytes."
+        ),
+    )
+    p_review.add_argument(
+        "--root",
+        default=DEFAULT_ROOT,
+        help=f"The collection root to review (default: {DEFAULT_ROOT}).",
+    )
+    p_review.add_argument("--port", type=int, default=8700, help="Port to serve on (default: 8700).")
+    p_review.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Interface to bind (default: 127.0.0.1). The corpus is screenshots of "
+            "a REAL, logged-in device — binding anything else publishes it."
+        ),
+    )
+    p_review.add_argument(
+        "--reviewer",
+        default=None,
+        help=(
+            "Name recorded on this session's verdicts, and the file they go to "
+            "(by-<name>.jsonl). Defaults to $USER. Reviewers splitting the apps "
+            "between them get one file each, so nothing merges by hand."
+        ),
+    )
+    p_review.add_argument(
+        "--no-browser", action="store_true", help="Do not open a browser window."
+    )
+    p_review.set_defaults(func=cmd_review)
+
     p_export = sub.add_parser(
         "export",
         help="Convert collected triples into the EXP08 Stage-1 jsonl.",
@@ -965,6 +1084,24 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Fraction of each SEEN app's triples reserved for ID eval, sampled per "
             "app (default: export.id_ratio). Independent of --ood-apps."
+        ),
+    )
+    p_export.add_argument(
+        "--ignore-review",
+        action="store_true",
+        help=(
+            "Export every triple, ignoring {root}/review. Verdicts are applied by "
+            "default so a filter cannot be forgotten; this is the explicit way to "
+            "produce the unfiltered corpus for comparison."
+        ),
+    )
+    p_export.add_argument(
+        "--strict-review",
+        action="store_true",
+        help=(
+            "Exit 2 when a verdict no longer matches the screens at its step "
+            "(the corpus was re-collected under an old review/). Without it such "
+            "verdicts are reported and skipped, never applied."
         ),
     )
     p_export.set_defaults(func=cmd_export)

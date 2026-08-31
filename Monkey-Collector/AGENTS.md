@@ -12,17 +12,6 @@
 구조라, 이벤트 없이 정착한 화면은 signal window 를 통째로 기다렸고 **예산의 44~56% 가 오지 않을
 신호를 기다리는 데 들어갔다.** `recovery.py` 의 poke·escalation 사다리는 전부 그걸 덧대던 것이었다.
 
-형제 프로젝트 [`../Atlas-Collector/`](../Atlas-Collector)와 **같은 기기·같은 카탈로그·같은 export
-계약**을 쓴다. 다른 것은 **탐색 정책 하나뿐**이고, 그게 이 프로젝트가 따로 존재하는 이유다:
-
-| | Atlas-Collector | Monkey-Collector |
-|---|---|---|
-| 탐색 | coverage-guided, 완전 LLM-free | **LLM-Explorer 방식 — semantic state/element 추상화 + 미탐색 우선 + 최단경로 네비게이션** |
-| 그래프 산출물 | 없음 (page_graph 내부용) | **AIG (`graph.json`)** |
-| LLM 용도 | 입력 텍스트 생성만 (게다가 현재 미배선) | 라벨링 + same-function 그룹핑(탐색 가지치기) + 입력 텍스트 |
-
-`Atlas-Collector/` 는 **읽기 전용 참조**다. 이 리포에서 작업하며 그쪽 파일을 수정하지 마라.
-
 ### 재구축 진행 상황
 
 | 단계 | 내용 | 상태 |
@@ -35,6 +24,7 @@
 | M3b | `semantic.py`(라벨 + same-function 그룹핑) + 탐색 정책(`Explorer`) | **DONE** |
 | M4 | host-pull 수집 루프(`loop.py`) + `monkey-collect run` | **DONE** |
 | M5 | EXP08 Stage-1 export + `monkey-collect export` | **DONE** |
+| M6 | human filtering(`review/`) + `monkey-collect review` + export 연동 | **DONE** |
 
 **미구현을 구현된 것처럼 쓰지 마라.** 이 표와 `cli.py` 의 실제 서브파서와 README 의 CLI 표를
 **같이** 갱신한다. 셋 중 하나만 고치면 문서가 거짓말을 시작한다. 반대로 이미 구현된 것을
@@ -146,9 +136,6 @@ page 정체성은 `pagematch.py` 만 결정한다: `state_str` 일치 → `struc
 `pick_navigate_target` / `navigate` 는 100% 규칙 기반(미탐색 랜덤 + networkx 최단경로)이다.
 랭킹 단계를 LLM 으로 바꾸고 싶다면 설계 변경이므로 ARCHITECTURE 를 먼저 고치고 승인을 받아라.
 
-**Atlas 의 "LLM 은 입력 텍스트 전용" 제약을 이 프로젝트에 가져오지 마라.** 그러면
-LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기를 나눌 이유가 사라진다.
-
 ### (d) export 계약 — ubuntu1.fclab 재검증 없이 바꾸지 않는다
 
 소비자는 `Implicit-World-Modeling/scripts/build_exp08_data.py`, 정본 입력은
@@ -165,7 +152,7 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 - 좌표는 **840x1876 절대 픽셀**, `data-bbox="x1 y1 x2 y2"` (공백 구분 4정수).
   `840x1876 = smart_resize_dims(2400, 1080)`.
 
-#### ⚠️ action 좌표도 840x1876 프레임이다 (Atlas 가 이걸 틀린다)
+#### ⚠️ action 좌표도 840x1876 프레임이다
 
 `<action>` JSON 의 `coordinate` / `coordinate1` / `coordinate2` 는 **`data-bbox` 와 같은 리사이즈
 프레임**이다. 실측(각 20,000 레코드):
@@ -175,10 +162,6 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 | `EXP08_stage1_state.jsonl` | — / — / 817 | — / — / 1853 | **0 / 20,000** |
 | `stage1_train.jsonl` | 420 / 790 / 1682 | 877 / 1777 / 1852 | 2 / 15,514 |
 | `stage2_train.jsonl` | 420 / 790 / 835 | 934 / 1776 / 1844 | 0 / 13,618 |
-
-**Atlas-Collector 는 기기 픽셀을 그대로 적는다** (`raw/org.tasks/triples.jsonl` 실측: max 1027x2279,
-657개 좌표 중 67개가 프레임 밖). 나머지는 프레임 안이지만 **엉뚱한 지점**을 가리켜 같은 레코드의
-`data-bbox` 와 어긋난다 — 조용히 틀리는 쪽이라 더 위험하다.
 
 → **Monkey 의 export 는 반드시 리스케일한다.** 하드코딩 금지: 세션이 기록한
 `device_width`/`device_height` 와 `smart_resize_dims` 로 파서와 **동일한 비균일 스케일**
@@ -193,8 +176,8 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 
 ### (e) AIG 는 export 의 입력이 아니다
 
-`triples.jsonl` 이 export 입력이고 스키마는 Atlas 와 같다(+ `from_page`/`to_page` 2필드).
-`graph.json`(AIG)은 **병렬 산출물**이다. 그래프에서 직접 export 하면 Atlas 계약과의 호환이
+`triples.jsonl` 이 export 입력이다(`from_page`/`to_page` 2필드 포함).
+`graph.json`(AIG)은 **병렬 산출물**이다. 그래프에서 직접 export 하면 export 계약과의 호환이
 조용히 깨진다.
 
 ### (f) element 정체성 함수는 하나다
@@ -248,7 +231,7 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 ./.venv/bin/python -m mypy src
 ```
 
-현재 기준선은 **728 passed** 다(2026-08-29, M5 완료 시점). ruff·mypy 는 **에러 0**.
+현재 기준선은 **798 passed** 다(2026-08-30, M6 완료 시점). ruff·mypy 는 **에러 0**.
 이 수가 줄면 회귀로 본다 — 단 **테스트를 의도적으로 삭제한 변경은 예외**이고, 그때는 삭제 개수까지
 세어 새 기준선을 여기에 갱신한다.
 
@@ -267,6 +250,10 @@ LLM-Explorer 정책이 coverage-guided 복제본으로 퇴화해 두 수집기�
 > `test_help_epilog_names_what_is_and_is_not_implemented` ·
 > `test_module_docstring_does_not_promise_export`)는 **새 사실로 갱신**했고, 등록 1개가
 > 플래그·config 우선순위 4개로 갈라졌다).
+> → **798**(M6, +70: `test_review_store.py` 11 · `test_review_corpus.py` 15 ·
+> `test_review_rules.py` 9 · `test_review_server.py` 13 · `test_export_review.py` 11 신설 +
+> `test_cli.py` 37→42(+5, `review` 등록·loopback 기본·root 파생·export 의 review 기본 적용),
+> 0 삭제 — epilog 가 `export` 까지만 구현이라 주장하던 1개는 **새 사실로 갱신**했다).
 > 2026-08-29 시점에 `.venv` 의 editable 설치가 리포 이전 경로(`~/Desktop/Projects/...`)를 가리켜
 > 스위트가 **아예 실행되지 않는** 상태였다. `ModuleNotFoundError: No module named 'monkey_collector'`
 > 가 보이면 코드가 아니라 venv 를 먼저 의심하고 `uv sync --extra dev` 를 돌려라.

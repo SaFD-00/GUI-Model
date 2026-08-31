@@ -5,10 +5,8 @@
 코드는 없다** — Android 앱도, AccessibilityService 도, TCP 서버도 없다. (이전에는 device-push
 구조였지만 2026-08-29 에 host-pull 로 전면 재구축됐다.)
 
-형제 프로젝트 [`../Atlas-Collector/`](../Atlas-Collector)와 **같은 기기 · 같은 카탈로그 · 같은 export
-계약**을 쓴다. 다른 것은 **탐색 정책 하나뿐**이다 — Atlas 는 coverage-guided(LLM-free) 탐색이고,
-Monkey 는 LLM-Explorer 방식(semantic state/element 추상화 + 미탐색 우선 + 최단경로 네비게이션)에
-**AIG**(`graph.json`, App Interaction Graph)를 산출물로 더한다. 자세한 대비표는
+**LLM-Explorer 방식**(semantic state/element 추상화 + 미탐색 우선 + 최단경로 네비게이션)으로
+탐색하며 **AIG**(`graph.json`, App Interaction Graph)를 산출물로 남긴다. 자세한 설계는
 [ARCHITECTURE.md §1](./ARCHITECTURE.md#1-시스템-개요).
 
 설계 전체와 export 계약은 [ARCHITECTURE.md](./ARCHITECTURE.md), 작업 규칙과 하드 제약은
@@ -122,13 +120,17 @@ monkey-collect provision
 # 2) 수집 (기본: 시간 예산, collectable 앱 전부, 앱당 2h)
 monkey-collect run --apps all
 
-# 3) 수집한 triple 을 EXP08 Stage-1 jsonl 로 export
+# 3) 수집된 triple 을 사람이 보고 걸러낸다 (브라우저 UI, raw/ 는 읽기만)
+monkey-collect review
+
+# 4) 수집한 triple 을 EXP08 Stage-1 jsonl 로 export (review 판정이 기본 적용)
 monkey-collect export
 ```
 
 ## 5. CLI
 
-서브커맨드는 6개 — `catalog` · `sync-installed` · `provision` · `run` · `export` · `reset`.
+서브커맨드는 7개 — `catalog` · `sync-installed` · `provision` · `run` · `review` · `export` ·
+`reset`.
 전체 옵션은 `--help` 가 정본이다:
 
 ```bash
@@ -205,6 +207,55 @@ monkey-collect run --apps all --no-prepare-device                    # stayon/OT
 `data/MonkeyCollection`) · `--force`(완료 앱도 재수집, 번호를 새로 시작) · `--include-auth` ·
 `--no-prepare-device`(§2 의 기기 전제 적용을 건너뜀, 기본은 적용).
 
+### `review`
+
+`{root}/raw` 위에 로컬 웹 UI 를 띄워 사람이 before/action/after 를 앱별로 보고 제외한다.
+**`raw/` 와 `runtime/` 을 읽기만 하므로 다른 세션이 수집 중이어도 안전하다** — 판정은
+`{root}/review/by-<reviewer>.jsonl` 에만 append 되고, `export` 가 기본으로 적용한다.
+**제외는 삭제가 아니다**: 수집된 바이트는 그대로 남고 export 레코드에서만 빠진다.
+
+```bash
+monkey-collect review                                  # http://127.0.0.1:8700
+monkey-collect review --port 8700 --reviewer bsw
+monkey-collect review --root data/MonkeyCollection --no-browser
+```
+
+옵션: `--root`(기본 `data/MonkeyCollection`) · `--port`(기본 8700) ·
+`--host`(기본 `127.0.0.1` — 코퍼스는 실계정 기기의 스크린샷이므로 다른 값은 그걸 네트워크에
+공개한다) · `--reviewer`(판정에 찍히는 이름이자 파일명, 기본 `$USER`) · `--no-browser`.
+
+화면은 셋이다.
+
+1. **앱 목록** — 앱마다 export 대상 수 · 검토/제외 진행률 · 수집 중 배지, 그리고
+   **`서로 다른 화면 N개뿐`** 경고. 실측(2026-08-30 sweep)에서 `code.name.monkey.retromusic`
+   은 export 대상 369건이 전부 **같은 레코드 하나의 반복**이었다 — 권한 온보딩 화면에서
+   같은 탭을 369번 한 것으로, 필터링이 아니라 재수집이 답인 경우다.
+2. **스텝 목록** — before/after 썸네일 + 액션 표시(tap 은 점, swipe 는 화살표,
+   `press_back`/`press_home`/`open_app` 은 좌표가 없으므로 칩만). 동일한 export 레코드로
+   묶이는 스텝은 `×N` 배지 하나로 접힌다.
+3. **스텝 상세** — 좌/우 나란히 비교, `Space` 를 누르고 있으면 같은 자리에서 before↔after 가
+   깜빡인다. XML 은 학습에 실제로 들어가는 html-like 가 기본이고 raw 로 토글, before→after
+   차이는 색으로 표시된다.
+
+단축키: `J`/`K` 이동 · `X` 제외 · `1`~`7` 사유 지정 후 제외 · `O` 유지 · `U` 판정 취소 ·
+`Space` 깜빡 · `R` raw 토글 · `D` diff 토글 · `G` 목록 · `?` 도움말.
+
+**벌크 룰**은 미리보기로 건수를 먼저 보여주고 누를 때만 적용하며, 룰 단위로 되돌릴 수 있다.
+export 가 이미 버리는 것(`changed=false`, 파일 결손, 다른 앱 화면, 파싱 실패)에는 룰을 걸지
+않는다 — 그런 룰은 숫자만 보여주고 결과를 바꾸지 못한다. 실제로 export 가 **살리는** 것에만
+작용한다:
+
+| 룰 | 뜻 | 실측 적중 (2026-08-31, 23앱 11,363건 중) |
+|---|---|---|
+| `duplicate` | export 형태가 같은 `(before, action, after)` 그룹에서 앞 N개만 남김 | 2,968 (26%) |
+| `same_html` | 학습 타깃이 입력 XML 과 바이트 단위로 동일 | 59 |
+| `tiny_dump` | 노드 수가 임계값 미만 (로딩 스켈레톤) | 347 |
+| `coord_oof` | 액션 좌표가 프레임 밖 (export 는 세기만 하고 내보낸다) | 1 |
+
+`coord_oof` 가 잡은 1건은 `com.google.android.apps.nbu.files` step 38 이다 — **가로 화면
+(2400×1080)에서 `y1=1800` 인 swipe**, 즉 세로 기준으로 만들어진 좌표다. export 는 이걸
+`coords_out_of_frame` 으로 세기만 하고 내보낸다.
+
 ### `export`
 
 `{root}/raw` 의 `triples.jsonl` 을 읽어 `stage1_train.jsonl` · `stage1_test_id.jsonl` ·
@@ -217,8 +268,14 @@ monkey-collect export --ood-apps 0.3 --id-ratio 0.1
 monkey-collect export --keep-unchanged
 ```
 
+`{root}/review` 의 판정은 **기본으로 적용된다**(필터를 잊는 사고를 막기 위해). 판정이 그
+스텝의 화면과 더 이상 맞지 않으면(=`reset --raw` 후 재수집) 적용하지 않고 `review_stale` 로
+세어 경고한다 — `--strict-review` 면 그때 exit 2.
+
 옵션: `--root`(기본 `data/MonkeyCollection`) · `--seed`(분할 시드) ·
 `--keep-unchanged`(`changed=false` triple 도 포함, 기본 제외) ·
+`--ignore-review`(사람 판정을 무시하고 전부 export — 비교용 원본을 만들 때) ·
+`--strict-review`(stale 판정이 있으면 exit 2) ·
 `--ood-apps FRACTION`(앱 단위 홀드아웃 비율) · `--id-ratio FRACTION`(seen 앱마다 독립적으로 뽑는
 ID eval 비율, `--ood-apps` 와 완전히 독립). **좌표는 export 가 리스케일한다** — `data-bbox` 와
 action 좌표가 세션이 기록한 기기 해상도에서 유도한 동일 프레임(840x1876)에 놓인다, 상세는
@@ -239,6 +296,10 @@ monkey-collect reset --export
 `--runtime`(`runtime/` = 세션 상태) · `--export`(Stage-1 jsonl + `images/`) ·
 `--all`(root 아래 전부) · `--dry-run`(무엇이 지워질지만 나열).
 
+`review/` 는 **`--all` 로도 지워지지 않는다** — `run.log` 와 같은 이유다. 데이터는 다시 수집할
+수 있지만 사람이 내린 판단은 다시 만들 수 없다. 대신 재수집 후에는 옛 판정이 남으므로
+`export` 가 내용 해시로 stale 을 잡아 준다.
+
 ## 6. 저장 레이아웃
 
 ```
@@ -250,6 +311,9 @@ data/MonkeyCollection/                 기본 root (--root)
 │   ├── triples.jsonl
 │   ├── graph.json                     AIG
 │   └── metadata.json
+├── review/                            내구성 — 사람이 내린 판정 (reset 이 지우지 않는다)
+│   ├── by-{reviewer}.jsonl            append-only 판정 로그, 리뷰어당 하나
+│   └── cache/                         썸네일·분석 캐시 (지워도 무해)
 ├── runtime/
 │   ├── apps/{package}/
 │   │   ├── activity_coverage.csv
@@ -269,7 +333,7 @@ data/MonkeyCollection/                 기본 root (--root)
 ## 7. 개발 게이트
 
 ```bash
-./.venv/bin/python -m pytest tests    # 현재 기준선 728 passed
+./.venv/bin/python -m pytest tests    # 현재 기준선 798 passed
 ./.venv/bin/python -m ruff check src tests
 ./.venv/bin/python -m mypy src
 ```
@@ -286,7 +350,7 @@ Monkey-Collector/
 ├── config/run.yaml                   builtin defaults → 이 파일 → MC_* env → CLI 플래그
 │
 ├── src/monkey_collector/
-│   ├── cli.py                        서브커맨드 6개
+│   ├── cli.py                        서브커맨드 7개
 │   ├── config.py                     설정 해석
 │   ├── adb.py                        유일한 디바이스 채널 (dump/screencap/input/재연결)
 │   ├── paths.py                      collection root 경로 해소
@@ -300,6 +364,8 @@ Monkey-Collector/
 │   ├── explore.py                    LLM-Explorer 탐색 정책
 │   ├── loop.py                       host-pull 수집 루프
 │   ├── export.py, _exp08_prompt.py   EXP08 Stage-1 export
+│   ├── review/                       사람 필터링 — store(판정) · corpus(읽기 전용 뷰) ·
+│   │                                 rules(벌크) · server(로컬 UI) · static/
 │   ├── text_input.py                 input_text 값 생성
 │   ├── domain/                       actions(고정 계약) · activity_coverage · cost_tracker
 │   ├── llm/                          OpenRouter Chat Completions 클라이언트

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>monkey · review</title>
+<link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<header class="bar">
+  <a class="wordmark" href="#/">
+    <span class="glyph" aria-hidden="true"><i></i><i></i></span>
+    <span>monkey<em>·</em>review</span>
+  </a>
+  <nav class="crumbs" id="crumbs"></nav>
+  <div class="bar-right">
+    <button class="pill ghost" id="rules-open" hidden>룰</button>
+    <button class="pill ghost" id="help-open" title="단축키">?</button>
+    <span class="pill reviewer" id="reviewer">—</span>
+  </div>
+</header>
+
+<main id="view" class="view"></main>
+
+<aside class="drawer" id="rules" hidden>
+  <div class="drawer-head">
+    <h2>벌크 룰</h2>
+    <button class="pill ghost" id="rules-close">닫기</button>
+  </div>
+  <p class="note">
+    미리보기로 건수를 확인한 뒤에만 적용됩니다. 사람이 이미 판정한 스텝은 건드리지 않고,
+    적용분은 룰 단위로 되돌릴 수 있습니다.
+  </p>
+  <div id="rules-body"></div>
+</aside>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<dialog class="sheet" id="help">
+  <h2>단축키</h2>
+  <dl>
+    <dt>J / K</dt><dd>다음 / 이전 스텝</dd>
+    <dt>X</dt><dd>제외 (사유 팔레트 열림)</dd>
+    <dt>1 – 7</dt><dd>사유를 골라 바로 제외</dd>
+    <dt>O · Enter</dt><dd>유지 (검토함)</dd>
+    <dt>U</dt><dd>판정 취소 → 미검토</dd>
+    <dt>Space (누르고 있기)</dt><dd>before ↔ after 깜빡 비교</dd>
+    <dt>R</dt><dd>raw XML 토글</dd>
+    <dt>D</dt><dd>XML diff 토글</dd>
+    <dt>G · Esc</dt><dd>목록으로</dd>
+  </dl>
+  <button class="pill solid" id="help-close">닫기</button>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

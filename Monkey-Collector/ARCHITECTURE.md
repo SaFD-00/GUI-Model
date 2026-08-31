@@ -37,22 +37,6 @@ window 를 통째로 기다렸다. 실측으로 **수집 예산의 44~56% 가 �
 
 host-pull 은 기다릴 이유가 없다. 화면이 멎었는지는 호스트가 스크린샷을 비교해 직접 판정한다.
 
-### 형제 프로젝트와의 관계
-
-[`../Atlas-Collector/`](../Atlas-Collector) 와 **같은 기기·같은 카탈로그·같은 export 계약**을 쓴다.
-다른 것은 탐색 정책 하나뿐이고, 그게 두 프로젝트가 따로 존재하는 이유다.
-
-| | Atlas-Collector | Monkey-Collector |
-|---|---|---|
-| 탐색 | coverage-guided (activity coverage 주도) | **LLM-Explorer 방식** — semantic 추상화 + 미탐색 우선 + 최단경로 |
-| LLM | 입력 텍스트 생성만 (현재 미배선) | 라벨링 + same-function 그룹핑 + 입력 텍스트 |
-| 그래프 산출물 | 없음 | **AIG (`graph.json`)** |
-| page 식별 | LLM-free | LLM-free (동일) |
-| export | EXP08 Stage-1 | EXP08 Stage-1 (동일, **단 좌표 리스케일 추가**) |
-
-두 수집기의 산출물을 비교할 때 달라지는 변수가 탐색 정책 하나가 되도록, 나머지는 의도적으로
-동일하게 유지한다.
-
 ---
 
 ## 2. 모듈 구조
@@ -182,8 +166,7 @@ structure_str  = md5(activity + sorted(content_free_signature))[:6]
 
 ### 5.3 LLM 호출 빈도
 
-`_gen_state_semantic_info` 는 page 가 아니라 **state 마다** 불린다. Atlas 의 `org.tasks` 세션 실측은
-**1,047 observations / 597 steps / 30 pages** 였다 — state 수는 page 수보다 훨씬 많다.
+`_gen_state_semantic_info` 는 page 가 아니라 **state 마다** 불린다 — state 수는 page 수보다 훨씬 많다.
 
 레퍼런스의 방어는 **구조 프레임 완전 일치 재사용**이다(`input_policy3.py:388-404`): 새 state 의
 구조 프레임이 이미 아는 state 의 것과 같으면 GPT 를 부르지 않고 기존 정보를 재사용한다.
@@ -192,16 +175,7 @@ structure_str  = md5(activity + sorted(content_free_signature))[:6]
 
 이 리포의 재사용 키는 `pagematch` 의 **`structure_str`** 이다 — activity + content-free
 signature 집합의 md5 로, 레퍼런스의 구조 프레임과 같은 것을 6글자로 나타낸다. 따라서 호출 수는
-step 수도 page 수도 아닌 **distinct structure 수**다. Atlas 실측 세션 3개를 이 키로 다시 센 결과:
-
-| 앱 | observations | distinct `structure_str` |
-|---|---|---|
-| `org.tasks` | 1,047 | **39** |
-| `net.gsantner.markor` | 1,532 | **40** |
-| `net.cozic.joplin` | 272 | **19** |
-
-(그 코퍼스에 activity 가 기록돼 있지 않아 `activity=""` 로 계산했다. 실제 activity 를 넣으면
-구조가 더 쪼개질 수 있고 상한은 distinct `state_str`(118 / 353 / 58)이다.) 호출이 수백 단위로
+step 수도 page 수도 아닌 **distinct structure 수**다. 호출이 수백 단위로
 나오면 앱이 복잡한 게 아니라 **가드가 안 먹는 것**이다.
 
 ### 5.4 element 정체성 — 단 하나의 함수
@@ -295,9 +269,8 @@ DiGraph, `utg.js` 로 덤프) 하나뿐이다. **AIG 는 그 UTG 를 이 프로�
 
 이유는 계약 안정성이다. export 계약(§8)은 원격 코퍼스에서 역설계한 것이고 조용히 깨지기 쉽다.
 그래프를 직접 export 소스로 쓰면 그래프 스키마를 손댈 때마다 export 가 함께 흔들린다.
-triple 은 Atlas 와 동일한 스키마를 유지하므로, export 모듈은 형제 프로젝트와 나란히 검증할 수 있다.
 
-triple 에는 Atlas 스키마에 **`from_page` / `to_page` 두 필드만 추가**한다. 그래프 엣지와 triple 을
+triple 은 EXP08 스키마에 **`from_page` / `to_page` 두 필드만 추가**한다. 그래프 엣지와 triple 을
 상호 추적하기 위한 것이고, export 는 모르는 필드를 무시하므로 계약은 그대로다.
 
 ---
@@ -391,11 +364,6 @@ XML 은 `data-bbox="x1 y1 x2 y2"`(공백 구분 4정수)로 이미 리사이즈�
 
 p50 x = 420 = 840/2. stage1 의 이탈 2건(0.013%)은 원본 코퍼스 노이즈다.
 
-> **Atlas-Collector 는 이 지점을 틀린다.** 수집 루프가 `adb.tap(x, y)` 의 기기 픽셀을 그대로 triple 에
-> 적고 export 가 그것을 verbatim 으로 넣는다 — 변환 코드가 없다. 실측(`raw/org.tasks/triples.jsonl`,
-> 597 triple): max 1027x2279, 657개 좌표 중 67개가 프레임 밖. 나머지는 프레임 안이지만 **엉뚱한
-> 지점**을 가리켜 같은 레코드의 `data-bbox` 와 어긋난다.
-
 **Monkey 는 export 시점에 리스케일한다.** 세션이 기록한 `device_width`/`device_height` 와
 `smart_resize_dims` 로 파서와 **동일한 비균일 스케일**(`x_scale = new_w/orig_w`,
 `y_scale = new_h/orig_h`)을 적용한다. 하드코딩 금지. 재수집은 불필요하다 — 기기 좌표가 원본이므로
@@ -406,7 +374,6 @@ export 시점 변환으로 충분하다.
 `parse_device_xml(raw, width, height)` 의 width/height 는 **수집 시점에 `wm size` 로 읽어
 `metadata.json` 에 기록한 값**이다. dump 에서 유도하지 않는다 — 권한 다이얼로그처럼 화면 전체를
 덮지 않는 창은 정당하게 작아서, 단일 dump 만으로는 "부분 창" 과 "잘못된 해상도" 를 구분할 수 없다.
-Atlas 에서 이 유도 방식이 26개 triple 중 **6개(23%)를 frame mismatch 로 조용히 드롭**했다.
 
 ### 8.4 드롭 조건
 
@@ -456,7 +423,7 @@ press(HOME)            →     press_home             →     navigate_home
 ```
 
 내부 vocabulary 는 그대로 두고 **export 레이어에서만** EXP08 이름으로 번역한다. 그래서 "action space
-유지" 와 "Atlas 와 같은 데이터셋 형태" 가 충돌하지 않는다. EXP08 의 `wait` / `terminate` 는
+유지" 와 "EXP08 데이터셋 형태 유지" 가 충돌하지 않는다. EXP08 의 `wait` / `terminate` 는
 Stage-1 human turn 에 나오지 않으므로 emit 하지 않는다.
 
 ---
@@ -492,10 +459,95 @@ Stage-1 human turn 에 나오지 않으므로 emit 하지 않는다.
 | `provision` | DONE |
 | `reset` | DONE |
 | `run` | DONE |
+| `review` | DONE |
 | `export` | DONE |
 
 `NotImplementedError` 를 던지는 유령 서브커맨드를 만들지 않는다. 구현이 생길 때 이 표와
 `cli.py` 의 서브파서와 README 의 CLI 절을 **같이** 갱신한다.
 
-`export` 플래그: `--root` · `--seed` · `--keep-unchanged` · `--ood-apps` · `--id-ratio`.
-디바이스를 건드리지 않는 유일한 수집-후 커맨드다 — 입력은 `{root}/raw/` 의 `triples.jsonl` 뿐이다.
+`export` 플래그: `--root` · `--seed` · `--keep-unchanged` · `--ood-apps` · `--id-ratio` ·
+`--ignore-review` · `--strict-review`. `review` 플래그: `--root` · `--port` · `--host` ·
+`--reviewer` · `--no-browser`. 이 둘은 디바이스를 건드리지 않는 수집-후 커맨드다 — 입력은
+`{root}/raw/` 의 `triples.jsonl` 과 `{root}/review/` 의 판정뿐이다.
+
+## 12. Human filtering — `review/`
+
+수집기는 학습할 가치가 있는 화면과 없는 화면을 구분하지 못한다. 회복 루프·막다른 화면·덜 그려진
+화면을 그대로 기록하는 것은 의도된 것이다 — 기기 위에서 "데이터셋이 무엇인가"를 결정하지 않기
+위해서다. 그 결정은 수집이 끝난 뒤 사람이 내리고, `review/` 가 그것을 기록한다.
+
+### 12.1 세 가지 상태, 한 가지 단위
+
+`unreviewed` / `keep` / `exclude`. 세 번째가 아니라 **두 번째**가 핵심이다 — "봤는데 괜찮았다"를
+기록해야 진행률에 분모가 생긴다.
+
+제외 단위는 **step(triple) 하나**다. observation cascade 는 없다: 화면 하나가 나빠도 그것을
+공유하는 앞뒤 triple 을 자동으로 함께 버리지 않는다.
+
+### 12.2 정체성은 `(package, step)`, 해시는 유효성 검사
+
+판정의 키는 `(package, step)` 이다. 내용 해시를 키로 쓰면 **진짜 중복 triple 에서 충돌**한다 —
+한 앱은 동일한 (before, action, after) 를 369번 반복했고, 그러면 판정 하나가 369 스텝을 조용히
+지배한다.
+
+대신 판정은 `identity_key = sha1(before/raw.xml ‖ after/raw.xml ‖ action)[:16]` 를 함께
+들고 다닌다. 조회에는 절대 쓰지 않고, **export 시점에 그 판정이 아직 같은 화면에 대한 것인지**만
+확인한다. `reset --raw` 후 재수집하면 observation 번호가 다시 매겨지지만 `review/` 는 살아남기
+때문이다(`run.log` 와 같은 이유). 불일치 = **stale**: 적용하지 않고 `review_stale` 로 센다.
+
+검증은 **`_export_app` 의 pre-pass** 에서, `exclude` 판정에 대해서만 한다. 두 덤프를 이미 읽는
+`_build` 가 자연스러워 보이지만 `_build` 는 제외된 triple 에서 아예 실행되지 않으므로, 거기서
+검사하면 정작 위험한 stale exclude 는 영원히 검사되지 않는다. stale keep 은 비용이 없다 —
+유지가 기본값이다.
+
+### 12.3 룰은 export 가 **살리는** 것에만 건다
+
+`changed=false` · 파일 결손 · 다른 앱 화면 · 파싱 실패는 export 가 이미 버린다(§8). 거기에 룰을
+걸면 자신 있는 숫자를 보여주고 수백 개의 판정을 쓰면서 `stage1_train.jsonl` 은 한 줄도 바뀌지
+않는다 — 진행처럼 보이는 것이 가장 나쁜 종류의 버그다. 그런 것들은 뷰 필터로 내려간다.
+
+그룹은 **export 되는 형태** `(before html, translated action, after html)` 로 묶는다.
+`element_index` 와 `duration_ms` 는 `translate_action` 을 통과하지 못하므로, 원본 액션으로
+묶으면 코퍼스에서 바이트 단위로 같은 레코드가 갈라져 중복을 과소 계산한다.
+
+2026-08-31 실측 (23앱, export 대상 11,363건 — sweep 진행 중 스냅샷):
+
+| 앱 | export 대상 | 서로 다른 레코드 | 중복 |
+|---|---|---|---|
+| `code.name.monkey.retromusic` | 369 | **1** | 368 (100%) |
+| `com.simplemobiletools.gallery.pro` | 632 | 109 | 523 (83%) |
+| `app.organicmaps` | 217 | 67 | 150 (69%) |
+| `net.sourceforge.opencamera` | 695 | 333 | 362 (52%) |
+| `me.zhanghai.android.files` | 982 | 518 | 464 (47%) |
+| `org.tasks` | 634 | 508 | 126 (20%) |
+| `net.osmand` | 689 | 680 | 9 (1%) |
+| **합계** | **11,363** | — | **2,968 (26%)** |
+
+retromusic 은 코퍼스 문제가 아니라 **수집 실패**다 — 권한 온보딩 화면에서 같은 탭을 369번 했고
+앱에 들어간 적이 없다. 그래서 앱 카드는 `distinct` 를 정면에 띄운다: 369건을 1건으로 필터링해
+"깨끗하지만 대표성 없는" 앱을 만드는 것보다 다시 수집하는 편이 맞다.
+
+같은 화면이 잡아내는 실패는 중복만이 아니다. export 대상 수 자체가 바닥인 앱은 세 가지 서로
+다른 이유로 그렇게 된다 — `com.emijotify.feesound` 는 4 triple 전부 앱 밖(`stop_reason:
+could not stay in the app`, 76초), `com.simplemobiletools.musicplayer` 는 2시간을 다 쓰고도
+122 중 97이 앱 밖(`steps_outside=113`)이라 8건만 남았고, `md.obsidian` 은 856 중 777이
+`changed=false`(`pages=3`)라 화면이 거의 바뀌지 않았다. 셋 다 필터링할 것이 없는 실패이고,
+`review` 는 그것을 숫자 하나로 보이게 하는 것까지가 역할이다.
+
+**어떤 룰도 스스로 적용되지 않는다.** 첫 화면 로드가 한 앱의 90%를 조용히 지우는 것은, 이 도구가
+정상 동작하는 것과 구분할 수 없는 유일한 버그다.
+
+### 12.4 읽기 전용은 전제 조건이다
+
+sweep 이 뒤쪽 앱을 수집하는 동안 끝난 앱을 리뷰하는 것이 정상 사용이다. `review/` 아래를 빼면
+아무것도 쓰지 않는다. 그 결과로 지켜야 하는 것들:
+
+* `triples.jsonl` 은 **관대한 파서**로 읽는다 — `Session.read_triples` 는 append 중인 마지막
+  줄에서 `json.loads` 로 죽는다.
+* observation 디렉토리에 `raw.xml` 만 있고 `screenshot.png` 가 아직 없을 수 있다.
+* 수집 중인 앱의 `metadata.json` 은 없거나 낡았다 — 없어도 동작해야 한다.
+
+화면 인코딩은 export 의 `observation_size` + `encode_screen` 을 **그대로 import** 한다.
+`xml/__init__.py` 의 `source_frame` 으로 덤프에서 프레임을 유도하면 PNG 를 안 읽어도 되지만,
+§8.2 가 기록한 대로 부분 윈도우(권한 다이얼로그)를 오판해 26건 중 6건을 버린다. 유도 경로가
+둘이 되면 도구가 코퍼스에 대해 거짓말을 하기 시작한다.

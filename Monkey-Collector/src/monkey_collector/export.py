@@ -44,19 +44,18 @@ but never appear in a Stage-1 human turn, so they are never emitted. An
 ``action_type`` outside the seven is COUNTED and dropped, never passed through:
 a payload the corpus has no name for is worse than a missing record.
 
-COORDINATES: THE PART ATLAS GETS WRONG
-======================================
+COORDINATES MUST MATCH THE data-bbox FRAME
+===========================================
 
 ``coordinate`` / ``coordinate1`` / ``coordinate2`` live in the SAME resized frame
 as ``data-bbox``, not in device pixels. Measured on ubuntu1.fclab 2026-08-29:
 ``EXP08_stage1_state.jsonl`` has 0 of 20,000 records outside the frame.
 
-``Atlas-Collector`` writes ``adb.tap``'s device pixels straight through — its
-``raw/org.tasks/triples.jsonl`` peaks at 1027x2279 and 67 of 657 coordinates fall
-outside the frame. The other 590 are *inside* it while pointing at the wrong
-place, disagreeing with the ``data-bbox`` of the very element that was tapped.
-That is the silent half, and it is why :func:`translate_action` reproduces the
-parser's arithmetic exactly (``structured_parser._resize_and_add_point``):
+Writing ``adb.tap``'s device pixels straight through would land some coordinates
+outside the frame and put the rest at the wrong point, silently disagreeing with
+the ``data-bbox`` of the very element that was tapped. That silent failure mode
+is why :func:`translate_action` reproduces the parser's arithmetic exactly
+(``structured_parser._resize_and_add_point``):
 
     new_h, new_w = smart_resize_dims(device_height, device_width, max_pixels)
     x_scale, y_scale = new_w / device_width, new_h / device_height
@@ -227,6 +226,25 @@ class ExportStats:
     #: (0 of 20,000 in the canonical corpus); anything but 0 means the rescale
     #: or the recorded device size is wrong.
     coords_out_of_frame: int = 0
+    #: Records a human excluded in `monkey-collect review`. Counted apart from
+    #: every other drop because it is the only one a PERSON is accountable for.
+    dropped_excluded: int = 0
+    #: Records a human explicitly kept. Not a filter -- the denominator that
+    #: makes `dropped_excluded` mean something ("12 of 400 reviewed", not
+    #: "12 of who knows").
+    reviewed_kept: int = 0
+    #: Verdicts whose content hash no longer matches the screens at that step,
+    #: i.e. the corpus was re-collected under an old `review/`. NOT applied:
+    #: acting on them would exclude whatever screen inherited the step number.
+    review_stale: int = 0
+    #: How many records each app contributed. An app filtered down to almost
+    #: nothing is otherwise only visible as a smaller grand total -- and if it
+    #: lands in the OOD holdout, the OOD eval set IS that number.
+    written_by_app: dict[str, int] = field(default_factory=dict)
+    #: Which set of verdicts produced this export (count + per-file hash), so
+    #: two exports of "the same" root can be told apart. Applying exclusions
+    #: reshuffles the ID/train draw for a fixed seed.
+    review: dict[str, Any] = field(default_factory=dict)
 
     @property
     def total_written(self) -> int:
@@ -250,6 +268,11 @@ class ExportStats:
             "observation_frames": dict(sorted(self.observation_frames.items())),
             "unmeasured_observations": self.unmeasured_observations,
             "coords_out_of_frame": self.coords_out_of_frame,
+            "dropped_excluded": self.dropped_excluded,
+            "reviewed_kept": self.reviewed_kept,
+            "review_stale": self.review_stale,
+            "review": dict(self.review),
+            "written_by_app": dict(sorted(self.written_by_app.items())),
         }
 
 
@@ -542,6 +565,9 @@ class Exporter:
         id_ratio: float = 0.1,
         seed: int = 8,
         keep_unchanged: bool = False,
+        review_dir: str | Path | None = None,
+        use_review: bool = True,
+        strict_review: bool = False,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.runtime_dir = Path(runtime_dir)
@@ -562,6 +588,20 @@ class Exporter:
         #: default: they are legitimate observations but a corpus dominated by
         #: "nothing happened" teaches the model to predict its own input.
         self.keep_unchanged = keep_unchanged
+        #: Where `monkey-collect review` writes its verdicts. Read here, never
+        #: written: the export consumes human judgement, it does not record it.
+        self.review_dir = Path(review_dir) if review_dir else None
+        self.use_review = use_review
+        #: Whether a verdict that no longer matches its screens ends the export.
+        #: Off by default -- a stale verdict is reported and skipped, because
+        #: applying it would exclude an arbitrary record and refusing to export
+        #: at all would make a re-collection unusable until someone re-reviews.
+        self.strict_review = strict_review
+        self._verdicts: Any = None
+        #: ``package -> excluded steps``, resolved before the first byte is
+        #: written so ``strict_review`` can refuse without leaving a finished
+        #: -looking export behind.
+        self._excluded: dict[str, set[int]] = {}
         self.stats = ExportStats()
         #: Image names already written, so a repeated step cannot overwrite one.
         self._image_names: set[str] = set()
@@ -584,6 +624,25 @@ class Exporter:
         packages = self.sessions()
         if not packages:
             logger.warning("no collected sessions under {}", self.data_dir)
+            return self.stats
+
+        self._load_review()
+        # Every app's verdicts are checked here, BEFORE any file is opened. The
+        # natural place is inside the per-app loop, but then `--strict-review`
+        # exits non-zero on top of a complete set of jsonl and images that do
+        # NOT reflect the verdicts -- and anything not reading the exit code
+        # picks that up as a finished corpus.
+        for package in packages:
+            session = Session(package, self.data_dir, self.runtime_dir, episode=package)
+            self._excluded[package] = self._excluded_steps(
+                session, package, session.read_triples()
+            )
+        if self.strict_review and self.stats.review_stale:
+            logger.error(
+                "{} verdict(s) no longer match the screens at their step; refusing to "
+                "export under --strict-review (nothing was written)",
+                self.stats.review_stale,
+            )
             return self.stats
 
         seen, held_out = split_apps(packages, self.ood_apps, self.seed)
@@ -621,6 +680,7 @@ class Exporter:
                     "id_ratio": self.id_ratio,
                     "seed": self.seed,
                     "keep_unchanged": self.keep_unchanged,
+                    "use_review": self.use_review,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -628,6 +688,88 @@ class Exporter:
             encoding="utf-8",
         )
         return self.stats
+
+    # -- human verdicts ------------------------------------------------------
+
+    def _load_review(self) -> None:
+        """Fold `review/` into ``self._verdicts``, or leave it empty.
+
+        Imported here rather than at module scope: the export must keep working
+        in an environment where the review package was never touched, and a
+        top-level import would also make `export` depend on `review` while
+        `review` already depends on `export` for its encoding.
+        """
+        self.stats.review = {}
+        self._verdicts = None
+        if not (self.use_review and self.review_dir):
+            return
+        from monkey_collector.review.store import DecisionStore
+
+        store = DecisionStore.load(self.review_dir)
+        if not store.verdicts:
+            return
+        self._verdicts = store
+        self.stats.review = store.generation()
+        logger.info(
+            "{} human verdict(s) from {} ({} exclude)",
+            len(store.verdicts),
+            self.review_dir,
+            self.stats.review.get("excluded", 0),
+        )
+
+    def _excluded_steps(self, session: Session, package: str, triples: list[Any]) -> set[int]:
+        """Steps a human excluded AND whose verdict still matches the screens.
+
+        The hash check happens HERE, in the pre-pass, and only for exclusions.
+        The tempting place is `_build`, where both dumps are already being read
+        -- but `_build` never runs on an excluded triple, so a stale exclusion
+        (the one that silently drops a good record after `reset --raw` and a
+        re-collection) would never be checked and ``review_stale`` would sit at
+        0 forever. A stale KEEP costs nothing: keeping is the default.
+
+        A verdict written before verdicts carried a key cannot be checked, so it
+        is applied as-is rather than being treated as stale -- refusing an
+        unverifiable verdict would throw away real human work.
+        """
+        if self._verdicts is None:
+            return set()
+        from monkey_collector.review.store import identity_key
+
+        folded = self._verdicts.for_package(package)
+        excluded: set[int] = set()
+        for triple in triples:
+            verdict = folded.get(triple.step)
+            if verdict is None:
+                continue
+            if not verdict.is_exclude:
+                self.stats.reviewed_kept += 1
+                continue
+            if verdict.key:
+                before = session.observation_path(triple.before) / DUMP_NAME
+                after = session.observation_path(triple.after) / DUMP_NAME
+                try:
+                    current = identity_key(
+                        before.read_text(encoding="utf-8"),
+                        after.read_text(encoding="utf-8"),
+                        triple.action,
+                    )
+                except OSError:
+                    # The files are gone; there is nothing left to export at
+                    # this step either, so the exclusion is moot rather than stale.
+                    current = verdict.key
+                if current != verdict.key:
+                    self.stats.review_stale += 1
+                    logger.warning(
+                        "{} step {}: verdict was made about different screens "
+                        "(key {} != {}); NOT applied — re-review this app",
+                        package,
+                        triple.step,
+                        verdict.key,
+                        current,
+                    )
+                    continue
+            excluded.add(triple.step)
+        return excluded
 
     def _frame_for(self, session: Session, package: str) -> tuple[tuple[int, int], tuple[int, int]]:
         """``(device_size, frame)`` for one app, both authoritative for it.
@@ -681,13 +823,21 @@ class Exporter:
             return
 
         device_size, frame = self._frame_for(session, package)
+        # Resolved in `run`, before anything was written. Applied before
+        # `eligible` because an excluded triple must not consume an ID slot it
+        # will never fill, or the ID split silently shrinks below `id_ratio` by
+        # however many records the reviewer threw out.
+        excluded = self._excluded.get(package, set())
 
         # The ID split is drawn per app, so every seen app contributes to ID eval
         # rather than a few apps supplying all of it — otherwise "unseen screens
         # of a known app" is measured on whichever apps the shuffle happened to
         # land on.
         rng = random.Random(f"{self.seed}:{package}")
-        eligible = [t for t in triples if self.keep_unchanged or t.changed]
+        eligible = [
+            t for t in triples
+            if (self.keep_unchanged or t.changed) and t.step not in excluded
+        ]
         id_indices: set[int] = set()
         if not is_ood and self.id_ratio > 0 and eligible:
             count = max(1, int(round(len(eligible) * self.id_ratio)))
@@ -698,6 +848,9 @@ class Exporter:
             self.stats.triples_seen += 1
             if not (self.keep_unchanged or triple.changed):
                 self.stats.dropped_unchanged += 1
+                continue
+            if triple.step in excluded:
+                self.stats.dropped_excluded += 1
                 continue
 
             index = position
@@ -714,6 +867,7 @@ class Exporter:
                 split = SPLIT_TRAIN
             handles[split].write(json.dumps(record, ensure_ascii=False) + "\n")
             self.stats.written[split] = self.stats.written.get(split, 0) + 1
+            self.stats.written_by_app[package] = self.stats.written_by_app.get(package, 0) + 1
 
     def _build(
         self,

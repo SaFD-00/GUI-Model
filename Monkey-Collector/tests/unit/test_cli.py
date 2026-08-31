@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from monkey_collector import cli
+from monkey_collector.config import load_run_config
 
 
 @pytest.fixture(autouse=True)
@@ -287,8 +288,8 @@ def test_run_defaults_are_the_safe_ones():
 
 def test_help_epilog_names_every_implemented_subcommand():
     epilog = cli.build_parser().epilog or ""
-    assert "Implemented: catalog, sync-installed, provision, reset, run, export." in epilog
-    assert "NOT implemented" not in epilog, "M5 shipped export; the epilog must not lag"
+    assert "Implemented: catalog, sync-installed, provision, reset, run, review, export." in epilog
+    assert "NOT implemented" not in epilog, "M6 shipped review; the epilog must not lag"
     assert "action guard" in epilog, "AGENTS §0.5 is a warning, not a footnote"
 
 
@@ -560,3 +561,66 @@ def test_input_mode_reaches_the_text_generator(monkeypatch, sweep):
     _, _, run = sweep
     assert run("--no-prepare-device", "--input-mode", "random") == 0
     assert seen == ["random"], "the resolved config carries the flag"
+
+
+# ---------------------------------------------------------------------------
+# review (M6)
+# ---------------------------------------------------------------------------
+
+
+def test_review_is_a_registered_subcommand():
+    args = cli.build_parser().parse_args(["review"])
+
+    assert args.command == "review"
+    assert args.func is cli.cmd_review
+
+
+def test_review_binds_loopback_by_default():
+    # The corpus is screenshots of a REAL, logged-in device (AGENTS §0.5).
+    # Any other default would publish it to the network.
+    args = cli.build_parser().parse_args(["review"])
+
+    assert args.host == "127.0.0.1"
+    assert args.port == 8700
+
+
+def test_review_takes_a_reviewer_and_a_root():
+    args = cli.build_parser().parse_args(
+        ["review", "--root", "data/Other", "--reviewer", "kim", "--no-browser"]
+    )
+
+    assert args.root == "data/Other"
+    assert args.reviewer == "kim"
+    assert args.no_browser is True
+
+
+def test_review_writes_to_the_review_subtree_of_the_root_it_was_given(monkeypatch):
+    seen = {}
+
+    def fake_serve(raw, review, **kwargs):
+        seen["raw"] = Path(raw)
+        seen["review"] = Path(review)
+        seen.update(kwargs)
+        return 0
+
+    import monkey_collector.review.server as server_module
+
+    monkeypatch.setattr(server_module, "serve", fake_serve)
+    args = cli.build_parser().parse_args(["review", "--root", str(Path("data/Pilot"))])
+    args.run_config = load_run_config(None)
+
+    assert cli.cmd_review(args) == 0
+    assert seen["raw"].name == "raw"
+    assert seen["review"].name == "review"
+    assert seen["raw"].parent == seen["review"].parent
+
+
+def test_export_applies_review_verdicts_unless_told_not_to():
+    default = cli.build_parser().parse_args(["export"])
+    ignored = cli.build_parser().parse_args(["export", "--ignore-review"])
+
+    # Applied by DEFAULT: a filter that must be opted into is a filter that gets
+    # forgotten, and the export it produces is silently the unfiltered one.
+    assert default.ignore_review is False
+    assert default.strict_review is False
+    assert ignored.ignore_review is True

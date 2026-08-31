@@ -24,6 +24,12 @@ dependencies = [
 where = ["src"]
 include = ["monkey_collector*"]
 
+# The review UI is one HTML page plus its CSS/JS, loaded off disk by
+# `review/server.py`. Without this they are missing from a built wheel and the
+# server serves 404s for its own assets.
+[tool.setuptools.package-data]
+"monkey_collector.review" = ["static/*"]
+
 [tool.uv]
 package = true
 
@@ -61,9 +67,8 @@ ignore = ["E501"]
 known-first-party = ["monkey_collector"]
 
 [tool.ruff.lint.per-file-ignores]
-# structured_parser.py is VENDORED VERBATIM from Atlas-Collector's
-# src/atlas_collector/xml/structured_parser.py (itself vendored from
-# .claude/references/parser/structured_xml_parser_v2_htmllike.py) and is frozen
+# structured_parser.py is VENDORED VERBATIM from
+# .claude/references/parser/structured_xml_parser_v2_htmllike.py and is frozen
 # on purpose: its transform must stay byte-for-byte identical to the code that
 # produced the EXP08 corpus, or our XML stops matching the training
 # distribution. Lint is off here so nobody "tidies" it. Do NOT run
