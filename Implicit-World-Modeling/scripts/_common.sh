@@ -462,9 +462,14 @@ Options:
                        stage2_{train,merge,eval}.sh 전용.
   --epochs LIST        콤마로 구분된 epoch 정수 리스트 (기본: 1,2,3)
                        stage{1,2}_eval.sh 에서 HF Hub merged repo sweep 대상.
-  --variants LIST      콤마로 구분된 변형 목록. stage{1,2}_eval.sh 전용.
-                       Stage1: base, full_world_model, lora_world_model
-                       Stage2: base, full_base, lora_base, full_world_model, lora_world_model
+  --variants LIST      콤마로 구분된 변형 목록. **소비하는 스크립트마다 어휘가 다르다**
+                       (같은 계보를 각자의 이름 공간으로 부른다):
+                       stage{1,2}_eval.sh  Stage1: base, full_world_model, lora_world_model
+                                           Stage2: base, full_base, lora_base,
+                                                   full_world_model, lora_world_model
+                       stage2_train.sh     base, world-model-full, world-model-lora,
+                                           world-model-adapter (YAML variant 이름)
+                       stage2_merge.sh     base, world_model, adapter (adapter 디렉토리 키)
   --exp01-ratios LIST  콤마로 구분된 AC_EXP01 ratio 목록 (기본: ratio37,ratio55,ratio73).
                        --dataset AC_EXP01 일 때만 의미가 있다.
   -h, --help           이 도움말 표시

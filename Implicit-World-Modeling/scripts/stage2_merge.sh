@@ -13,6 +13,9 @@
 #                                world-model variant 전용. base variant 에서는 무시.
 #   --stage2-mode {full|lora}    Stage 2 학습 방식 (adapter 디렉토리 + HF suffix 결정)
 #   --no-hf-upload               local merge 만 수행하고 HF Hub push 는 생략
+#   --variants LIST              콤마 구분. base | world_model | adapter 중 일부만 merge.
+#                                기본은 전부. **어휘가 stage2_train.sh/stage2_eval.sh 와
+#                                다르다** (여기는 adapter 디렉토리 키다).
 #   --model / --dataset          (공통)
 #
 # HF repo id 규칙 (단일 정의: _common.sh):
@@ -101,6 +104,35 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     if [[ "$STAGE2_MODE" == "lora" && "$STAGE1_MODE" == "lora" && -n "$STAGE1_EPOCH" \
           && -f "$BASE_DIR/configs/train/$(ds_config_subfolder "$DS")/stage2_lora/${MODEL_SHORT}_world-model-adapter$(ds_version_suffix "$DS").yaml" ]]; then
       VARIANTS_TO_MERGE+=(adapter)
+    fi
+
+    # --variants 로 일부 계보만 merge (stage2_train.sh 의 같은 이름 필터와 대칭이되
+    # **어휘가 다르다** — train 은 YAML variant 이름(base|world-model-{full,lora}),
+    # 여기는 adapter 디렉토리 키(base|world_model|adapter)다.
+    #
+    # 이 필터가 필요한 이유: base 계보와 world-model 계보를 GPU 쌍마다 따로
+    # (train→merge→eval) 돌릴 때, 필터가 없으면 먼저 끝난 세션의 merge 가 아직
+    # 학습 중인 다른 계보까지 훑고, 뒤이어 끝난 세션의 merge 가 **이미 merge 된
+    # 계보를 같은 export_dir 로 다시 쓴다** — 그 디렉토리를 평가가 읽고 있으면
+    # 조용히 깨진 모델을 로드한다. 계보를 세션에 못박아 그 교차를 없앤다.
+    if [[ "${#VARIANTS[@]}" -gt 0 ]]; then
+      # 오타를 조용한 no-op 으로 흘리지 않는다 — 이 스크립트의 어휘는 셋뿐이다.
+      for w in "${VARIANTS[@]}"; do
+        case "$w" in
+          base|world_model|adapter) ;;
+          *)
+            echo "[!] stage2_merge.sh --variants 는 base | world_model | adapter 만 받습니다 (got '$w')." >&2
+            echo "    (stage2_train.sh 의 world-model-full / stage2_eval.sh 의 lora_world_model 과 어휘가 다릅니다.)" >&2
+            exit 2 ;;
+        esac
+      done
+      FILTERED=()
+      for v in "${VARIANTS_TO_MERGE[@]}"; do
+        for w in "${VARIANTS[@]}"; do
+          if [[ "$v" == "$w" ]]; then FILTERED+=("$v"); break; fi
+        done
+      done
+      VARIANTS_TO_MERGE=("${FILTERED[@]}")
     fi
 
     for VARIANT in "${VARIANTS_TO_MERGE[@]}"; do
