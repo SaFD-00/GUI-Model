@@ -616,7 +616,7 @@ python -c "import json;d=json.load(open('configs/lf_dataset/dataset_info.json'))
 - **`stage2_eval.sh`** — `--variants` 로 `base` / `{full|lora}_base` / `{full|lora}_world_model` 선택. EVAL_DS=AC_EXP01/02/03/05 는 ID+OOD 동시 추론 → 3 섹션, MB 는 single-pair 1 섹션. **AC_EXP08 은 `run_exp08_stage2_eval()` 로 조기 위임**돼 7 버킷을 돈다 (leaf `on-AC_EXP08-<bucket>`, 버킷 선택은 `EVAL_BUCKETS` — stage1 의 `EVAL_TASKS` 와 값 공간이 겹치지 않아 **이름을 일부러 다르게** 뒀다; 같은 이름이면 stage1→stage2 래퍼에서 값이 새어 엉뚱한 leaf 를 평가한다). 채점 모드 플래그는 `ds_score_mode_flag` 위임으로 얻는다 — 목록을 인라인으로 복제하지 않는다 (하드 제약 15g). marker (`action_metrics.json`) 존재 unit 은 variant × EVAL_DS 별 독립 skip.
   - **`--epochs` 에 `0` 포함 (opt-in)**: `{full|lora}_world_model` 의 epoch-0 = stage2 미학습 베이스라인 (= stage1 merged 와 동일 모델). `{full|lora}_base` 는 stage1 계보가 없어 epoch-0 이 `base` 와 중복 → 경고 후 skip. 기본 `1,2,3` 에는 미포함.
 
-> ⓘ **merge X 변형 (`world-model-adapter`) — EXP07 한정 opt-in.** 일반 world-model variant 는 stage1 어댑터를 **merge 한** local merged dir 을 base 로 삼지만(merge O), EXP07 은 `_DATASET_CONFIG["AndroidControl_EXP07"]["stage2_adapter_variant"] = True` 로 `stage2_lora` 에 **merge 하지 않는** 변형을 하나 더 렌더한다. 그 YAML (`…/stage2_lora/{MODEL}_world-model-adapter.yaml`) 은 `model_name_or_path` 를 **원본 base 그대로** 두고 `adapter_name_or_path: __STAGE1_ADAPTER__` placeholder 만 둔다 — `stage2_train.sh` 가 런타임에 stage1 LoRA 어댑터 checkpoint 경로로 sed 치환해 base 위에 얹어 이어학습한다 (merge 스텝 없음). 산출은 `…_world-model_from_adapter-ep{E1}/` 로 `from_full`/`from_lora` 와 대칭 분리되고, HF slug 는 `_common.sh::hf_repo_id_stage2_world_model_adapter` 가 조립한다 (`…world-model-stage1-lora-epoch{E1}-stage2-lora-adapter-epoch{E2}`). eval 변형 `lora_world_model_adapter` 는 `STAGE2_EXTRA_VARIANTS` 라 **기본 sweep 에 미포함** — `--variants lora_world_model_adapter` 로 명시할 때만 채점된다.
+> ⓘ **merge X 변형 (`world-model-adapter`) — EXP07 한정 opt-in.** 일반 world-model variant 는 stage1 어댑터를 **merge 한** local merged dir 을 base 로 삼지만(merge O), EXP07 은 `_DATASET_CONFIG["AndroidControl_EXP07"]["stage2_adapter_variant"] = True` 로 `stage2_lora` 에 **merge 하지 않는** 변형을 하나 더 렌더한다. 그 YAML (`…/stage2_lora/{MODEL}_world-model-adapter.yaml`) 은 `model_name_or_path` 를 **원본 base 그대로** 두고 `adapter_name_or_path: __STAGE1_ADAPTER__` placeholder 만 둔다 — `stage2_train.sh` 가 런타임에 stage1 LoRA 어댑터 checkpoint 경로로 sed 치환해 base 위에 얹어 이어학습한다 (merge 스텝 없음). 산출은 `…_world-model{SEG}_from_adapter-ep{E1}/` 로 `from_full`/`from_lora` 와 대칭 분리되고, HF slug 는 `_common.sh::hf_repo_id_stage2_world_model_adapter` 가 조립한다 (`…world-model-stage1-lora-epoch{E1}-stage2-lora-adapter-epoch{E2}`). eval 변형 `lora_world_model_adapter` 는 `STAGE2_EXTRA_VARIANTS` 라 **기본 sweep 에 미포함** — `--variants lora_world_model_adapter` 로 명시할 때만 채점된다.
 
 ### CLI 계약 — 어떤 인자가 무엇을 결정하는가
 
@@ -652,16 +652,17 @@ raw JSONL + screenshots
   → configs/lf_dataset/dataset_info.json          (커밋 정본 — 런타임 등록 아님)
 
   → Stage 1 train  (mode1 ∈ {full, lora})
-       → outputs/{OUT_DS}/adapters/{M}{SFX}_stage1_{mode1}_world-model/checkpoint-*/
+       → outputs/{OUT_DS}/adapters/{M}{SFX}_stage1_{mode1}_world-model{VER}{SEG}/checkpoint-*/
   → Stage 1 merge  (모든 epoch 각각)
-       → outputs/{OUT_DS}/merged/{M}{SFX}_stage1_{mode1}_world-model/epoch-{E1}/  (+ 선택적 HF push)
+       → outputs/{OUT_DS}/merged/{M}{SFX}_stage1_{mode1}_world-model{VER}{SEG}/epoch-{E1}/  (+ 선택적 HF push)
   → Stage 1 eval   (local merged 우선 + HF fallback × cross-dataset)
        → outputs/{OUT_DS}/eval/{M}{SFX}/stage1_eval/{mode1}_world-model/epoch-{E1}/on-{EVAL_DS}/hungarian_metrics.json
        ★ 사용자가 결과를 보고 epoch E1 을 고른다 (자동 winner 선정 없음) → --stage1-epoch 로 Stage 2 에 전달
 
   → Stage 2 train  (mode2 ∈ {full, lora}, variant ∈ {base, world-model-{mode1}})
-       world-model base = merged/…/stage1_{mode1}_world-model/epoch-{E1}/   (local, 선행 필수)
-       → adapters/{M}{SFX}_stage2_{mode2}_{base | world-model_from_{mode1}-ep{E1}}/checkpoint-*/
+       world-model base = resolve_eval_model_path → merged/…/stage1_{mode1}_world-model{VER}{SEG}/epoch-{E1}/
+                          우선, 없으면 HF repo id 로 fallback (2026-09-01~; 그전엔 local 선행 필수)
+       → adapters/{M}{SFX}_stage2_{mode2}_{base | world-model{SEG}_from_{mode1}-ep{E1}}/checkpoint-*/
   → Stage 2 merge → merged/…/epoch-{E2}/  (+ HF push)
   → Stage 2 eval  → eval/…/epoch-{E2}/on-{EVAL_DS}/action_metrics.json
        EVAL_DS=AC_EXP01/02/03 : { overall, in_domain, out_of_domain }   (test_id + test_ood)
@@ -674,14 +675,15 @@ raw JSONL + screenshots
 
 ```
 outputs/{OUT_DS}/                # AndroidControl_EXP0{1..5} | MC.  AC_EXP01 의 ratio 는 디렉토리가 아니라 {SFX} 로 운반
+                                 # {VER}=_v1 (EXP07) · {SEG}=-{stage1 ablation variant} (AC_EXP08). 둘 다 없는 실험군은 빈 문자열
 ├── adapters/                    #   SFX = _ratio{37,55,73} (AC_EXP01) | "" (그 외)
-│   ├── {model}{SFX}_stage1_{full,lora}_world-model/
+│   ├── {model}{SFX}_stage1_{full,lora}_world-model{VER}{SEG}/
 │   ├── {model}{SFX}_stage2_{full,lora}_base/
-│   └── {model}{SFX}_stage2_{full,lora}_world-model_from_{full,lora}-ep{E1}/
+│   └── {model}{SFX}_stage2_{full,lora}_world-model{SEG}_from_{full,lora}-ep{E1}/
 ├── merged/                      # 같은 이름 + /epoch-{E}/
 └── eval/{model}{SFX}/
-    ├── stage1_eval/{base | {full,lora}_world-model/epoch-{E}}/on-{EVAL_DS}[-without-open_app]/
-    └── stage2_eval/{base | {full,lora}_base/epoch-{E} | {full,lora}_world-model_from_{M1}-ep{E1}/epoch-{E2}}/on-{EVAL_DS}/
+    ├── stage1_eval/{base | {full,lora}_world-model{VER}{SEG}/epoch-{E}}/on-{EVAL_DS}[-without-open_app]/
+    └── stage2_eval/{base | {full,lora}_base/epoch-{E} | {full,lora}_world-model{SEG}_from_{M1}-ep{E1}/epoch-{E2}}/on-{EVAL_DS}/
 ```
 
 `BEST_CHECKPOINT` / `BEST_CHECKPOINT.json` 은 더 이상 생성되지 않는다. eval 경로의 `variant_path` 는 CLI VARIANT 의 `world_model` → `world-model` 치환이다.
@@ -690,10 +692,10 @@ outputs/{OUT_DS}/                # AndroidControl_EXP0{1..5} | MC.  AC_EXP01 의
 
 | Stage / variant | 패턴 |
 |---|---|
-| Stage 1 | `SaFD-00/{short}-{slug}world-model-stage1-{M1}-epoch{E1}` |
+| Stage 1 | `SaFD-00/{short}-{slug}world-model{SEG}-stage1-{M1}-epoch{E1}` |
 | Stage 2 base | `SaFD-00/{short}-{slug}base-stage2-{M2}-epoch{E2}` |
-| Stage 2 world | `SaFD-00/{short}-{slug}world-model-stage1-{M1}-epoch{E1}-stage2-{M2}-epoch{E2}` |
-| Stage 2 world (merge X, EXP07) | `SaFD-00/{short}-{slug}world-model-stage1-lora-epoch{E1}-stage2-lora-adapter-epoch{E2}` |
+| Stage 2 world | `SaFD-00/{short}-{slug}world-model{SEG}-stage1-{M1}-epoch{E1}-stage2-{M2}-epoch{E2}` |
+| Stage 2 world (merge X, EXP07) | `SaFD-00/{short}-{slug}world-model{SEG}-stage1-lora-epoch{E1}-stage2-lora-adapter-epoch{E2}` |
 
 조립은 `_common.sh::hf_repo_id_stage1` / `hf_repo_id_stage2_base` / `hf_repo_id_stage2_world_model` (+ EXP07 merge X 는 `hf_repo_id_stage2_world_model_adapter`) 로 단일화. eval 의 model path 해석은 `resolve_eval_model_path {stage1|stage2_base|stage2_world}` 가 **local merged dir 우선 + HF fallback** 으로 처리한다 → local merge 한 머신에서 같은 머신 안에서 바로 eval 까지 이어 돌 수 있다 (`HF_TOKEN` 불필요).
 
