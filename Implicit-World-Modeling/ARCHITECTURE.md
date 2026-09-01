@@ -323,6 +323,10 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
   ├── EXP08_stage2.jsonl                                    #   downstream(with_history, **이미 img-first**). stage2 30K 가
   │                                                         #   주 소비자, stage1 down 10K·stage1 action test·stage2
   │                                                         #   eval 7 버킷도 같은 풀 (규칙 3)
+  ├── EXP08_stage1_inverse.jsonl                            # ★ EXP08 역동역학 원천 — MID_ACTION_PREDICTION
+  │                                                         #   (current+next XML → 사이의 action). stage1 inverse-mix
+  │                                                         #   ablation 단독 소비 → stage1 명. 벤더 파일명을 버리고
+  │                                                         #   여기로 평탄화했다 (하드 제약 17)
   ├── episodes_meta.jsonl         # primary_app = 전경 앱 package_name
   └── images/                     # ★ 유일한 이미지 디렉토리 — EXP01~EXP07 전부가 "AndroidControl/images/..." 로 참조
       ⚠ EXP04 원천 (EXP04_stage1_{action,state}.jsonl) 은 디스크에 없다 → 재빌드 불가 (§2 경고 블록)
