@@ -436,19 +436,19 @@ def test_deepspeed_offload_splits_by_size_class_and_mode_on_a100() -> None:
 
 
 def test_generated_count(generated: dict[str, str]) -> None:
-    """as-trained 74 − 자격박탈 2 + 신규 148 = 220 (EXP06 12 + EXP07 v1/v2 18 + EXP08 18 포함).
+    """as-trained 74 − 자격박탈 2 + 신규 150 = 222 (EXP06 12 + EXP07 v1/v2 18 + EXP08 20 포함).
 
     개수를 하드코딩하지 않는다 — 자격 정의(DATASET_MODEL_ELIGIBILITY)의 결과이지
     독립적 사실이 아니기 때문이다. 자격을 바꾸면 개수는 따라 바뀌는 게 정상이고,
     이 테스트가 잡아야 할 것은 "생성기가 자격과 어긋나게 만드는가" 다.
     """
-    # 신규 148 = 기존 확장 100 + EXP06 stage2 12 (2 모델 × 2 모드 × 3 variant)
+    # 신규 150 = 기존 확장 100 + EXP06 stage2 12 (2 모델 × 2 모드 × 3 variant)
     #          + EXP07 v1/v2 18 (버전당 3B 단독 9: stage1 full/lora 2 + stage2 full 3 + stage2 lora 4)
-    #          + EXP08 18 (Qwen2.5-VL 2 모델 × 2 모드 × [stage1 1 + stage2 3] = 16;
+    #          + EXP08 20 (Qwen2.5-VL 2 모델 × 2 모드 × [stage1 1 + stage2 3] = 16;
     #            EXP07 과 달리 merge X 변형이 없어 stage2_lora 도 3 variant.
-    #            + M2 ablation stage1_extra_variants(action-only) 2 개 — stage1 full 만,
-    #            2 모델 × 1 variant).
-    assert len(generated) == AS_TRAINED_COUNT - len(INELIGIBLE_REMOVED) + 148
+    #            + stage1_extra_variants(action-only, inverse-mix) 4 개 — stage1 full 만,
+    #            2 모델 × 2 variant).
+    assert len(generated) == AS_TRAINED_COUNT - len(INELIGIBLE_REMOVED) + 150
 
     # 생성된 모든 YAML 이 자격 집합 안에 있는가 (자격 밖 조합을 만들지 않는가)
     for rel in generated:

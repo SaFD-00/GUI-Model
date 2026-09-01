@@ -557,8 +557,13 @@ _DATASET_CONFIG = {
         # {variant: dataset key} 를 stage1 full 모드에서만 추가로 렌더한다 (브리프 범위:
         # stage1 full FT 전용, lora·stage2 는 만들지 않는다). 데이터 정본은
         # scripts/build_exp08_ablation_data.py (stage1_train.jsonl 을 필터링만 — 재샘플링 아님).
+        # inverse-mix (역동역학 혼합): 총량은 메인 stage1 과 같은 50K 지만 구성이
+        # forward 30K : inverse 10K : action 10K (6:2:2) 다 — state 예측의 일부를
+        # 역동역학(current+next → action)으로 갈아 끼웠을 때 downstream 이 어떻게
+        # 달라지는지 본다. 데이터 정본은 scripts/build_exp08_inverse_mix_data.py.
         "stage1_extra_variants": {
             "action-only": "IWM-AC_EXP08_stage1_train_action_only",
+            "inverse-mix": "IWM-AC_EXP08_stage1_train_inverse_mix",
         },
         "stage1": {
             "lr": "1.0e-5",

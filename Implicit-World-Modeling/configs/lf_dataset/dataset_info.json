@@ -794,6 +794,21 @@
       "system_tag": "system"
     }
   },
+  "IWM-AC_EXP08_stage1_train_inverse_mix": {
+    "file_name": "../../data/AndroidControl_EXP08/stage1_train_inverse_mix.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "from",
+      "content_tag": "value",
+      "user_tag": "human",
+      "assistant_tag": "gpt",
+      "system_tag": "system"
+    }
+  },
   "IWM-AC_EXP08_stage1_test_state_full": {
     "file_name": "../../data/AndroidControl_EXP08/stage1_test_state_full.jsonl",
     "formatting": "sharegpt",
