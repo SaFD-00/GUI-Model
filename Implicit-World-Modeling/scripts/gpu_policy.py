@@ -129,20 +129,28 @@ _FORCE_HALF_BATCH_DATASETS: frozenset[str] = frozenset(
         "AndroidControl_EXP07",
         "AndroidControl_EXP07_v1",
         "AndroidControl_EXP07_v2",
-        # EXP08 은 EXP07 과 같은 좌표계·image budget·cutoff 라 activation(logits)
-        # 압박도 같다 → 같은 강제 half-batch 대상.
+        # ★ AndroidControl_EXP08 은 2026-09-01 **사용자 결정**으로 이 집합에서 빠졌다
+        #   → 80GB 에서 half-batch 면제를 받아 pdbs=2 / ga=16 으로 돈다 (A100×2 기준,
+        #   global batch 64 는 불변). EXP07 3 키는 그대로 강제 절반이다.
         #
-        # ⚠️ 2026-08-31 에 이 줄을 한 번 뺐다가 **되돌렸다. 다시 빼지 마라.**
-        #   뺀 근거는 "pdbs=1 로 도는 중 GPU 당 30.7 GB 만 쓰고 49 GB 가 남으니
-        #   EXP07 을 죽인 23.77 GiB 스파이크가 들어간다" 였다. 그 추론이 틀렸다 —
-        #   **pdbs 를 2 배로 하면 스파이크만 커지는 게 아니라 baseline 도 같이 커진다.**
-        #   실측(A100×2, stage2 lora, 두 계보 동시): baseline 이 30.7 → 63.2 GB 로
-        #   따라 올라가 남은 여유가 14.10 GiB 였고, 거기에 24.49 GiB 단일 할당이
-        #   들어와 **두 계보가 똑같이 step 31 에서 OOM** 했다 (EXP07 은 step 28).
-        #   즉 헤드룸은 `pdbs=1 의 여유` 가 아니라 `pdbs=2 의 여유` 로 재야 한다.
-        #   step 20 근처에서 메모리가 63/57 GB 로 평평해 보이는 것도 근거가 못 된다 —
-        #   그건 수렴이 아니라 그 구간 샘플이 짧았을 뿐이다 (데이터 max 는 p99 의 2.5 배).
-        "AndroidControl_EXP08",
+        #   ⚠️ **이 결정은 실측 OOM 을 이긴 결정이지 실측을 반증한 것이 아니다.**
+        #   2026-08-31 A100×2 stage2 lora 실측: pdbs=2 로 올리자 스파이크만 커진 게
+        #   아니라 baseline 이 30.7 → 63.2 GB 로 같이 올라가 남은 여유가 14.10 GiB
+        #   였고, 거기에 24.49 GiB 단일 할당이 들어와 **world-model·base 두 계보가
+        #   똑같이 step 31 에서 OOM** 했다 (EXP07 은 step 28). 그 실측은 여전히 사실이다.
+        #
+        #   **OOM 이 재발하면 되돌릴 자리는 이 한 줄이다** — "AndroidControl_EXP08" 을
+        #   위 EXP07 키들 옆에 다시 넣으면 된다. 그리고 그 뒤에 다시 빼려면 근거는
+        #   "여유가 있어 보인다" 가 아니라 **pdbs=2 에서 실제로 완주한 로그**여야 한다.
+        #
+        #   교훈 자체는 유효하다 — 헤드룸은 `pdbs=1 의 여유` 가 아니라 **바꾼 뒤의
+        #   설정**으로 재야 한다. step 20 근처에서 메모리가 평평해 보이는 것은 근거가
+        #   못 된다 (수렴이 아니라 그 구간 샘플이 짧았을 뿐이고, 데이터 max 는 p99 의
+        #   2.5 배다).
+        #
+        #   ⚠️ 2026-09-01 신설되는 inverse 혼합 stage1 데이터는 프롬프트에 XML 이
+        #   2 개(current+next) 들어가 시퀀스가 더 길 수 있다 — 그 데이터로 도는 런이
+        #   OOM 재발 1순위 후보다.
     }
 )
 

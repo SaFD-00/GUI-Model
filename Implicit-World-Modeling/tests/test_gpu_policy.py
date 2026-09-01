@@ -207,22 +207,21 @@ def test_half_batch_rule_general():
                     )
 
 
-def test_exp07_exp08_force_half_batch_overrides_no_offload_exemption():
-    """EXP07/EXP08 은 no-offload 조합(A100/H100 × 3-4B)이어도 pdbs 를 강제로 절반으로 낮춘다.
+def test_exp07_force_half_batch_overrides_no_offload_exemption():
+    """EXP07 은 no-offload 조합(A100/H100 × 3-4B)이어도 pdbs 를 강제로 절반으로 낮춘다.
 
     offload 면제 근거는 optimizer state 메모리지만, half-batch 는 activation
     (LM head logits) 메모리 문제라 독립이다. EXP07(1080×2400 + cutoff 24576)은
     pdbs=2 에서 logits 단일 할당 OOM 하여(2026-07-28 stage2 base 실측) 강제 절반.
     offload 는 여전히 꺼져 있어야 한다 (ds_z3_config, 3-4B optimizer 는 80GB 에 들어감).
 
-    EXP08 도 같은 대상이다 — 2026-08-31 에 한 번 면제로 돌렸다가 **실측 OOM 으로
-    되돌렸다**. 아래 전용 테스트가 그 회귀를 막는다.
+    EXP08 은 2026-09-01 사용자 결정으로 이 집합에서 빠졌다 — 아래 전용 테스트가
+    그 반대 방향을 고정한다.
     """
     for ds in (
         "AndroidControl_EXP07",
         "AndroidControl_EXP07_v1",
         "AndroidControl_EXP07_v2",
-        "AndroidControl_EXP08",
     ):
       for gpu_type in ("A100", "H100"):
         for mode in ("full", "lora"):
@@ -236,17 +235,25 @@ def test_exp07_exp08_force_half_batch_overrides_no_offload_exemption():
             )
 
 
-def test_exp08_force_half_batch_is_not_removable_by_headroom_argument():
-    """EXP08 의 강제 half-batch 를 "GPU 에 여유가 있다" 는 근거로 다시 빼지 못하게 못박는다.
+def test_exp08_takes_half_batch_exemption_on_80gb():
+    """EXP08 은 80GB × 3-4B 에서 half-batch 면제를 **받는다** (pdbs=2 / ga=16).
 
-    2026-08-31 에 실제로 뺐다가 되돌렸다. 뺀 근거는 "pdbs=1 로 도는 중 30.7 GB 만
-    쓰고 49 GB 가 남으니 EXP07 을 죽인 23.77 GiB 스파이크가 들어간다" 였고, 그
-    추론이 틀렸다 — **pdbs 를 2 배로 하면 baseline 도 같이 2 배가 된다.** 실측:
-    baseline 30.7 → 63.2 GB, 남은 여유 14.10 GiB, 요구 24.49 GiB → 두 계보가
-    똑같이 step 31 에서 OOM (A100×2, stage2 lora, 2026-08-31).
+    2026-09-01 **사용자 결정**이다. 그 결정은 아래 실측 OOM 을 인지한 상태에서
+    내려졌다 — 실측을 반증한 것이 아니므로 근거를 그대로 남긴다:
 
-    그러므로 헤드룸은 `pdbs=1 의 여유` 가 아니라 `pdbs=2 의 여유` 로 재야 하고,
-    EXP08 은 EXP07 과 같이 강제 절반으로 남는다.
+      2026-08-31 A100×2 stage2 lora 실측. pdbs=2 로 올리면 logits 스파이크만
+      커지는 게 아니라 baseline 도 같이 커진다 — 30.7 → 63.2 GB 로 올라가 남은
+      여유가 14.10 GiB 였고, 거기에 24.49 GiB 단일 할당이 들어와 world-model·base
+      두 계보가 똑같이 **step 31 에서 OOM** 했다 (EXP07 은 step 28).
+
+    그러므로 이 테스트를 다시 뒤집는(= EXP08 을 강제 절반으로 되돌리는) 것은
+    OOM 재발 시 정당하다. 반대로 이 방향을 유지·재확인하려면 근거는 "여유가 있어
+    보인다" 가 아니라 **pdbs=2 에서 완주한 로그**여야 한다 — step 20 근처의 평평한
+    메모리는 근거가 못 된다 (그 구간 샘플이 짧았을 뿐이고 데이터 max 는 p99 의
+    2.5 배다). EXP07 의 강제 절반은 그대로다 (위 테스트).
+
+    global batch 는 어느 nproc 에서도 64 로 불변이다 — pdbs 를 올리면 grad_accum 이
+    함께 내려가 학습 semantics 가 안 바뀐다는 것이 이 테스트의 핵심이다.
     """
     for gpu_type in ("A100", "H100"):
         for nproc in (1, 2, 4, 8):
@@ -254,14 +261,24 @@ def test_exp08_force_half_batch_is_not_removable_by_headroom_argument():
                 p = resolve_gpu_policy(
                     gpu_type, nproc, "3-4B", "AndroidControl_EXP08", mode
                 )
-                assert p.per_device_train_batch_size == 1, (gpu_type, nproc, mode)
-                assert p.gradient_accumulation_steps == 64 // nproc, (gpu_type, nproc)
+                assert p.per_device_train_batch_size == 2, (gpu_type, nproc, mode)
+                assert p.gradient_accumulation_steps == 64 // (2 * nproc), (
+                    gpu_type,
+                    nproc,
+                    mode,
+                )
+                assert p.offload is False, (gpu_type, nproc, mode)
                 assert (
                     p.per_device_train_batch_size
                     * p.gradient_accumulation_steps
                     * nproc
                     == 64
                 )
+
+    # RTX5090 은 변하지 않는다 — EXP08 이 _HALF_BATCH_DATASETS 에는 그대로 남아 있고
+    # (no-offload 조합이 아니라 면제 대상이 아니다) pdbs 가 이미 최소(1) 다.
+    p = resolve_gpu_policy("RTX5090", 2, "3-4B", "AndroidControl_EXP08", "lora")
+    assert (p.per_device_train_batch_size, p.gradient_accumulation_steps) == (1, 32)
 
 
 # --- 4. mode 축: 80GB × 7-9B 에서만 full ≠ lora ------------------------------

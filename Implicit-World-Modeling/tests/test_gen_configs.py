@@ -392,9 +392,12 @@ def test_deepspeed_offload_splits_by_size_class_and_mode_on_a100() -> None:
         if is_small or is_lora:
             # 80GB × (3-4B | lora) → no-offload + half-batch 면제 → 전 DS 에서 pdbs=2, ga=16.
             assert EXPECTED_DS_NO_OFFLOAD in content, rel
-            if rel.startswith(("IWM-AC_EXP07/", "IWM-AC_EXP08/")):
-                # EXP07(v1/v2)/EXP08 은 긴 시퀀스 activation OOM 때문에 no-offload 여도
+            if rel.startswith("IWM-AC_EXP07/"):
+                # EXP07(v1/v2) 은 긴 시퀀스 activation OOM 때문에 no-offload 여도
                 # half-batch 를 강제한다 (_FORCE_HALF_BATCH_DATASETS) → pdbs=1, ga=32.
+                # EXP08 은 2026-09-01 사용자 결정으로 그 집합에서 빠져 여기 오지 않는다
+                # (→ else 갈래에서 pdbs=2, ga=16). 단 7-9B × full 은 no-offload 조합이
+                # 아니라 _HALF_BATCH_DATASETS 가 그대로 걸린다 — 아래 갈래 참조.
                 assert "per_device_train_batch_size: 1" in content, rel
                 assert "gradient_accumulation_steps: 32" in content, rel
             else:
