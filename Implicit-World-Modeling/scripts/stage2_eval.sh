@@ -30,6 +30,11 @@
 #       중복(=base variant)이라 skip. base variant 는 epoch 무관(원본 모델 zero-shot).
 #   --stage1-mode {full|lora}   world-model variant 의 상류 Stage 1 모드 (기본 full).
 #   --stage1-epoch N            world-model variant 에서 HF repo 계보 번호 주입용. 필수.
+#   --stage1-variant V          상류 stage1 ablation 계보 (기본 없음 = 메인 stage1).
+#     --stage1-epoch 와 같은 축이다. 지정하면 model path·HF repo id·eval 산출 디렉토리
+#     ({full|lora}_world-model{SEG}_from_{mode1}-ep{E1}) 에 세그먼트가 들어가 메인 런
+#     leaf 와 섞이지 않는다. base / {full|lora}_base 는 stage1 계보가 없어 영향받지 않는다.
+#     명명 규칙 정본: _common.sh::stage1_variant_seg.
 #
 # 산출물:
 #   outputs/{TRAIN_DS}/eval/{MODEL}/stage2_eval/{variant}[/epoch-{E}]/on-{EVAL_DS}/
@@ -282,18 +287,20 @@ for MODEL_SHORT in "${MODELS[@]}"; do
           exit 2
         fi
         MODE2="${VARIANT%_world_model}"
-        VARIANT_PATH="${VARIANT/world_model/world-model}"
-        echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT] stage1=${STAGE1_MODE}ep${STAGE1_EPOCH} stage2 epochs: ${EPOCHS[*]}" >&2
+        # stage1 ablation 계보 세그먼트는 world-model 토큰 바로 뒤 (정본: stage1_variant_seg).
+        # model path 와 eval 산출 경로 양쪽에 들어가야 ablation 지표가 메인 런 leaf 를 덮지 않는다.
+        VARIANT_PATH="${VARIANT/world_model/world-model}$(stage1_variant_seg "$STAGE1_VARIANT")"
+        echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT] stage1=${STAGE1_MODE}ep${STAGE1_EPOCH}${STAGE1_VARIANT:+/$STAGE1_VARIANT} stage2 epochs: ${EPOCHS[*]}" >&2
         for EPOCH in "${EPOCHS[@]}"; do
           if [[ "$EPOCH" == "0" ]]; then
             # epoch-0 = stage2 미학습 = stage1 merged repo (stage2 mode 무관, 동일 모델).
             # ds_stage1_source 로 stage1 계보 소스 DS 를 해석 (예: AC_EXP06 → AC_EXP05,
             # stage2 비증강 대조군은 EXP06 stage1 을 따로 학습하지 않고 EXP05 를 승계 —
             # HF 폴백 id 도 자동으로 ac-exp05-...-stage1-... 이 된다).
-            HUB_ID=$(resolve_eval_model_path stage1 "$MODEL_SHORT" "$(ds_stage1_source "$TRAIN_DS")" "$STAGE1_MODE" "$STAGE1_EPOCH")
+            HUB_ID=$(resolve_eval_model_path stage1 "$MODEL_SHORT" "$(ds_stage1_source "$TRAIN_DS")" "$STAGE1_MODE" "$STAGE1_EPOCH" "$STAGE1_VARIANT")
           else
             HUB_ID=$(resolve_eval_model_path stage2_world "$MODEL_SHORT" "$TRAIN_DS" \
-              "$STAGE1_MODE" "$STAGE1_EPOCH" "$MODE2" "$EPOCH")
+              "$STAGE1_MODE" "$STAGE1_EPOCH" "$MODE2" "$EPOCH" "$STAGE1_VARIANT")
           fi
           OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT_PATH}_from_${STAGE1_MODE}-ep${STAGE1_EPOCH}/epoch-${EPOCH}"
           for EVAL_DS in "${EVAL_DATASETS[@]}"; do
@@ -315,12 +322,12 @@ for MODEL_SHORT in "${MODELS[@]}"; do
         for EPOCH in "${EPOCHS[@]}"; do
           if [[ "$EPOCH" == "0" ]]; then
             # epoch-0 = stage2 미학습 = stage1 어댑터 자체 (merge O 의 epoch-0 과 동일 모델).
-            HUB_ID=$(resolve_eval_model_path stage1 "$MODEL_SHORT" "$(ds_stage1_source "$TRAIN_DS")" "$STAGE1_MODE" "$STAGE1_EPOCH")
+            HUB_ID=$(resolve_eval_model_path stage1 "$MODEL_SHORT" "$(ds_stage1_source "$TRAIN_DS")" "$STAGE1_MODE" "$STAGE1_EPOCH" "$STAGE1_VARIANT")
           else
             HUB_ID=$(resolve_eval_model_path stage2_world_adapter "$MODEL_SHORT" "$TRAIN_DS" \
-              "$STAGE1_MODE" "$STAGE1_EPOCH" "$MODE2" "$EPOCH")
+              "$STAGE1_MODE" "$STAGE1_EPOCH" "$MODE2" "$EPOCH" "$STAGE1_VARIANT")
           fi
-          OUT_REL_BASE="${EVAL_DIR_REL}/lora_world-model_from_adapter-ep${STAGE1_EPOCH}/epoch-${EPOCH}"
+          OUT_REL_BASE="${EVAL_DIR_REL}/lora_world-model$(stage1_variant_seg "$STAGE1_VARIANT")_from_adapter-ep${STAGE1_EPOCH}/epoch-${EPOCH}"
           for EVAL_DS in "${EVAL_DATASETS[@]}"; do
             run_variant_epoch_eval_on "$MODEL_SHORT" "$TRAIN_DS" "$VARIANT" "$EPOCH" "$HUB_ID" \
               "$OUT_REL_BASE" "$TEMPLATE" "$EVAL_DS"

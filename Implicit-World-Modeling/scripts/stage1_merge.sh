@@ -2,7 +2,7 @@
 # Stage 1 Merge — 전체 epoch checkpoint 를 각각 merge + HF Hub push.
 #
 # train → merge → eval 흐름 전환: BEST_CHECKPOINT 의존 제거. 모든
-# outputs/{OUT_DS}/adapters/{MODEL}{SFX}_stage1_{MODE}_world-model/checkpoint-*/
+# outputs/{OUT_DS}/adapters/{MODEL}{SFX}_stage1_{MODE}_world-model{VER}{SEG}/checkpoint-*/
 # 를 순회하며 epoch 별로 local merge + 개별 HF repo push 한다.
 # (OUT_DS = ds_outputs_code(DS), SFX = ds_model_suffix(DS) — AC_EXP01_ratio* → AndroidControl_EXP01 + _ratio{37,55,73})
 #
@@ -19,11 +19,16 @@
 # (lora 모드는 base model + adapter_name_or_path 블록 추가,
 #  --no-hf-upload 시 export_hub_model_id 를 생략)
 #
+# --stage1-variant VARIANT: stage1 ablation 계보 (기본 없음 = 메인 stage1).
+# 세그먼트가 어댑터 입력 경로·merged 출력 경로·HF repo id **셋 다**에 들어간다 —
+# 하나라도 빠지면 에러 없이 메인 런 산출물을 읽거나 덮어쓴다 (아래 불변식 가드).
+# 명명 규칙 정본은 _common.sh::stage1_variant_seg.
+#
 # HF repo id 규칙 (단일 정의: _common.sh::hf_repo_id_stage1):
-#   SaFD-00/{short}-{slug}world-model-stage1-{MODE}-epoch{E}
+#   SaFD-00/{short}-{slug}world-model{SEG}-stage1-{MODE}-epoch{E}
 #
 # 로컬 산출물 (사용자 정책: 전부 보존):
-#   outputs/{OUT_DS}/merged/{MODEL}{SFX}_stage1_{MODE}_world-model/epoch-{E}/
+#   outputs/{OUT_DS}/merged/{MODEL}{SFX}_stage1_{MODE}_world-model{VER}{SEG}/epoch-{E}/
 #
 # 요구: HF Hub upload 시 HF_TOKEN (.env 또는 환경변수)
 
@@ -32,24 +37,30 @@ source "$(dirname "$0")/_common.sh"
 parse_args "$@"
 export DISABLE_VERSION_CHECK=1
 
-# ⚠️ 임시 가드 (M4 §7 배선 전까지) — 이 스크립트는 STAGE1_VARIANT 를 모른다.
-# TRAIN_DIR_REL(아래) 이 항상 variant 세그먼트 없는 경로를 가리키므로, action-only
-# ablation 체크포인트를 merge 하려 하면 조용히 **메인 stage1 런의 어댑터**를 대신
-# merge 해서 같은 HF repo id 로 push 한다 (hf_repo_id_stage1 도 variant 를 모른다) —
-# HF 에 이미 올라간 메인 런 체크포인트 12개(각 7.53GB)를 되돌릴 수 없게 덮어쓸 수
-# 있다. 체인(local_merged_epoch_dir/hf_repo_id_stage1/resolve_eval_model_path/
-# stage1_eval.sh) 이 전부 variant-aware 해지기 전까지는 여기서 막는다.
-# 이 가드는 작업 2 의 체인이 배선되면 제거한다.
-if [[ -n "$STAGE1_VARIANT" ]]; then
-  echo "[!] stage1_merge.sh 는 아직 --stage1-variant 를 지원하지 않습니다 (got '$STAGE1_VARIANT')." >&2
-  echo "    이유: TRAIN_DIR_REL/hf_repo_id_stage1 이 variant 를 모르는 채 메인 런" >&2
-  echo "    체크포인트를 merge/push 해 HF 의 기존 산출물을 덮어쓸 수 있습니다." >&2
-  echo "    선행 필요: local_merged_epoch_dir·hf_repo_id_stage1·resolve_eval_model_path·" >&2
-  echo "    stage1_eval.sh 의 variant 배선(M4 §7) 완료 후 이 가드를 제거하세요." >&2
-  exit 2
-fi
+# stage1 ablation 계보 세그먼트 ("" | -action-only | …). 명명 규칙 정본은
+# _common.sh::stage1_variant_seg 이고 여기서는 그 값을 경로 조립에 쓰기만 한다.
+VARSEG="$(stage1_variant_seg "$STAGE1_VARIANT")"
 
-SCRIPT_TAG="stage1_merge_${STAGE1_MODE}"
+# 불변식 가드 — variant 를 지정했는데 최종 문자열에 세그먼트가 없으면 **merge 하기 전에** 죽는다.
+# 이 스크립트에는 한때 "--stage1-variant 를 아예 거절" 하는 임시 가드가 있었다. 그 가드가
+# 막고 있던 진짜 사고는 "variant 를 아는 척하면서 메인 런 어댑터를 merge 해 메인 런 HF repo 를
+# 덮어쓰는 것" 이므로, 배선이 끝난 지금은 그 조건을 직접 검사한다.
+#   · adapters 입력 경로 (TRAIN_DIR_REL) — 잘못되면 **엉뚱한 체크포인트**를 merge 한다
+#   · merged 출력 경로   (MERGED_REL)    — 잘못되면 메인 런 merged 를 덮어쓴다
+#   · HF repo id         (HUB_ID)        — 잘못되면 HF 의 메인 런 체크포인트를 되돌릴 수 없게 덮어쓴다
+# HUB_ID 는 --no-hf-upload 에서 빈 문자열이므로 업로드할 때만 검사한다.
+assert_variant_segment() {
+  local what="$1" value="$2"
+  [[ -z "$VARSEG" ]] && return 0
+  if [[ "$value" != *"$VARSEG"* ]]; then
+    echo "[!] stage1 variant '$STAGE1_VARIANT' 가 지정됐는데 ${what} 에 세그먼트 '${VARSEG}' 가 없습니다:" >&2
+    echo "      $value" >&2
+    echo "    메인 런 산출물을 읽거나 덮어쓸 수 있어 중단합니다 (_common.sh::stage1_variant_seg 참조)." >&2
+    exit 1
+  fi
+}
+
+SCRIPT_TAG="stage1_merge_${STAGE1_MODE}${STAGE1_VARIANT:+_$STAGE1_VARIANT}"
 MERGED_COUNT=0
 SKIPPED_COUNT=0
 FAILED_COUNT=0
@@ -64,8 +75,12 @@ for MODEL_SHORT in "${MODELS[@]}"; do
     # 가 DS 로 버전을 붙이므로 여기 REL 경로도 같은 버전으로 맞춘다. 그 외 DS 는 빈 문자열.
     VER="$(ds_version_suffix "$DS")"
     # LF cwd 기준 상대경로 (= BASE_DIR 기준 "outputs/...").
-    TRAIN_DIR_REL="../outputs/${OUT_DS}/adapters/${MODEL_SHORT}${SFX}_stage1_${STAGE1_MODE}_world-model${VER}"
+    # VARSEG 는 VER 다음에 온다 — gen_configs.render_stage1 이 output_dir 를
+    # `save_s1_{mode}` + `-{variant}` 로 만들기 때문에 학습이 실제로 쓴 디렉토리와
+    # 바이트 일치해야 한다 (어긋나면 다른 계보의 체크포인트를 merge 한다).
+    TRAIN_DIR_REL="../outputs/${OUT_DS}/adapters/${MODEL_SHORT}${SFX}_stage1_${STAGE1_MODE}_world-model${VER}${VARSEG}"
     TRAIN_DIR="$LF_ROOT/$TRAIN_DIR_REL"
+    assert_variant_segment "adapters 입력 경로" "$TRAIN_DIR_REL"
 
     shopt -s nullglob
     CKPTS=("$TRAIN_DIR"/checkpoint-*/)
@@ -86,14 +101,17 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       }
 
       if [ "$HF_UPLOAD" -eq 1 ]; then
-        HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH")
+        HUB_ID=$(hf_repo_id_stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH" "$STAGE1_VARIANT")
+        assert_variant_segment "HF repo id" "$HUB_ID"
         TARGET_DESC="$HUB_ID"
       else
         HUB_ID=""
         TARGET_DESC="local-only"
       fi
-      MERGED_REL="../outputs/${OUT_DS}/merged/${MODEL_SHORT}${SFX}_stage1_${STAGE1_MODE}_world-model${VER}/epoch-${EPOCH}"
-      LOCAL_DIR="$(local_merged_epoch_dir stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH")"
+      MERGED_REL="../outputs/${OUT_DS}/merged/${MODEL_SHORT}${SFX}_stage1_${STAGE1_MODE}_world-model${VER}${VARSEG}/epoch-${EPOCH}"
+      LOCAL_DIR="$(local_merged_epoch_dir stage1 "$MODEL_SHORT" "$DS" "$STAGE1_MODE" "$EPOCH" "$STAGE1_VARIANT")"
+      assert_variant_segment "merged 출력 경로" "$MERGED_REL"
+      assert_variant_segment "merged 출력 경로(절대)" "$LOCAL_DIR"
       CKPT_REL="./${TRAIN_DIR_REL}/${CKPT_NAME}"
 
       echo "[+] [$MODEL_SHORT][$DS][$STAGE1_MODE] ${CKPT_NAME} (epoch=${EPOCH}) → ${TARGET_DESC}" >&2

@@ -11,9 +11,14 @@
 #   --model / --train-dataset / --eval-datasets
 #   --variants LIST      콤마 구분. 기본: base,full_world_model,lora_world_model
 #     base               : Zero-shot baseline (base model)
-#     full_world_model   : SaFD-00/{short}-{slug}world-model-stage1-full-epoch{E}
-#     lora_world_model   : SaFD-00/{short}-{slug}world-model-stage1-lora-epoch{E}
+#     full_world_model   : SaFD-00/{short}-{slug}world-model{SEG}-stage1-full-epoch{E}
+#     lora_world_model   : SaFD-00/{short}-{slug}world-model{SEG}-stage1-lora-epoch{E}
 #   --epochs LIST        콤마 구분 정수 (기본 1,2,3). world-model variant 대상.
+#   --stage1-variant V   stage1 ablation 계보 (기본 없음 = 메인 stage1). SEG = -{V}.
+#     model path (local merged / HF fallback) 와 eval 산출 디렉토리
+#     ({full|lora}_world-model{SEG}/epoch-{E}) 양쪽에 들어가 메인 런 leaf 와 섞이지 않는다.
+#     base variant 는 stage1 계보가 없으므로 영향받지 않는다 — ablation eval 트리에는
+#     자체 base leaf 가 생기지 않고 메인 런의 base leaf 를 그대로 참조한다 (같은 모델).
 #
 # EVAL_DS 별 분기 (Stage 2 와 동일 패턴):
 #   MC       : 단일 파일 stage1_test.jsonl 1-회 (random split 산출물)
@@ -409,10 +414,13 @@ for MODEL_SHORT in "${MODELS[@]}"; do
 
       full_world_model|lora_world_model)
         MODE="${VARIANT%_world_model}"    # full | lora
-        VARIANT_PATH="${VARIANT/world_model/world-model}"
-        echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT] Sweeping epochs: ${EPOCHS[*]}" >&2
+        # stage1 ablation 계보(--stage1-variant)는 model path 와 **eval 산출 경로 둘 다**에
+        # 들어가야 한다 — 경로가 같으면 ablation 지표가 메인 런 leaf 를 덮어쓴다.
+        # 세그먼트 위치(world-model 토큰 바로 뒤)의 정본은 _common.sh::stage1_variant_seg.
+        VARIANT_PATH="${VARIANT/world_model/world-model}$(stage1_variant_seg "$STAGE1_VARIANT")"
+        echo "[+] [$MODEL_SHORT][train=$TRAIN_DS][$VARIANT${STAGE1_VARIANT:+/$STAGE1_VARIANT}] Sweeping epochs: ${EPOCHS[*]}" >&2
         for EPOCH in "${EPOCHS[@]}"; do
-          HUB_ID=$(resolve_eval_model_path stage1 "$MODEL_SHORT" "$TRAIN_DS" "$MODE" "$EPOCH")
+          HUB_ID=$(resolve_eval_model_path stage1 "$MODEL_SHORT" "$TRAIN_DS" "$MODE" "$EPOCH" "$STAGE1_VARIANT")
           OUT_REL_BASE="${EVAL_DIR_REL}/${VARIANT_PATH}/epoch-${EPOCH}"
           for EVAL_DS in "${EVAL_DATASETS[@]}"; do
             run_variant_epoch_eval_on "$MODEL_SHORT" "$TRAIN_DS" "$VARIANT" "$EPOCH" "$HUB_ID" \
