@@ -379,8 +379,7 @@ Monkey-Collector/
 │
 ├── tests/
 │   ├── unit/
-│   ├── integration/
-│   └── fixtures/
+│   └── fixtures/                     실기기 uiautomator 실덤프
 │
 └── (gitignored) data/MonkeyCollection/, *.egg-info/
 ```

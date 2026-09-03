@@ -48,10 +48,6 @@ monkey-collect = "monkey_collector.cli:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--tb=short", "-q"]
-markers = [
-    "integration: tests exercising multiple modules together",
-    "slow: tests taking more than 1 second",
-]
 timeout = 10
 
 [tool.ruff]
