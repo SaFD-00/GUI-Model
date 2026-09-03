@@ -728,9 +728,13 @@ class AdbClient:
             if component is None:
                 logger.warning(f"[adb] {package} has no launcher activity; using monkey")
             else:
+                # The component goes through the device's shell, which expands
+                # `$`. YouTube's launcher is `...Shell$HomeActivity`; unquoted,
+                # `$HomeActivity` expanded to nothing and `am start` was handed
+                # `...Shell`, failing with "Activity class does not exist".
                 out = self.shell(
                     "am start -a android.intent.action.MAIN "
-                    f"-c android.intent.category.LAUNCHER -n {component} "
+                    f"-c android.intent.category.LAUNCHER -n {shlex.quote(component)} "
                     f"-f {CLEAN_LAUNCH_FLAGS}",
                     timeout=60,
                 )
