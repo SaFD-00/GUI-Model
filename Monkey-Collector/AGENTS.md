@@ -2,7 +2,7 @@
 
 `Monkey-Collector/` 하위 프로젝트에서 작업하는 에이전트를 위한 가이드다.
 
-## 0. 지금 이 프로젝트가 무엇인가 (2026-08-29 재구축 중)
+## 0. 지금 이 프로젝트가 무엇인가 (2026-08-30 재구축 완료 — M1a~M6 전부 DONE)
 
 **host-pull Android GUI 수집기.** 호스트 Python 프로세스 하나가 ADB 로 디바이스를 몰고
 `uiautomator dump` + `exec-out screencap` 으로 관측을 **끌어온다**.
@@ -299,7 +299,7 @@ export 키는 export 와 함께 들어온다.
 
 수집기 변경(가드·탐색정책·임계값)의 효과를 수치로 판정하려면 **반드시** 아래를 따른다. 이 프로토콜 없이 뽑은 비교는 confound 로 오염돼 인과 해석이 불가하다 — 과거에 실제로 "다양성 +78%" 를 fix 효과로 오귀속했다가 전면 정정한 사례가 있다.
 
-- **앱 상태 리셋 (매 run 마다)**: 측정 run 시작 전 대상 앱을 **동일한 clean state 로 되돌린다**. 이전 run 이 만든 변경(생성된 레시피·바뀐 설정·캐시된 뷰)이 다음 run 으로 흘러 confound 가 된다. 헬퍼: [`../.claude/handoff/reset_app.sh`](../.claude/handoff/reset_app.sh).
+- **앱 상태 리셋 (매 run 마다)**: 측정 run 시작 전 대상 앱을 **동일한 clean state 로 되돌린다**. 이전 run 이 만든 변경(생성된 레시피·바뀐 설정·캐시된 뷰)이 다음 run 으로 흘러 confound 가 된다. 수단: `adb shell pm clear <pkg>` (아래 함정 1 — provider-backed 앱은 이걸로도 안 지워진다).
   - **user app**(musicplayer/broccoli/osmand): `adb uninstall` **후** `install -r -g catalog/apks/<pkg>.apk`. `install -r` 단독은 앱 데이터를 보존하므로 리셋이 되지 않는다 — uninstall 이 필수다.
   - **system app**(`com.google.android.calendar` = `/product/app/CalendarGooglePrebuilt`): uninstall 불가 → `pm clear` 가 동등한 데이터 리셋이다.
   - **seed 코퍼스는 리셋 후에도 동일해야 한다**(검증됨): musicplayer 의 데모 mp3 3곡은 공유 저장소(`/sdcard/Music`)라 uninstall 에 생존하고, calendar 의 seed 이벤트 25건은 **별도 priv-app** 인 `com.android.providers.calendar` DB 에 있어 앱 `pm clear` 에 생존한다.
