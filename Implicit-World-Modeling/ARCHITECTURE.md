@@ -353,14 +353,15 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
      ├── train  : stage1 50K (state 40K **3-포맷 분할 + 가중** + downstream 10K 이미지 **유지**)
      │            + stage1 ablation `stage1_train_action_only.jsonl` (부모의 fmt-없는 행을 라인 그대로)
      │            + stage2 **30K** (2026-08-28 재빌드 — stage1 의 state ∪ action step 을 전량 제외)
-     ├── test   : stage1 자체 4 종 — state 3 (**같은 500 원본의 full/masked/dropped**) · action 1
-     │            stage2 **7 버킷** — app 축 {both, s1_only, s2_only, ood} · step 축 {id_s1, id_s2, ood}
+     ├── test   : **2026-09-08 eval 전면 교체 (v2)** — 축이 stage 가 아니라 **task** 다.
+     │            state-prediction  ID/OOD × {full, masked, dropped}          = 6 파일 (각 1000)
+     │            action-prediction {s1_id, s1_ood, s2_id, s2_ood, ood}       = 5 파일 (각 1000)
+     │            구 eval (stage1 4 · stage2 7 버킷) 은 날짜 접미로 아카이브됐다 (§ 아래 "eval v2").
      ├── stage1 누출 차단은 **에피소드 단위 홀드아웃**이다 (EXP07 처럼 EXP05 test 키를 승계하지 않는다).
      │   state·downstream 두 소스가 에피소드를 13,967/14,095 공유해 step 단위 분리로는 누출이 남는다.
-     │   stage1 test 에는 ID/OOD 가 없다.
-     └── stage2 는 **앱 축 분할이 있다** — episodes_meta.jsonl::primary_app 이 EXP08 에피소드를
-         전수 커버한다 (state 14,095 / downstream 14,383). "원본에 앱 파티션 메타가 없다" 는
-         2026-08-22 시점의 오판이었고 2026-08-28 에 정정됐다.
+     └── **ID/OOD 의 축은 앱이 아니라 trajectory 다** — train 을 동결한 채로는 앱 축이 서지 않는다
+         (train 에 한 번도 안 나온 앱은 **1 개(4 step)**, 실측 2026-09-08). 구 stage2 의 앱 축 4 버킷은
+         "action 지도를 안 받은 앱" 이라는 완화된 정의였고 v2 에서 은퇴했다.
          이미지는 EXP07 과 같은 규약으로 AndroidControl/images/ 를 참조한다 (zero-pad remap).
 
   MonkeyCollection  = Stage 1 전용 (random split 0.95)
@@ -387,7 +388,7 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
 | **AC_EXP04** | ✗ `_STAGE1_ONLY` | EXP03 미러 + 프롬프트 (4 + without_open_app 2) | **§2 경고 참조** | — |
 | **AC_EXP05** | ✓ (2026-07-15 도입) | 4 + without_open_app 2 | **절대 픽셀 840×1876** | **v2** (stage1) |
 | **AC_EXP07** | ✓ (자체 train 15K) | **자체 4** (id,ood) × (state,action) | **절대 픽셀 840×1876** | **v2** (stage1 state, 인라인 1:0.2) |
-| **AC_EXP08** | ✓ (자체 train **30K**) | **stage1 자체 4** (state ×3 포맷 · action) + **stage2 7 버킷** (app 4 · step 3) | **절대 픽셀 840×1876** | **v2c** (stage1 state, 인라인 1:0.25) |
+| **AC_EXP08** | ✓ (자체 train **30K**) | **task 축 11** — state ID/OOD ×3 포맷 (6) + action {s1,s2}×{id,ood}+공통 ood (5), 각 1000 | **절대 픽셀 840×1876** | **v2c** (stage1 state, 인라인 1:0.25) |
 | MC | ✗ (데이터 없음) | 단일 test | — | — |
 | MB | 평가 전용 | 단일 파일 | — | — |
 
@@ -415,12 +416,33 @@ data/AndroidControl/              # 원본 source 자산 — 학습/평가 entry
     - **앱 파티션** (`episodes_meta.jsonl::primary_app`): `P_ACTION` = stage1 downstream 10K 이 action 지도를 준 앱, `P_STATE_ONLY` = 나머지. 전자를 `APP_S1_ONLY`(train 홀드아웃) / `APP_BOTH` 로, 후자를 `APP_S2_ONLY` / `APP_OOD` 로 쪼갠다. **"본다" 의 정의가 action 지도학습이라는 점이 핵심**이다 — stage1 **state** 는 소스 822 앱 중 818 을 이미 봐서, 완전 미관측 앱으로 버킷을 만들면 4 앱(20 step)밖에 안 남는다. 그래서 `app_ood` 는 "action 지도를 안 받은 앱" 이고 각 레코드에 **`s1_state_seen`** 플래그를 달아 사후 층화가 가능하게 했다.
     - **step 축**: `step_id_s1`(stage1 state 가 본 step, action 지도는 어디서도 안 받음) / `step_id_s2`(신규 train 이 학습한 **에피소드**에 속하되 그 step 자체는 미학습) / `step_ood`(stage1·stage2 어느 에피소드에도 없음). `_episode_roundrobin` 이 풀의 거의 모든 에피소드를 train 에 넣어버려 `step_ood` 재고가 사후에 0 으로 수렴하므로, 빌더가 **에피소드 일부를 train 풀에서 미리 예약**한다 (`--n-ood-episodes`).
     - **재고 상한이 실재한다**: `P_STATE_ONLY` 앱들의 소스 step 이 원래 적어 `app_s2_only`·`app_ood` 는 목표 500 을 못 채운다. 빌더는 규칙을 완화하지 않고 상한까지만 뽑은 뒤 실현 N 을 sidecar 에 남긴다. **행수보다 앱수·에피소드수가 유효 표본의 척도다.**
-    - **불변식** (`verify()` 가 fail-closed): stage1 산출물 5 파일의 **sha256·size·mtime 이 빌드 전후 불변** (`_build/stage1_immutable.sha256.json` 기준 대조) · `stage2_train ∩ stage1_train` = 0 · train ∩ 각 버킷 = 0 · 버킷 상호 교집합 = 0 · 홀드아웃 앱 step 이 train 에 0 건 · 기존 평가셋(stage1_test_action · stage1_test_state ×3 · 구 stage2_test) 과 교집합 0 · `images` 전부 `AndroidControl/` 접두. 라벨을 믿지 않고 `episodes_meta.jsonl` 에서 앱을 **재계산**해 대조한다.
+    - **불변식** (`verify()` 가 fail-closed): stage1 산출물 5 파일의 **sha256·size·mtime 이 빌드 전후 불변** (`_build/stage1_immutable.sha256.json` 기준 대조) · `stage2_train ∩ stage1_train` = 0 · train ∩ 각 버킷 = 0 · 버킷 상호 교집합 = 0 · 홀드아웃 앱 step 이 train 에 0 건 · 기존 평가셋(stage1_test_action · stage1_test_state ×3 · 구 stage2_test — 2026-09-08 부터는 날짜 접미 아카이브본을 `_resolve()` 가 찾는다) 과 교집합 0 · `images` 전부 `AndroidControl/` 접두. 라벨을 믿지 않고 `episodes_meta.jsonl` 에서 앱을 **재계산**해 대조한다.
     - **각 레코드의 보조 라벨**: `bucket` · `primary_app` · `app_bucket` · `step_bucket` · `s1_state_seen` · `episode_id` · `step_id`. `step_bucket` 은 파일 소속과 무관하게 **step 의 노출 이력**으로 계산돼 app 축 버킷 레코드에도 붙는다 — 두 축의 교차표를 사후에 만들 수 있다.
     - 실현 N·분포·앱 리스트는 sidecar `data/AndroidControl_EXP08/stage2_train.jsonl.meta.json` 이 정본이다. `python scripts/build_exp08_stage2_v2.py --verify-only` 가 같은 내용을 표로 출력한다.
+  - **eval 전면 교체 (v2, 2026-09-08)** — 빌드 정본 [`scripts/build_exp08_eval_v2.py`](./scripts/build_exp08_eval_v2.py). **train 2 파일은 동결**이고 이 빌더는 읽기만 한다. 축이 stage 에서 **task** 로 바뀌었다: `state-prediction`(stage1 만 학습하는 과제) 과 `action-prediction`(stage1·stage2 공용 과제), 각 task 안에서 **trajectory(에피소드) 단위** ID/OOD.
+    - **재고가 설계를 결정했다** (실측). 후보 = 소스 step 중 train 미사용분. 셀은 `(ep ∈ stage1_train, ep ∈ stage2_train)`:
+
+      | 셀 | action 소스 | state 소스 | 배정 |
+      |---|---|---|---|
+      | (T,T) | 5,504 | 2,457 | action `s1_id`·`s2_id` · state `id` |
+      | (T,F) | 3,415 | 1,307 | action `s2_ood` · state `id` 보충분 |
+      | (F,T) | 1,343 | 969 | action `s1_ood` · state `ood` 보충분 |
+      | (F,F) 엄격 | 1,852 | 1,176 | action `ood` · state `ood` 주력 |
+
+      셀 축의 "stage1" 은 **계보 전체**(메인 + ablation 2 종)다. `stage1_train_inverse_mix.jsonl` 은
+      부모의 부분집합이 **아니라** 부모 밖 step 3,162 개(에피소드 71)를 학습하므로, 그것을 빼지 않으면
+      inverse-mix 계보에서 OOD 라벨이 거짓이 된다 (1 차 빌드가 실제로 그랬고 재빌드했다).
+
+    - **앱 축 OOD 는 성립하지 않는다** — train 을 동결하면 train 미등장 앱이 **1 개(4 step)** 뿐이다. 그래서 ID/OOD 축은 trajectory 이고, "각 1000" 도 trajectory 가 아니라 **step 수**다 (완전 미학습 trajectory 는 379 개뿐이라 trajectory 1000 은 불가능).
+    - **11 파일이 같은 action mix 를 갖는다** — 구 버킷의 mix 교란(§6 (c))을 사후 macro 보정이 아니라 **분포를 맞춰 굽는 것**으로 없앴다. action 5 파일: click 550 / terminate 150 / swipe 150 / type 78 / open 58 / navigate_back 14. state 6 파일: click 570 / swipe 150 / open 130 / type 80 / navigate_back 70 (state 소스엔 terminate 가 없다). 쿼터는 2-pass 이고 **한 셀이 k 개 버킷을 공급하면 그 셀 가용량을 k 로 나눈다** ((T,T) 는 k=2) — 이 나눗셈이 없으면 pass 1 은 통과하고 두 번째 버킷이 추출에서 조용히 미달한다.
+    - **`long_press`·`navigate_home` 은 제외**했다 (최소 셀 재고 1·0 건). 규칙을 완화하지 않고 제외 사유를 sidecar 에 남기는 것이 이 저장소의 선례다.
+    - **레코드 라벨**: `bucket` · `episode_id` · `step_id` · `primary_app` · `action_type` · `s1_ep_seen` · `s1_state_ep_seen` · `s1_action_ep_seen` · `s2_ep_seen`. 라벨은 사후 층화용이고 `verify()` 는 라벨을 믿지 않고 `episodes_meta.jsonl` 과 동결 train 에서 재계산해 대조한다.
+    - **불변식** (`verify()` fail-closed): 행수 · `images` 접두 · train ∩ 전 파일 = 0 · action 5 파일 쌍 10 조합 교집합 = 0 · state id ∩ ood = 0 · 3 포맷 `sample_id` 집합·`raw_current_state` 동일 · 그룹 안 mix 완전 동일 · 라벨 재계산 일치 · `action_test_ood` 엄격성.
+    - **구 eval 은 날짜 접미로 아카이브**됐다: `stage1_test_*_2026-08-22.jsonl` (+ `stage2_test_2026-08-22.jsonl`) · `stage2_test_*_2026-08-28.jsonl` · `_build/test_state_*_2026-08-22.*`, 산출물은 `outputs/…/eval/{model}/stage{1,2}_eval_{날짜}/`. 등록 키도 같은 접미로 살아 있어 **재채점은 여전히 가능**하다. `build_exp08_stage2_v2.py` 는 `_resolve()` 로 그 이름을 해석하므로 `--verify-only` 가 그대로 돌고(실측 exit 0), **재빌드는 `eval_v2.meta.json` 존재 시 abort** 한다 — 다시 구우면 train 동결이 깨져 새 eval 의 ID/OOD 라벨이 전부 무효가 되기 때문이다.
+
   - **stage1 ablation** — `stage1_train_action_only.jsonl` 은 부모 `stage1_train.jsonl` 에서 `fmt` 키가 **없는**(downstream/action) 레코드를 **라인 단위 그대로** 필터링한 것이다. 재샘플링하면 메인 런과 다른 표본이 되어 "World Modeling 의 순수 이득" 대조가 성립하지 않는다. 빌드 정본 [`scripts/build_exp08_ablation_data.py`](./scripts/build_exp08_ablation_data.py).
   - ⚠️ **stage1 산출물 5 파일은 불가침이다** (학습·평가 완료 — [AGENTS 하드 제약 15d](./AGENTS.md)). stage2 를 다시 굽더라도 `build_exp08_data.py` 를 재실행하지 마라.
-  - **state test 3 종은 같은 500 원본을 세 포맷으로 각각 변환한 것**이다 (`--ratio-full 1.0` 식으로 세 번 굽는다). 포맷 간 난이도 교란을 없애려는 설계라 세 파일의 `sample_id` 집합이 동일해야 하고, 빌더 `verify()` 가 이를 검사한다.
+  - **state test 는 같은 원본을 세 포맷으로 각각 변환한 것**이다 (`--ratio-full 1.0` 식으로 세 번 굽는다). 포맷 간 난이도 교란을 없애려는 설계라 세 파일의 `sample_id` 집합이 동일해야 하고 `raw_current_state` 도 바이트 동일해야 한다 — 빌더 `verify()` 가 둘 다 검사한다. v2 는 이 규약을 ID/OOD 각 1000 원본에 대해 그대로 적용한다 (구 빌드는 500 원본 1 세트였다).
 
 ### MC 데이터 상태 (2026-07-14 — 프로덕션 코퍼스 아님)
 
@@ -684,6 +706,11 @@ outputs/{OUT_DS}/                # AndroidControl_EXP0{1..5} | MC.  AC_EXP01 의
 └── eval/{model}{SFX}/
     ├── stage1_eval/{base | {full,lora}_world-model{VER}{SEG}/epoch-{E}}/on-{EVAL_DS}[-without-open_app]/
     └── stage2_eval/{base | {full,lora}_base/epoch-{E} | {full,lora}_world-model{SEG}_from_{M1}-ep{E1}/epoch-{E2}}/on-{EVAL_DS}/
+                                 # AC_EXP08 의 on-{EVAL_DS} 는 leaf 로 갈린다 (eval v2, 2026-09-08):
+                                 #   stage1_eval : on-AC_EXP08-state-{id,ood}-{full,masked,dropped} (+-without-open_app)
+                                 #                 on-AC_EXP08-action-{s1-id,s1-ood,s2-id,s2-ood,ood}
+                                 #   stage2_eval : on-AC_EXP08-action-{…} 5 종 (stage1 과 **같은 파일**, 다른 stage 디렉토리)
+                                 # 구 산출물은 stage1_eval_2026-08-22/ · stage2_eval_2026-08-28/ 로 아카이브
 ```
 
 `BEST_CHECKPOINT` / `BEST_CHECKPOINT.json` 은 더 이상 생성되지 않는다. eval 경로의 `variant_path` 는 CLI VARIANT 의 `world_model` → `world-model` 치환이다.
@@ -832,7 +859,7 @@ EXP08 은 채점 경로에 **두 가지 opt-in** 이 걸린다. 둘 다 기본�
 
 **(a) `--xml-schema {android,cerebra}` (기본 `android`).** EXP08 XML 은 Cerebra html-like (`data-bbox="x1 y1 x2 y2"` / `aria-label`) 라 기본 파서로 채점하면 **에러 없이** 위치 신호가 죽고 element 집합이 쪼그라든다. `cerebra` 모드는 `scripts/diff_loss/hungarian_metric_v2c.py` 와 **같은 규약**(텍스트 원천 확장 · `data-bbox` 좌표 파서 · 구조축 `div` 채택)을 쓴다. 산출 JSON 에 `xml_schema` 가 스탬프되며, 이는 `element_set` 스탬프와 직교한다.
 
-**(b) `raw_current_state` 필드 우선.** copy-bias 진단(`state_diff_metrics.json`) 은 current state 를 **예측 파일의 프롬프트**에서 뽑는데, EXP08 state test 는 관측성 3 포맷이라 그 프롬프트의 current 가 이미 가려져 있다. 그대로 채점하면 **masked/dropped 가 구조적으로 낮은 `copy_rate` 를 받아 가짜 개선**이 되고, `dropped` 는 current 가 `(none)` 이라 `copy_excess` 가 0 으로 붕괴한다. 그래서 빌더가 state test 3 파일에 **마스킹 전 원본 XML** 을 `raw_current_state` 로 실어 두고, 채점기는 그 필드가 있으면 프롬프트보다 우선한다. 어느 경로를 썼는지는 `current_state_source` 로 스탬프된다.
+**(b) `raw_current_state` 필드 우선.** copy-bias 진단(`state_diff_metrics.json`) 은 current state 를 **예측 파일의 프롬프트**에서 뽑는데, EXP08 state test 는 관측성 3 포맷이라 그 프롬프트의 current 가 이미 가려져 있다. 그대로 채점하면 **masked/dropped 가 구조적으로 낮은 `copy_rate` 를 받아 가짜 개선**이 되고, `dropped` 는 current 가 `(none)` 이라 `copy_excess` 가 0 으로 붕괴한다. 그래서 빌더가 state test 6 파일(ID/OOD × 3 포맷)에 **마스킹 전 원본 XML** 을 `raw_current_state` 로 실어 두고, 채점기는 그 필드가 있으면 프롬프트보다 우선한다. 어느 경로를 썼는지는 `current_state_source` 로 스탬프된다.
 
 > ⚠️ **함정 — 포맷별 copy 지표를 프롬프트 기준으로 읽지 마라.** diff 타깃을 raw 로 계산해야 하는 것과 **같은 이유**다 (§3 EXP08 빌드). 세 포맷의 `raw_current_state` 는 서로 **동일**해야 하며 빌더 `verify()` 가 이를 검사한다 — 다르면 포맷 간 비교 자체가 무효다.
 
@@ -840,11 +867,13 @@ EXP08 은 채점 경로에 **두 가지 opt-in** 이 걸린다. 둘 다 기본�
 
 > ⚠️ **함정 — "셸을 통하면 안전하다" 가 아니다.** `stage1_eval.sh` 의 action 분기는 `schema_flag=""` 로 **하드코딩**돼 있어서 채점기가 플래그를 받을 수 있게 된 뒤에도 실제로는 전달되지 않았다. 채점기에 opt-in 인자를 추가할 때는 **그 인자를 넘기는 셸 분기를 전수로 확인**하라 — 셸도 채점기도 각자 정상으로 보이는 형태의 조용한 실패다 ([AGENTS 하드 제약 15f](./AGENTS.md)).
 
-**(c) stage2 버킷 지표를 읽는 규칙 (2026-08-28 신설).** EXP08 stage2 test 는 7 버킷이고 **버킷마다 action 타입 mix 와 stage1 노출 이력이 다르다**. 두 가지를 지키지 않으면 결론이 뒤집힌다.
+**(c) eval v2 버킷 지표를 읽는 규칙 (2026-09-08 개정).** 구 규칙("macro 로 읽어라")은 **버킷마다 action mix 가 달랐기 때문에** 필요했던 사후 보정이다. v2 는 그 원인을 제거했다 — 11 파일을 **같은 mix 로 굽고** 빌더 `verify()` 가 그룹 안 mix 동일성을 강제한다. 그래서 `step_accuracy` 원값을 버킷 간에 직접 비교할 수 있다. 대신 v2 고유의 규칙 셋이 생겼다.
 
-- **`macro_step_accuracy` 를 1차 지표로 읽어라.** `step_id_s1` 은 **terminate 가 0%** 인데 `step_id_s2`·`step_ood` 는 20% 수준이다. 구조적 이유가 있다 — stage1 state 소스는 "다음 화면" 이 존재해야 하므로 종단 step 을 담지 못하고, 따라서 "state 가 본 step" 집합에는 terminate 가 원천적으로 없다. terminate 는 좌표·텍스트 없이 type 만 맞으면 정답이라 쉬운 축이고, `step_accuracy` 원값 격차의 상당 부분은 난이도가 아니라 **mix 효과**다. 같은 이유로 `stage2_train` 30K 의 terminate 비중(27.3%)이 구 15K(14.9%)보다 높다 — 사용자가 인위적 재층화를 거절하고 실제 잔여 분포를 택했으므로 **15K↔30K 비교는 규모와 분포가 함께 바뀐 이중 변수**다.
-- **`s1_state_seen` 으로 층화해라.** app 축 버킷은 stage1 **state** 노출과 교락돼 있다 (`app_both` 89.6% / `app_s1_only` 55.8% / `app_s2_only` 58.0% / `app_ood` 47.1%). 앱 그룹 간 차이를 그대로 "action 지도 효과" 로 읽으면 state 노출 효과가 섞인다. 각 레코드에 그 플래그가 있으므로 부분집합으로 잘라 다시 재는 것이 가능하다.
-- **app 축과 step 축은 서로 순수하지 않다** — 예컨대 `step_ood` 레코드의 일부는 `APP_S1_ONLY` 앱에 속한다. 교차 비교가 필요하면 `app_bucket` 라벨로 부분집합을 잡아라 (재빌드 불필요). 버킷별 실측 비율은 sidecar `stage2_train.jsonl.meta.json` 의 `buckets.*` 가 정본이다.
+- **OOD 의 기준선이 파일마다 다르다.** `action-s1-ood` 는 `stage1_train` 미등장 trajectory, `action-s2-ood` 는 `stage2_train` 미등장, `action-ood` 는 **양쪽 모두 미등장(엄격)** 이다. 계보가 다른 모델을 같은 자로 비교하려면 **`action-ood` 를 기준선으로 써라** — `s1-ood` 를 stage2 계보 모델에 돌리면 그 trajectory 를 stage2 가 봤을 수 있어 라벨이 거짓이 된다 (셸은 "양쪽 전량" 결정에 따라 5 파일을 다 돌린다 — 걸러 읽는 것은 읽는 쪽 책임이다).
+- **`state-ood` 는 `s2_ep_seen=false` 로 필터하고 읽어라 (stage2 계보 모델일 때).** state OOD 1000 중 **85 행**은 엄격 셀 재고(1,176)가 목표 mix 를 못 채워 (F,T) 셀 — stage2 가 본 에피소드 — 에서 보충한 것이다. stage1 계보에는 전부 OOD 가 맞다. 실현 셀 분포는 sidecar `eval_v2.meta.json::exposure_cells` 가 정본이다.
+- **`long_press`·`navigate_home` 은 eval 에 없다.** 최소 셀 재고가 각각 1·0 건이라 통계가 아니어서 목표에서 제외했다 (사유는 sidecar `*_quota.excluded_actions`). "이 action 의 정확도" 를 v2 로 물으면 답이 없다 — 구 eval 아카이브를 봐야 한다.
+- **앱 축은 v2 에 없다.** train 동결 상태에서 train 미등장 앱은 1 개(4 step)뿐이라 앱 축 OOD 가 성립하지 않는다. 앱 단위 분석이 필요하면 레코드의 `primary_app` 으로 사후에 잡되, **그것은 OOD 가 아니다**.
+- 실현 N·mix·셀 분포·필터 drop 은 sidecar `data/AndroidControl_EXP08/eval_v2.meta.json` 이 정본이다. `python scripts/build_exp08_eval_v2.py --verify-only` 가 같은 내용을 재검증한다.
 
 `scripts/_prompt_sections.py` 의 `SECTION_MARKERS` 에는 EXP08 의 관측성 라벨 머리글 (`Current UI State (FULL|PARTIAL …|NOT PROVIDED):`) 이 추가돼 있다. 라벨 문자열이 기존 A/B 계열과 겹치지 않아 **추가만으로 안전**하다.
 

@@ -170,15 +170,35 @@ EXP05 계열의 절대 픽셀 좌표계·budget·`cutoff_len` 을 승계하되, 
 ```bash
 # 1) 원천 2 파일을 배치 → data/AndroidControl/ (공유 원본 디렉토리, ARCHITECTURE §3 규칙 2)
 #    EXP08_stage1_state.jsonl   state-pred (Cerebra XML)
-#    EXP08_stage2.jsonl         downstream (with_history) — stage1 action test 도 여기서 파생
+#    EXP08_stage2.jsonl         downstream (with_history) — action-prediction eval 도 여기서 파생
 #    행수는 디스크에서 센다: wc -l data/AndroidControl/EXP08_*.jsonl
 
-# 2) 빌드 정본 — train 2 + 자체 test 5 + sidecar
-python scripts/build_exp08_data.py
+# 2) train 빌드 정본 (2026-08-22/28 에 이미 돌았고 **지금은 재실행이 막혀 있다**)
+python scripts/build_exp08_data.py --verify-only      # 재빌드 없이 산출물 불변식만
+python scripts/build_exp08_stage2_v2.py --verify-only # stage2 train·구 버킷 불변식
 
-python scripts/build_exp08_data.py --limit 2000    # 스모크 (목표치를 축소해 한 바퀴)
-python scripts/build_exp08_data.py --verify-only   # 재빌드 없이 산출물 불변식만 (train∩test·포맷 간 동일성)
+# 3) eval 빌드 정본 (2026-09-08 전면 교체) — train 을 읽기만 하고 11 파일을 굽는다
+python scripts/build_exp08_eval_v2.py --dry-run       # 쿼터·실현 mix 만 (파일 안 굽는다)
+python scripts/build_exp08_eval_v2.py                 # 빌드 + verify
+python scripts/build_exp08_eval_v2.py --verify-only   # 산출물 불변식만
 ```
+
+**eval 은 stage 축이 아니라 task 축이다** (2026-09-08 사용자 결정). ID/OOD 의 단위는
+**trajectory(에피소드) 통째**이고, 앱 축은 쓰지 않는다 — train 을 동결하면 train 미등장
+앱이 1 개(4 step)뿐이라 성립하지 않기 때문이다.
+
+| 파일 | N | 뜻 |
+|---|---|---|
+| `state_test_{id,ood}_{full,masked,dropped}.jsonl` | 각 1000 | state-prediction. ID/OOD 는 stage1 계보 기준, 세 포맷은 **같은 1000 원본** |
+| `action_test_{s1_id,s1_ood}.jsonl` | 각 1000 | action-prediction, **stage1_train 기준** ID/OOD |
+| `action_test_{s2_id,s2_ood}.jsonl` | 각 1000 | action-prediction, **stage2_train 기준** ID/OOD |
+| `action_test_ood.jsonl` | 1000 | **엄격** — 어느 train 에도 없는 trajectory. 계보를 가로지르는 비교의 기준선 |
+
+> ⚠️ `s1_ood` 를 stage2 계보 모델에, `s2_ood` 를 stage1 계보 모델에 돌린 수치를 "OOD" 라고
+> 읽지 마라 — 셸은 5 파일을 다 돌리므로 **걸러 읽는 것은 읽는 쪽 책임**이다. 계보 공통의
+> 자는 `action_test_ood` 하나다 ([AGENTS 하드 제약 15j](./AGENTS.md)). 11 파일의 action mix 는
+> 설계상 **동일**하므로 버킷 간 원값 비교가 성립한다. 실현 N·mix·셀 분포는
+> `cat data/AndroidControl_EXP08/eval_v2.meta.json`.
 
 이 빌더가 `scripts/build_wm_formats.py` (3-포맷 변환) → `scripts/validate_wm_formats.py` (불변식 C1~C11, 실패하면 빌드가 그 자리에서 멈춘다) → `scripts/diff_loss/build_diff_targets.py` (raw 로 헝가리안 → applied 에 `token_weights` 부착) 를 순서대로 호출한다 — **따로 돌릴 필요는 없다.** 이 경로는 `*_v2c.py` (v2 의 Cerebra 확장 복제본) 를 쓰고 `*_v2.py` 는 건드리지 않는다 ([AGENTS 하드 제약 15e](./AGENTS.md)).
 
