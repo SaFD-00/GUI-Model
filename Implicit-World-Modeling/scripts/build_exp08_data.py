@@ -19,6 +19,12 @@
          stage1_test_action.jsonl         500  (downstream)
          stage2_test.jsonl                500  (downstream, stage1_test_action 과 disjoint)
 
+⚠ **이 test 5 파일은 2026-09-08 eval v2 로 은퇴했다** (날짜 접미로 아카이브). 지금 유효한
+eval 정본은 ``scripts/build_exp08_eval_v2.py`` 이고, 이 빌더의 **재실행은 막혀 있다** —
+``eval_v2.meta.json`` 이 있으면 abort 한다. 재실행하면 (a) 학습이 끝난 stage1_train 을
+덮어쓰고 (하드 제약 15d) (b) 접미 없는 구 test 이름을 되살려 새 축과 섞이며 (c) train 이
+바뀌어 **새 eval 의 ID/OOD 라벨이 전부 무효**가 된다. 정말 필요하면 ``--force-rebuild``.
+
   감사용 중간 산출물 (``data/AndroidControl_EXP08/_build/``):
          state_train_split_raw.jsonl / _applied.jsonl / _weighted.jsonl 등
 
@@ -425,6 +431,15 @@ def attach_uniform_weights(records: list[dict], model: str) -> list[dict]:
 def build(args: argparse.Namespace) -> dict:
     src_dir = args.source_dir
     out_dir = args.data_root / OUT_SUBDIR
+    # eval v2 이후의 재실행은 stage1_train(학습 완료 자산)과 구 test 이름을 함께 되살린다.
+    # 실패를 fail-closed 로 만든다 — 문서 규칙(하드 제약 15d)만으로는 막히지 않는다.
+    if (out_dir / "eval_v2.meta.json").exists() and not getattr(args, "force_rebuild", False):
+        _abort(
+            f"{out_dir / 'eval_v2.meta.json'} 가 있다 — 이 빌더의 test 5 파일은 은퇴했고\n"
+            "  stage1_train 은 학습이 끝난 불가침 자산이다 (하드 제약 15d).\n"
+            "  eval 을 다시 구우려면 scripts/build_exp08_eval_v2.py 를 쓴다.\n"
+            "  전부 처음부터 다시 굽겠다면 --force-rebuild (새 eval 라벨도 함께 무효가 된다)."
+        )
     work = out_dir / "_build"
     out_dir.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
@@ -666,6 +681,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--n-test-s2", type=int, default=N_TEST_S2)
     p.add_argument("--copy-thr", type=float, default=COPY_FILTER_THR)
     p.add_argument("--limit", type=int, default=0, help="스모크용: 소스 앞 N 행만 사용")
+    p.add_argument("--force-rebuild", action="store_true",
+                   help="eval v2 sidecar 가 있어도 재빌드 (stage1_train 을 덮어쓴다 — 하드 제약 15d)")
     p.add_argument("--skip-length-filter", action="store_true",
                    help="이미지가 없는 환경에서 임시 우회 (프로덕션 빌드에서는 쓰지 마라)")
     p.add_argument("--verify-only", action="store_true")

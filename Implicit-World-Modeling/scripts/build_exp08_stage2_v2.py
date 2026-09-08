@@ -46,11 +46,24 @@ stage1_train 에 없으니(구 빌드의 홀드아웃 에피소드) 풀 필터�
 이 파일들로 재는 이상 학습 입력으로 쓰면 안 된다. train 과 7 개 신규 버킷 **양쪽에서**
 뺀다 (LEGACY_TESTS).
 
+⚠ 2026-09-08 — 이 빌더의 **eval 버킷 7 종은 은퇴했다**
+------------------------------------------------------
+eval 이 stage 축에서 **task 축**(state-prediction / action-prediction × trajectory ID/OOD)
+으로 전면 교체됐다 (사용자 결정). 새 eval 의 정본은 ``scripts/build_exp08_eval_v2.py`` 다.
+구 산출물은 날짜 접미로 아카이브됐고 (``stage2_test_app_both_2026-08-28.jsonl`` 등),
+``_resolve()`` 가 그 이름을 해석해 **불변식 검사는 그대로 돈다** (`mv` 는 mtime_ns 를
+보존하므로 기록된 지문이 여전히 유효하다).
+
+이 빌더의 **재빌드는 막혀 있다** — ``data/AndroidControl_EXP08/eval_v2.meta.json`` 이
+있으면 abort 한다. 다시 구우면 (a) 접미 없는 ``stage2_test_*`` 가 되살아나 새 축과 섞이고
+(b) ``stage2_train`` 이 재추출돼 **새 eval 이 기준으로 삼은 train 동결이 깨진다**
+(ID/OOD 라벨 전체가 무효가 된다). 정말 필요하면 ``--force-rebuild`` 를 주고 eval 도
+함께 재빌드하라.
+
 Usage
 -----
-  python scripts/build_exp08_stage2_v2.py
-  python scripts/build_exp08_stage2_v2.py --n-app-s1-only 40 --n-ood-episodes 300
-  python scripts/build_exp08_stage2_v2.py --verify-only
+  python scripts/build_exp08_stage2_v2.py --verify-only   # ← 지금 유효한 용법
+  python scripts/build_exp08_stage2_v2.py --force-rebuild # ← eval 재빌드를 각오할 때만
 
 conda env ``implicit-world-modeling`` 의 python 으로 실행한다 (transformers 필요).
 """
@@ -113,6 +126,39 @@ LEGACY_TESTS = (
     "stage1_test_state_dropped.jsonl",
 )
 
+# 2026-09-08 eval 전면 교체 — 구 eval 산출물은 **날짜 접미로 아카이브**됐다 (사용자 결정).
+# 이 빌더의 불변식 검사(sha256/size/mtime · 누출 대조)는 파일을 **이름으로** 연다. `mv` 는
+# mtime_ns 를 보존하므로 기록된 지문은 그대로 유효하고, 이름만 새로 해석해 주면 된다.
+# 이 매핑이 없으면 `--verify-only` 가 "파일 없음" 으로 죽는다 — 지문이 틀려서가 아니라
+# 이름을 못 찾아서다.
+ARCHIVE_STAMP = {
+    "stage1_test_action.jsonl": "2026-08-22",
+    "stage1_test_state_full.jsonl": "2026-08-22",
+    "stage1_test_state_masked.jsonl": "2026-08-22",
+    "stage1_test_state_dropped.jsonl": "2026-08-22",
+    "stage2_test.jsonl": "2026-08-22",
+    **{f"stage2_test_{b}.jsonl": "2026-08-28" for b in
+       ("app_both", "app_s1_only", "app_s2_only", "app_ood",
+        "step_id_s1", "step_id_s2", "step_ood")},
+}
+# eval v2 sidecar 가 있으면 이 빌더의 **재빌드는 막는다** — stage2_test_* 를 접미 없는
+# 이름으로 다시 써 새 eval 축과 섞이고, stage2_train 까지 재추출해 동결을 깬다.
+EVAL_V2_SIDECAR = "eval_v2.meta.json"
+
+
+def _resolve(out_dir: Path, name: str) -> Path:
+    """산출물 경로 — 아카이브된 날짜 접미 이름까지 해석한다."""
+    p = out_dir / name
+    if p.exists():
+        return p
+    stamp = ARCHIVE_STAMP.get(name)
+    if stamp:
+        q = out_dir / f"{Path(name).stem}_{stamp}{Path(name).suffix}"
+        if q.exists():
+            return q
+    return p
+
+
 N_S2_TRAIN = 30000
 N_BUCKET = 500
 N_APP_S1_ONLY = 60
@@ -165,9 +211,9 @@ def _sha256(path: Path) -> str:
 def snapshot_stage1(out_dir: Path) -> dict:
     return {
         n: {
-            "sha256": _sha256(out_dir / n),
-            "size": (out_dir / n).stat().st_size,
-            "mtime_ns": (out_dir / n).stat().st_mtime_ns,
+            "sha256": _sha256(_resolve(out_dir, n)),
+            "size": _resolve(out_dir, n).stat().st_size,
+            "mtime_ns": _resolve(out_dir, n).stat().st_mtime_ns,
         }
         for n in STAGE1_IMMUTABLE
     }
@@ -348,6 +394,16 @@ def build(args: argparse.Namespace) -> dict:  # noqa: PLR0915  (선형 파이프
     src_dir = args.source_dir
     out_dir = args.data_root / OUT_SUBDIR
     work = out_dir / "_build"
+    # 2026-09-08 eval v2 이후의 재빌드는 두 가지를 조용히 깬다: (a) 접미 없는
+    # stage2_test_* 를 다시 써 새 task 축 eval 과 섞이고, (b) stage2_train 을 재추출해
+    # "train 동결" 전제를 무너뜨린다 (새 eval 이 그 동결을 기준으로 ID/OOD 를 갈랐다).
+    if (out_dir / EVAL_V2_SIDECAR).exists() and not args.force_rebuild:
+        _abort(
+            f"{out_dir / EVAL_V2_SIDECAR} 가 있다 — eval 은 이미 v2 (task 축) 로 교체됐다.\n"
+            "  eval 데이터를 다시 구우려면 scripts/build_exp08_eval_v2.py 를 쓴다.\n"
+            "  이 빌더로 stage2 train 까지 정말 다시 굽겠다면 --force-rebuild 를 준다\n"
+            "  (그 순간 새 eval 의 ID/OOD 라벨이 무효가 되므로 eval 도 함께 재빌드해야 한다)."
+        )
     work.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
 
@@ -373,7 +429,7 @@ def build(args: argparse.Namespace) -> dict:  # noqa: PLR0915  (선형 파이프
         for line in f:
             r = json.loads(line)
             ep2app[int(r["episode_id"])] = r.get("primary_app")
-    s1_state, s1_action = load_stage1_step_keys(out_dir / "stage1_train.jsonl")
+    s1_state, s1_action = load_stage1_step_keys(_resolve(out_dir, "stage1_train.jsonl"))
     s1_all = s1_state | s1_action  # 합집합은 루프 밖에서 한 번만
     s1_eps = {int(_EP_RE.search(k).group(1)) for k in s1_all}
     legacy = set()
@@ -596,7 +652,7 @@ def verify(out_dir: Path, res: dict, src_dir: Path) -> int:  # noqa: PLR0915
     # 2. 행수
     loaded: dict[str, list[dict]] = {}
     for name, want in res["files"].items():
-        p = out_dir / name
+        p = _resolve(out_dir, name)
         if not p.exists():
             fails.append(f"{name} 없음")
             continue
@@ -619,7 +675,7 @@ def verify(out_dir: Path, res: dict, src_dir: Path) -> int:  # noqa: PLR0915
 
     # 4. stage2_train ∩ stage1_train (step 단위) = 0
     tr = set(keys.get("stage2_train.jsonl", []))
-    s1_state, s1_action = load_stage1_step_keys(out_dir / "stage1_train.jsonl")
+    s1_state, s1_action = load_stage1_step_keys(_resolve(out_dir, "stage1_train.jsonl"))
     s1_all = s1_state | s1_action
     n = len(tr & s1_all)
     print(f"[verify] stage2_train ∩ stage1_train(state∪action) = {n}")
@@ -644,7 +700,7 @@ def verify(out_dir: Path, res: dict, src_dir: Path) -> int:  # noqa: PLR0915
     # 6. 기존 평가셋과의 교집합 = 0 (train·신규 버킷 양쪽)
     legacy = set()
     for ln in LEGACY_TESTS:
-        legacy |= load_step_keys(out_dir / ln)
+        legacy |= load_step_keys(_resolve(out_dir, ln))
     leaks = {name: len(set(ks) & legacy) for name, ks in keys.items()}
     if any(leaks.values()):
         fails.append(f"기존 평가셋 누출: {dict((k, v) for k, v in leaks.items() if v)}")
@@ -732,6 +788,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="APP_S2_ONLY 앱의 풀 step 중 train 에 넣을 비율")
     p.add_argument("--skip-length-filter", action="store_true",
                    help="이미지가 없는 환경에서 임시 우회 (프로덕션 빌드에서는 쓰지 마라)")
+    p.add_argument("--force-rebuild", action="store_true",
+                   help="eval v2 sidecar 가 있어도 stage2 를 재빌드 (train 동결·새 eval 라벨을 깬다)")
     p.add_argument("--verify-only", action="store_true")
     args = p.parse_args(argv)
 
