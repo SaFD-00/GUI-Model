@@ -647,14 +647,17 @@ _STAGE1_ONLY = {"MonkeyCollection", "AndroidControl_EXP04"}
 # 대조군이라 stage1 학습 데이터가 아예 없고, stage1 체크포인트는 EXP05 것을 잇는다.
 _STAGE2_ONLY = {"AndroidControl_EXP06"}
 
-# ID/OOD split 없이 단일 test 계열을 쓰는 DS.
-# `_STAGE1_ONLY` 와 직교 — MC 는 Stage 1 만 + 단일 test.
-# EXP08 은 stage1/stage2 둘 다 학습하되 ID/OOD 구분이 없다 (원본에 앱 파티션 메타가
-# 없어 에피소드 단위 홀드아웃만 한다). stage2 test 는 `stage2_test.jsonl` 하나로
-# 여기서 유도되는 이름과 정확히 일치하고, stage1 test 는 state 3 변형
-# (`stage1_test_state_{full,masked,dropped}.jsonl`) + action 1 (`stage1_test_action.jsonl`)
-# 의 4 파일 계열이라 이 규칙으로 유도되지 않는다 — 그 이름의 소유자는
-# `configs/lf_dataset/dataset_info.json` 과 eval 셸(stage1_eval.sh)이다.
+# **채점 섹션이 단일**인 DS — 이 플래그는 "test 파일 하나당 overall 1 섹션" 을 뜻하지
+# "ID/OOD 가 없다" 를 뜻하지 않는다. `_STAGE1_ONLY` 와 직교 — MC 는 Stage 1 만 + 단일 test.
+#
+# EXP08 은 2026-09-08 eval 교체로 **trajectory 단위 ID/OOD 를 갖게 됐지만 이 집합에 그대로
+# 남는다.** ID/OOD 가 한 파일 안의 두 섹션이 아니라 **파일 자체로 갈려** 있기 때문이다
+# (`state_test_{id,ood}_{full,masked,dropped}.jsonl` 6 + `action_test_{s1_id,s1_ood,s2_id,
+# s2_ood,ood}.jsonl` 5). 그래서 `run_exp01_eval` 의 id/ood 2-섹션 채점 경로가 아니라
+# 파일마다 단일 섹션으로 돈다. 이 이름들은 여기서 **유도되지 않는다** — 소유자는
+# 빌더 `scripts/build_exp08_eval_v2.py` · `configs/lf_dataset/dataset_info.json` ·
+# eval 셸(stage1_eval.sh / stage2_eval.sh) 이고, 드리프트는
+# `tests/test_exp08_eval_v2_wiring.py` 가 잡는다.
 _SINGLE_TEST = {"MonkeyCollection", "AndroidControl_EXP08"}
 
 # ============================================================

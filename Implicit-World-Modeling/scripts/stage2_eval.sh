@@ -14,8 +14,8 @@
 #        (overall / in_domain / out_of_domain 3-섹션)
 #   MB : 단일 파일 stage2.jsonl 1-회 inference → action_metrics.json
 #        (overall 1-섹션, single-pair 모드)
-#   AC_EXP08 : 단일 파일 stage2_test.jsonl 1-회 inference → action_metrics.json
-#        (overall 1-섹션, single-pair 모드 — ID/OOD 파티션 메타가 없다)
+#   AC_EXP08 : action-prediction 5 버킷 (s1_id/s1_ood/s2_id/s2_ood/ood) 각각 1-회
+#        inference → action_metrics.json + thought_metrics.json (버킷마다 overall 1-섹션)
 #
 # Flags (공통은 _common.sh::parse_eval_args 참고):
 #   --model / --train-dataset / --eval-datasets
@@ -53,7 +53,7 @@ TRAIN_DS="$TRAIN_DATASET"
 case "$TRAIN_DS" in
   # AC_EXP04 stage2 보류 — 데이터/등록 키 없음 (현재 *) 분기로 거부). 도입 시 case + 아래 에러문에 AC_EXP04 포함.
   # AC_EXP05 = xy 통일 액션 스페이스 실험군 — action 채점 시 --coord-mode xy (run_variant_epoch_eval_on 참조).
-  # AC_EXP08 = EXP05 계열 dual-task 실험군 (stage2 test 는 app 4 + step 3 버킷 leaf).
+  # AC_EXP08 = EXP05 계열 dual-task 실험군 (stage2 eval 은 action 5 버킷 leaf).
   AC_EXP01_ratio37|AC_EXP01_ratio55|AC_EXP01_ratio73|AC_EXP02|AC_EXP03|AC_EXP05|AC_EXP06|AC_EXP07_v1|AC_EXP07_v2|AC_EXP08) ;;
   MC)
     echo "[!] Stage 2 는 MonkeyCollection(MC) 학습 데이터를 갖지 않습니다 (got '$TRAIN_DS')." >&2
@@ -64,21 +64,25 @@ case "$TRAIN_DS" in
     exit 2 ;;
 esac
 
-# AC_EXP08 stage2 = app 축 4 버킷 + step 축 3 버킷 평가 (stage1_eval.sh 의 run_exp08_eval 과
-# 대칭 구조). 구 단일 `stage2_test.jsonl` 은 2026-08-28 폐기됐다 — 등록 키도 배선도 없으니
-# 이 함수가 EXP08 stage2 eval 의 유일한 경로다.
+# AC_EXP08 stage2 = action-prediction 5 버킷 (trajectory ID/OOD). 2026-09-08 eval 전면
+# 교체로 구 app 축 4 + step 축 3 버킷은 은퇴했고 산출물은 `stage2_eval_2026-08-28/` 로
+# 아카이브됐다. 이 함수가 EXP08 stage2 eval 의 유일한 경로다.
 #
-#   app  축: app_both / app_s1_only / app_s2_only / app_ood
-#            여기서 "본" 은 **action 지도학습을 받은** 이다. stage1 state(WM) 는 822 앱 중
-#            819 를 이미 봤으므로 "완전 미관측 앱" 기준으로는 버킷이 서지 않는다.
-#   step 축: step_id_s1 / step_id_s2 / step_ood
+#   s1_id / s1_ood : stage1_train 기준 ID/OOD  (stage1 계보를 읽는 자)
+#   s2_id / s2_ood : stage2_train 기준 ID/OOD  (stage2 계보를 읽는 자)
+#   ood            : 엄격 — stage1·stage2 어느 train 에도 없는 trajectory (계보 공통 기준선)
 #
-# 지표를 읽는 규칙은 ARCHITECTURE §6 이다 — 버킷마다 action mix 가 달라(step_id_s1 은
-# terminate 0%) `step_accuracy` 원값 비교는 mix 효과에 오염된다. `macro_step_accuracy` 로
-# 읽고 레코드의 `s1_state_seen` 으로 층화하라.
+# 파일은 stage1_eval.sh 의 action leaf 와 **같은 5 개**다 (data/AndroidControl_EXP08/
+# action_test_{bucket}.jsonl). 같은 파일을 두 셸이 각자의 out_rel_base 아래에 채점하므로
+# leaf 이름이 겹쳐도 산출 경로는 갈린다.
 #
-# EVAL_BUCKETS 로 좁힐 수 있다. stage1 의 EVAL_TASKS 와 **이름이 다른 이유**는 값 공간이
-# 겹치지 않기 때문이다 — 같은 이름을 쓰면 stage1→stage2 를 잇는 래퍼에서 값이 새어
+# 지표 읽는 규칙 (ARCHITECTURE §6): 5 파일의 action mix 는 **설계상 동일**하다 —
+# 구 버킷의 mix 교란(step_id_s1 은 terminate 0%) 을 없애려고 분포를 맞춰 구웠다. 그래서
+# `step_accuracy` 원값 비교가 성립한다. 계보를 가로질러 비교할 땐 `ood` 를 기준선으로 쓰고,
+# 필요하면 레코드의 `s1_ep_seen`/`s2_ep_seen` 으로 사후 층화한다.
+#
+# EVAL_BUCKETS 로 좁힐 수 있다. stage1 의 EVAL_TASKS 와 **값 공간이 다르다** (여기는
+# `s1_id`, 저기는 `action_s1_id`) — 같은 값이면 stage1→stage2 를 잇는 래퍼에서 값이 새어
 # 조용히 엉뚱한 leaf 를 평가하게 된다.
 run_exp08_stage2_eval() {
   local model_short="$1" train_ds="$2" variant="$3" epoch="$4" hub_id="$5" \
@@ -93,8 +97,8 @@ run_exp08_stage2_eval() {
   schema_flag="$(ds_xml_schema_flag "$eval_ds")"
 
   local bucket leaf subtag
-  for bucket in ${EVAL_BUCKETS:-app_both app_s1_only app_s2_only app_ood step_id_s1 step_id_s2 step_ood}; do
-    leaf="${bucket//_/-}"
+  for bucket in ${EVAL_BUCKETS:-s1_id s1_ood s2_id s2_ood ood}; do
+    leaf="action-${bucket//_/-}"
     local out_rel="${out_rel_base}/on-${eval_ds}-${leaf}"
     local out_dir="$LF_ROOT/$out_rel"
     subtag="${SCRIPT_TAG}_${model_short}_${train_ds}_${variant}"
@@ -107,13 +111,13 @@ run_exp08_stage2_eval() {
       continue
     fi
 
-    local test_jsonl="$BASE_DIR/data/${datadir}/stage2_test_${bucket}.jsonl"
+    local test_jsonl="$BASE_DIR/data/${datadir}/action_test_${bucket}.jsonl"
     if [ ! -f "$test_jsonl" ]; then
       echo "[!] [$model_short][train=$train_ds][eval=${eval_ds}-${leaf}] Missing test jsonl:" >&2
       echo "      $test_jsonl" >&2
       exit 1
     fi
-    local ds_test="${eval_prefix}_stage2_test_${bucket}"
+    local ds_test="${eval_prefix}_action_test_${bucket}"
 
     build_infer_cmd "$model_short" "$hub_id" "$ds_test" \
       "$test_jsonl" "$template" \
@@ -137,7 +141,7 @@ run_exp08_stage2_eval() {
 # 한 (MODEL, TRAIN_DS, VARIANT, EPOCH, HUB_ID, EVAL_DS) 조합 평가 실행.
 # - EVAL_DS=AC_EXP01 / AC_EXP02 : test_id + test_ood → 3-섹션 action_metrics.
 # - EVAL_DS=MB                  : 단일 파일 → overall only action_metrics (single-pair 모드).
-# - EVAL_DS=AC_EXP08            : run_exp08_stage2_eval 로 위임 (버킷 7 leaf).
+# - EVAL_DS=AC_EXP08            : run_exp08_stage2_eval 로 위임 (action 5 leaf).
 run_variant_epoch_eval_on() {
   local model_short="$1" train_ds="$2" variant="$3" epoch="$4" hub_id="$5" \
         out_rel_base="$6" template="$7" eval_ds="$8"

@@ -225,22 +225,24 @@ THOUGHT_METRIC_KEYS = [
     "mean_bleu",
 ]
 
-# AC_EXP08 stage2 평가 버킷 — app 축 4 (앱 관측 이력) + step 축 3 (step 관측 이력).
-# 파일명·등록키의 정본은 `scripts/build_exp08_stage2_v2.py` 와
+# AC_EXP08 action-prediction 버킷 (2026-09-08 eval 전면 교체). trajectory 단위 ID/OOD 다.
+# 파일명·등록키의 정본은 `scripts/build_exp08_eval_v2.py` 와
 # `configs/lf_dataset/dataset_info.json` 이고 여기 순서는 표시 순서다.
-EXP08_STAGE2_BUCKETS = (
-    "app_both",
-    "app_s1_only",
-    "app_s2_only",
-    "app_ood",
-    "step_id_s1",
-    "step_id_s2",
-    "step_ood",
+# 구 app 축 4 + step 축 3 버킷은 은퇴했다 (산출물은 stage2_eval_2026-08-28/ 로 아카이브).
+EXP08_ACTION_BUCKETS = (
+    "s1_id",
+    "s1_ood",
+    "s2_id",
+    "s2_ood",
+    "ood",
 )
+# state-prediction 버킷 × 관측성 포맷. 세 포맷은 같은 1000 원본에서 나온다.
+EXP08_STATE_BUCKETS = ("id", "ood")
+EXP08_STATE_FORMATS = ("full", "masked", "dropped")
 
 # EXP08 stage2 는 action 지표 + thought 지표를 한 표에 싣는다. 키 이름이 겹치지
 # 않으므로 `load_metrics` 의 setdefault merge 로 안전하다 (실측 확인).
-EXP08_STAGE2_METRIC_KEYS = ACTION_METRIC_KEYS + THOUGHT_METRIC_KEYS
+EXP08_ACTION_METRIC_KEYS = ACTION_METRIC_KEYS + THOUGHT_METRIC_KEYS
 
 
 def _ac_stage1_entries(exp: str) -> dict:
@@ -381,80 +383,76 @@ def _mc_stage1_entries() -> dict:
     }
 
 
-def _exp08_stage1_entries() -> dict:
-    """AC_EXP08 stage1 entries — ID/OOD 가 없는 단일 test 계열.
+def _exp08_action_entries(prefix_dir: str = "") -> dict:
+    """AC_EXP08 action-prediction entries — trajectory ID/OOD 5 버킷.
 
-    leaf 4 종 (state_full / state_masked / state_dropped / action) 이 각각 단일 파일
-    1-회 추론이라 섹션이 overall 하나뿐이다 (MB/MC 와 같은 single-pair 모드). state leaf
-    3 종은 `-without-open_app` sibling 도 함께 등록한다 (stage1_eval.sh 가 산출한다).
-    디렉토리 이름은 stem 의 `_` 를 `-` 로 바꾼 on-AC_EXP08-state-full 형태.
+    stage1_eval.sh 와 stage2_eval.sh 가 **같은 5 파일**을 각자의 stage 디렉토리 아래에
+    채점한다 (사용자 결정 2026-09-08 "양쪽 전량"). 버킷마다 단일 파일 1-회 추론이라
+    섹션은 overall 하나뿐이고, 5 파일의 action mix 는 설계상 동일하다 — 그래서
+    `step_accuracy` 원값을 버킷 간에 직접 비교할 수 있다 (구 버킷은 mix 가 달라
+    macro 보정이 필요했다).
+
+    ⚠ OOD 의 기준선이 버킷마다 다르다: `s1-ood` 는 stage1 계보 전용, `s2-ood` 는 stage2
+    계보 전용, `ood` 는 두 계보 공통(엄격) 기준선이다.
     """
     data = REPO / "data" / DS_DATADIR["AC_EXP08"]
     entries: dict[str, dict] = {}
-    for stem in ("state_full", "state_masked", "state_dropped"):
-        leaf = stem.replace("_", "-")
-        for suffix in ("", "-without-open_app"):
-            test_stem = f"stage1_test_{stem}" + (
-                "_without_open_app" if suffix else ""
-            )
-            entries[f"on-AC-{leaf}{suffix}"] = {
-                "dir": f"on-AC_EXP08-{leaf}{suffix}",
-                "pred": "generated_predictions.jsonl",
-                "test": data / f"{test_stem}.jsonl",
-                "metric_files": [
-                    ("predict_results.json", None),
-                    ("hungarian_metrics.json", None),  # single-pair: top-level flat
-                    ("hungarian_metrics.json", "overall"),  # 호환: nested 면 overall
-                    _state_diff_file(None),
-                    _state_diff_file("overall"),
-                    # single-pair 도 copy_baseline 은 3-섹션 스키마를 쓰되 overall 만 채운다.
-                    _copy_baseline_file("overall"),
-                ],
-                "metric_keys": STATE_METRIC_KEYS,
-            }
-    entries["on-AC-action"] = {
-        "dir": "on-AC_EXP08-action",
-        "pred": "generated_predictions.jsonl",
-        "test": data / "stage1_test_action.jsonl",
-        "metric_files": [
-            ("predict_results.json", None),
-            ("action_metrics.json", None),
-            ("action_metrics.json", "overall"),
-        ],
-        "metric_keys": ACTION_METRIC_KEYS,
-    }
-    return entries
-
-
-def _exp08_stage2_entries() -> dict:
-    """AC_EXP08 stage2 entries — app 축 4 + step 축 3, 버킷마다 단일 파일(overall).
-
-    구 단일 leaf(`on-AC_EXP08` / `stage2_test.jsonl`) 는 폐기했다 (2026-08-28 사용자
-    결정). 버킷 7 종은 앱 관측 이력(app 축)과 step 관측 이력(step 축)을 분리해 재는
-    평가셋이고, 파일별 실현 N 은 균일하지 않다 (재고 상한 — `app_ood` 408 /
-    `app_s2_only` 193). 디렉토리 이름은 stage1 과 같은 규칙 — stem 의 `_` 를 `-` 로.
-
-    `thought_metrics.json` 을 함께 싣는다: stage2_eval.sh 가 실제로 산출하는데 구
-    엔트리는 읽지 않아 표에 뜨지 않았다. 이 파일도 1 단 섹션이라 single-test 인
-    EXP08 은 `overall` 하나뿐이다.
-    """
-    data = REPO / "data" / DS_DATADIR["AC_EXP08"]
-    entries: dict[str, dict] = {}
-    for bucket in EXP08_STAGE2_BUCKETS:
-        leaf = bucket.replace("_", "-")
+    for bucket in EXP08_ACTION_BUCKETS:
+        leaf = f"action-{bucket.replace('_', '-')}"
         entries[f"on-AC-{leaf}"] = {
             "dir": f"on-AC_EXP08-{leaf}",
             "pred": "generated_predictions.jsonl",
-            "test": data / f"stage2_test_{bucket}.jsonl",
+            "test": data / f"action_test_{bucket}.jsonl",
             "metric_files": [
                 ("predict_results.json", None),
                 ("action_metrics.json", None),  # single-pair: top-level flat
                 ("action_metrics.json", "overall"),  # 호환: nested 면 overall
                 ("thought_metrics.json", "overall"),
             ],
-            "metric_keys": EXP08_STAGE2_METRIC_KEYS,
+            "metric_keys": EXP08_ACTION_METRIC_KEYS,
         }
     return entries
+
+
+def _exp08_stage1_entries() -> dict:
+    """AC_EXP08 stage1 entries — state-prediction 6 leaf + action-prediction 5 leaf.
+
+    state 는 ID/OOD × {full, masked, dropped} 다. 세 포맷은 **같은 1000 원본**에서 나오므로
+    포맷 간 비교가 성립한다 (빌더 verify 가 sample_id 집합 동일을 강제). state leaf 는
+    `-without-open_app` sibling 도 함께 등록한다 (stage1_eval.sh 가 산출한다).
+    디렉토리 이름은 stem 의 `_` 를 `-` 로 바꾼 on-AC_EXP08-state-id-full 형태.
+    """
+    data = REPO / "data" / DS_DATADIR["AC_EXP08"]
+    entries: dict[str, dict] = {}
+    for bucket in EXP08_STATE_BUCKETS:
+        for fmt in EXP08_STATE_FORMATS:
+            leaf = f"state-{bucket}-{fmt}"
+            for suffix in ("", "-without-open_app"):
+                test_stem = f"state_test_{bucket}_{fmt}" + (
+                    "_without_open_app" if suffix else ""
+                )
+                entries[f"on-AC-{leaf}{suffix}"] = {
+                    "dir": f"on-AC_EXP08-{leaf}{suffix}",
+                    "pred": "generated_predictions.jsonl",
+                    "test": data / f"{test_stem}.jsonl",
+                    "metric_files": [
+                        ("predict_results.json", None),
+                        ("hungarian_metrics.json", None),  # single-pair: top-level flat
+                        ("hungarian_metrics.json", "overall"),  # 호환: nested 면 overall
+                        _state_diff_file(None),
+                        _state_diff_file("overall"),
+                        # single-pair 도 copy_baseline 은 3-섹션 스키마를 쓰되 overall 만 채운다.
+                        _copy_baseline_file("overall"),
+                    ],
+                    "metric_keys": STATE_METRIC_KEYS,
+                }
+    entries.update(_exp08_action_entries())
+    return entries
+
+
+def _exp08_stage2_entries() -> dict:
+    """AC_EXP08 stage2 entries — action-prediction 5 버킷 (stage1 과 같은 파일)."""
+    return _exp08_action_entries()
 
 
 def _ac_stage2_entries(exp: str) -> dict:

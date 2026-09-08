@@ -30,10 +30,11 @@
 #              on-{DS}-action/ ← _action_eval.py score    (Stage2 채점, action prediction)
 #              ratio 차원은 학습 산출물(TRAIN_DATASET=AC_EXP01_ratio{37,55,73}) 에 박혀있고
 #              test 파일은 ratio 와 무관하게 4 개로 고정.
-#   AC_EXP08 : ID/OOD 없는 단일 test 계열. leaf 4 종 (state_full / state_masked /
-#              state_dropped / action) 각각 단일 파일 1-회 → overall 1-섹션.
-#              on-AC_EXP08-state-{full,masked,dropped}/ ← _hungarian_eval.py
-#              on-AC_EXP08-action/                     ← _action_eval.py
+#   AC_EXP08 : task 축(state/action) × trajectory ID/OOD. leaf 11 종, 각각 단일 파일
+#              1-회 추론 → overall 1-섹션 (id/ood 2-section 채점이 아니다 — 파일이 갈려 있다).
+#              on-AC_EXP08-state-{id,ood}-{full,masked,dropped}/ ← _hungarian_eval.py
+#              on-AC_EXP08-action-{s1-id,s1-ood,s2-id,s2-ood,ood}/ ← _action_eval.py + thought_eval.py
+#              구 leaf 4 종의 산출물은 stage1_eval_2026-08-22/ 로 아카이브됐다.
 #
 # without_open_app 자동 산출:
 #   각 (variant, EVAL_DS) 마다 정규 eval 직후 추론 재실행 없이
@@ -208,20 +209,27 @@ run_exp01_eval() {
   done
 }
 
-# AC_EXP08 stage1 eval helper — ID/OOD 가 없는 단일 test 계열.
+# AC_EXP08 stage1 eval helper — task 축(state / action) × trajectory ID/OOD.
 #
-# EXP08 은 원본에 앱 파티션 메타가 없어 에피소드 단위 홀드아웃만 한다 → id/ood 2-section
-# 이 아니라 leaf 마다 단일 파일 1-회 추론 + overall 1-섹션 채점이다. 그래서
-# run_exp01_eval (id/ood 쌍 전제) 을 구부리지 않고 별도 함수로 둔다 — EXP01~07 경로는
-# 한 글자도 바뀌지 않는다.
+# 2026-09-08 eval 전면 교체. 구 leaf 4 종(state_full/masked/dropped · action)은 은퇴했고
+# 산출물은 `stage1_eval_2026-08-22/` 로 아카이브됐다. 새 축은 다음과 같다:
 #
-# leaf 4 종 (stem = data/AndroidControl_EXP08/stage1_test_{stem}.jsonl):
-#   state_full / state_masked / state_dropped : current state 제시 방식 3 변형
-#                                               → _hungarian_eval.py  → hungarian_metrics.json
-#   action                                    : action prediction     → _action_eval.py → action_metrics.json
-# 산출 디렉토리는 stem 의 `_` 를 `-` 로 바꾼 on-AC_EXP08-state-full 형태 (기존 on-{DS}-{task} 관례).
+#   state-prediction  (stage1 만 학습하는 과제) : ID / OOD × {full, masked, dropped} = 6 leaf
+#   action-prediction (stage1·stage2 공용 과제) : s1_id / s1_ood / s2_id / s2_ood / ood = 5 leaf
 #
-# EVAL_TASKS (공백 구분) 로 leaf 를 좁힐 수 있다 — 기본은 4 종 전부. leaf 마다 skip
+# ID/OOD 의 단위는 **trajectory(에피소드) 통째**다. 앱 축이 아닌 이유는 train 동결 상태에서
+# train 미등장 앱이 1 개(4 step)뿐이기 때문이다 (빌더 docstring 의 재고표).
+#
+# 파일 stem → 데이터 파일 (data/AndroidControl_EXP08/):
+#   state_{id,ood}_{full,masked,dropped} → state_test_{id,ood}_{full,masked,dropped}.jsonl
+#   action_{s1_id,s1_ood,s2_id,s2_ood,ood} → action_test_{…}.jsonl
+# 산출 디렉토리는 stem 의 `_` 를 `-` 로 바꾼 on-AC_EXP08-state-id-full / on-AC_EXP08-action-s1-id 형태.
+#
+# ⚠ leaf 마다 OOD 의 기준선이 다르다 — `action-s1-ood` 는 stage1 계보 전용, `action-s2-ood` 는
+# stage2 계보 전용이고, 두 계보를 같은 자로 비교하려면 `action-ood`(엄격) 를 본다. 레코드의
+# `s1_ep_seen`/`s2_ep_seen` 으로 사후 층화할 수 있다 (ARCHITECTURE §6).
+#
+# EVAL_TASKS (공백 구분) 로 leaf 를 좁힐 수 있다 — 기본은 11 종 전부. leaf 마다 skip
 # marker/산출 디렉토리가 독립이라 여러 GPU 프로세스로 나눠 돌릴 수 있다 (run_exp01_eval 과 동일 관례).
 run_exp08_eval() {
   local model_short="$1" train_ds="$2" variant="$3" epoch="$4" hub_id="$5" \
@@ -229,8 +237,8 @@ run_exp08_eval() {
   local datadir="${DS_DATADIR[$eval_ds]}"
   local eval_prefix="${DS_PREFIX[$eval_ds]}"
 
-  local stem leaf subtag scorer metrics_name mode_flag schema_flag infer_mnt
-  for stem in ${EVAL_TASKS:-state_full state_masked state_dropped action}; do
+  local stem leaf subtag scorer metrics_name mode_flag schema_flag infer_mnt stem_file
+  for stem in ${EVAL_TASKS:-state_id_full state_id_masked state_id_dropped state_ood_full state_ood_masked state_ood_dropped action_s1_id action_s1_ood action_s2_id action_s2_ood action_ood}; do
     leaf="${stem//_/-}"
     local out_rel="${out_rel_base}/on-${eval_ds}-${leaf}"
     local out_dir="$LF_ROOT/$out_rel"
@@ -240,7 +248,9 @@ run_exp08_eval() {
     fi
     subtag="${subtag}_on-${eval_ds}-${leaf}"
 
-    if [[ "$stem" == state* ]]; then
+    if [[ "$stem" == state_* ]]; then
+      # state_id_full → state_test_id_full
+      stem_file="state_test_${stem#state_}"
       scorer="_hungarian_eval.py"
       metrics_name="hungarian_metrics.json"
       mode_flag="$(ds_score_mode_flag "$eval_ds" state)"
@@ -250,6 +260,8 @@ run_exp08_eval() {
       # state 예측 = 전체 UI XML (라벨 max ~11k 토큰) → 데이터 최대치를 덮는 예산.
       infer_mnt=12288
     else
+      # action_s1_id → action_test_s1_id
+      stem_file="action_test_${stem#action_}"
       scorer="_action_eval.py"
       metrics_name="action_metrics.json"
       mode_flag="$(ds_score_mode_flag "$eval_ds" action)"
@@ -263,30 +275,46 @@ run_exp08_eval() {
       continue
     fi
 
-    local test_jsonl="$BASE_DIR/data/${datadir}/stage1_test_${stem}.jsonl"
+    local test_jsonl="$BASE_DIR/data/${datadir}/${stem_file}.jsonl"
     if [ ! -f "$test_jsonl" ]; then
       echo "[!] [$model_short][train=$train_ds][eval=${eval_ds}-${leaf}] Missing test jsonl:" >&2
       echo "      $test_jsonl" >&2
       exit 1
     fi
-    local ds_test="${eval_prefix}_stage1_test_${stem}"
+    local ds_test="${eval_prefix}_${stem_file}"
 
     build_infer_cmd "$model_short" "$hub_id" "$ds_test" \
       "$test_jsonl" "$template" \
       "$out_rel/generated_predictions.jsonl" \
       "$out_rel/predict_results.json" "$infer_mnt"
 
-    run_logged "$subtag" \
-      bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
-        $INFER_CMD && \
-        python '$BASE_DIR/scripts/$scorer' score \
-          --test   '$test_jsonl' \
-          --pred   '$out_dir/generated_predictions.jsonl' \
-          $mode_flag $schema_flag \
-          --output '$out_dir/$metrics_name'"
+    if [[ "$stem" == state_* ]]; then
+      run_logged "$subtag" \
+        bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
+          $INFER_CMD && \
+          python '$BASE_DIR/scripts/$scorer' score \
+            --test   '$test_jsonl' \
+            --pred   '$out_dir/generated_predictions.jsonl' \
+            $mode_flag $schema_flag \
+            --output '$out_dir/$metrics_name'"
+    else
+      # action leaf 는 stage2_eval.sh 와 **같은 파일을 같은 방식으로** 채점한다 —
+      # thought 지표까지 대칭으로 낸다. 그래야 stage1/stage2 계보를 한 표에서 읽는다.
+      run_logged "$subtag" \
+        bash -c "cd '$LF_ROOT' && mkdir -p '$out_rel' && \
+          $INFER_CMD && \
+          python '$BASE_DIR/scripts/$scorer' score \
+            --test   '$test_jsonl' \
+            --pred   '$out_dir/generated_predictions.jsonl' \
+            $mode_flag $schema_flag \
+            --output '$out_dir/$metrics_name' && \
+          python '$BASE_DIR/scripts/thought_eval.py' \
+            --pred   '$out_dir/generated_predictions.jsonl' \
+            --output '$out_dir/thought_metrics.json'"
+    fi
 
     # without_open_app sibling: state leaf 만 (_action_eval.py 는 --exclude-action 미지원).
-    if [[ "$stem" == state* && "${EVAL_SKIP_WOA:-0}" != "1" ]]; then
+    if [[ "$stem" == state_* && "${EVAL_SKIP_WOA:-0}" != "1" ]]; then
       local out_rel_woa="${out_rel}-without-open_app"
       local out_dir_woa="$LF_ROOT/$out_rel_woa"
       local tag_woa="${subtag}_without_open_app"
