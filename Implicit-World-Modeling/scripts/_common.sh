@@ -424,6 +424,59 @@ _require_known_stage1_variant() {
   exit 2
 }
 
+# --- Stage 2 데이터 ablation 축 (`--stage2-variant`) -------------------------
+# stage1 쪽 축(stage1_variant_seg)의 대칭이되 **세그먼트가 붙는 자리가 다르다.**
+# stage1 은 `world-model` 토큰 바로 뒤에 들어가지만, stage2 데이터 변형은 stage2
+# **variant 키 전체의 끝**에 붙는다:
+#     YAML          : {MODEL}_{base|world-model-full}{SEG2}.yaml
+#     adapters/merged: {model}_stage2_{m2}_base{SEG2} · {m2}_world-model{SEG1}_from_{m1}-ep{E1}{SEG2}
+#     eval leaf     : stage2_eval/{variant}{SEG2}/epoch-{E2}/on-...
+#     HF stage2     : …-stage2-{m2}-epoch{E2}{SEG2}
+# 그래야 stage1 계보 세그먼트(SEG1)와 자리가 겹치지 않아 둘을 동시에 쓸 수 있다
+# (예: inverse-mix stage1 × action-distribution stage2).
+# variant 가 비면 모든 문자열이 도입 전과 **바이트 동일**하다.
+stage2_variant_seg() {
+  local v="${1:-}"
+  if [[ -z "$v" ]]; then echo ""; return; fi
+  printf -- '-%s' "$v"
+}
+
+# 허용 목록은 lf_registry 의 stage2_extra_variants 에서 유도한다 (셸에 적지 마라).
+stage2_known_variants() {
+  local out
+  out="$(cd "$BASE_DIR" && python3 - <<'PY'
+import sys
+sys.path.insert(0, ".")
+from implicit_world_modeling.lf_registry import _DATASET_CONFIG
+
+keys = sorted({
+    v
+    for cfg in _DATASET_CONFIG.values()
+    for v in (cfg.get("stage2_extra_variants") or {})
+})
+print(" ".join(keys))
+PY
+)" || out=""
+  if [[ -z "$out" ]]; then
+    echo "[!] stage2 데이터 ablation variant 목록을 lf_registry 에서 읽지 못했습니다." >&2
+    echo "    정본: implicit_world_modeling/lf_registry.py::_DATASET_CONFIG[*]['stage2_extra_variants']" >&2
+    exit 1
+  fi
+  printf '%s' "$out"
+}
+
+_require_known_stage2_variant() {
+  local want="$1" known v
+  known="$(stage2_known_variants)" || exit 1
+  for v in $known; do
+    if [[ "$v" == "$want" ]]; then return 0; fi
+  done
+  echo "Error: --stage2-variant '$want' 는 등록된 stage2 데이터 variant 가 아닙니다." >&2
+  echo "       허용: $known" >&2
+  echo "       (정본: lf_registry.py::_DATASET_CONFIG[*]['stage2_extra_variants'])" >&2
+  exit 2
+}
+
 # --- 모델 레지스트리 (Cell 5 _MODEL_CONFIG 와 일치) ---------------------------
 declare -A MODEL_ID=(
   [qwen3-vl-8b]="Qwen/Qwen3-VL-8B-Instruct"
@@ -464,6 +517,7 @@ parse_args() {
   local variants_arg=""
   local exp01_ratios_arg=""
   local stage1_variant_arg=""
+  local stage2_variant_arg=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model)
@@ -475,6 +529,9 @@ parse_args() {
       --stage1-mode)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-mode requires a value." >&2; exit 2; fi
         stage1_mode_arg="$2"; shift 2 ;;
+      --stage2-variant)
+        if [[ -z "${2:-}" ]]; then echo "Error: --stage2-variant requires a value." >&2; exit 2; fi
+        stage2_variant_arg="$2"; shift 2 ;;
       --stage1-variant)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-variant requires a value." >&2; exit 2; fi
         stage1_variant_arg="$2"; shift 2 ;;
@@ -511,6 +568,11 @@ Options:
                        diff loss 실험군. AC_EXP03 은 AC_EXP01 ratio73 멤버십을 좌표(point)
                        표현으로 미러한 실험군 (index→x,y).
   --stage1-mode MODE   full | lora (기본: full) — Stage 1 학습 방식.
+  --stage2-variant V   stage2 **데이터** ablation 변형 (기본: 없음 = 메인 stage2 데이터).
+                       허용값은 lf_registry::stage2_extra_variants 에서 유도한다
+                       (현재: action-distribution). 지정하면 YAML·산출 경로·HF repo id 에
+                       세그먼트가 붙어 메인 런과 섞이지 않는다. stage1 축과 자리가 달라
+                       둘을 동시에 줄 수 있다 (명명 규칙 정본: _common.sh::stage2_variant_seg).
   --stage1-variant V   stage1 ablation 변형 (기본: 없음 = 메인 stage1).
                        허용값은 lf_registry.py::_DATASET_CONFIG[*]["stage1_extra_variants"]
                        에서 유도한다 (목록을 여기에 적지 않는다 — 확인:
@@ -565,6 +627,11 @@ EOF
   # (허용값을 여기에 열거하지 않는다 — _require_known_stage1_variant 가 유도해서 검증한다).
   # 빈 값(기본)이면 기존 stage1 경로 불변 — YAML 파일명·merge 경로·HF repo id 어디에도
   # variant 세그먼트가 붙지 않는다 (명명 규칙 정본: stage1_variant_seg).
+  STAGE2_VARIANT=""
+  if [[ -n "${stage2_variant_arg:-}" ]]; then
+    _require_known_stage2_variant "$stage2_variant_arg"
+    STAGE2_VARIANT="$stage2_variant_arg"
+  fi
   STAGE1_VARIANT=""
   if [[ -n "$stage1_variant_arg" ]]; then
     _require_known_stage1_variant "$stage1_variant_arg"
@@ -678,6 +745,7 @@ parse_eval_args() {
   local stage2_mode_arg="lora"
   local stage1_epoch_arg=""
   local stage1_variant_arg=""
+  local stage2_variant_arg=""
   local epochs_arg="1,2,3"
   local variants_arg=""
   local exp01_ratio_arg=""
@@ -701,6 +769,9 @@ parse_eval_args() {
       --stage1-epoch)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-epoch requires a value." >&2; exit 2; fi
         stage1_epoch_arg="$2"; shift 2 ;;
+      --stage2-variant)
+        if [[ -z "${2:-}" ]]; then echo "Error: --stage2-variant requires a value." >&2; exit 2; fi
+        stage2_variant_arg="$2"; shift 2 ;;
       --stage1-variant)
         if [[ -z "${2:-}" ]]; then echo "Error: --stage1-variant requires a value." >&2; exit 2; fi
         stage1_variant_arg="$2"; shift 2 ;;
@@ -826,6 +897,11 @@ EOF
   # --stage1-variant: parse_args 와 같은 정본·같은 검증 (허용값을 여기 적지 않는다).
   # 빈 값(기본)이면 model path·HF repo id·eval 산출 경로가 전부 기존과 바이트 동일하다.
   STAGE1_VARIANT=""
+  STAGE2_VARIANT=""
+  if [[ -n "$stage2_variant_arg" ]]; then
+    _require_known_stage2_variant "$stage2_variant_arg"
+    STAGE2_VARIANT="$stage2_variant_arg"
+  fi
   if [[ -n "$stage1_variant_arg" ]]; then
     _require_known_stage1_variant "$stage1_variant_arg"
     STAGE1_VARIANT="$stage1_variant_arg"
@@ -1109,9 +1185,10 @@ hf_repo_id_stage1() {
 #   SaFD-00/{short}-{slug}base-stage2-{mode2}-epoch{E2}
 #   ex: SaFD-00/qwen3-vl-8b-ac-exp01-ratio37-base-stage2-lora-epoch1
 hf_repo_id_stage2_base() {
-  local model_short="$1" ds="$2" mode2="$3" epoch2="$4"
-  printf 'SaFD-00/%s-%sbase-stage2-%s-epoch%s%s' \
-    "$model_short" "${HF_SLUG[$ds]}" "$mode2" "$epoch2" "$(ds_hf_version "$ds")"
+  local model_short="$1" ds="$2" mode2="$3" epoch2="$4" s2_variant="${5:-}"
+  printf 'SaFD-00/%s-%sbase-stage2-%s-epoch%s%s%s' \
+    "$model_short" "${HF_SLUG[$ds]}" "$mode2" "$epoch2" \
+    "$(stage2_variant_seg "$s2_variant")" "$(ds_hf_version "$ds")"
 }
 
 # Stage 2 (world-model variant — Stage 1 계보 포함):
@@ -1120,10 +1197,12 @@ hf_repo_id_stage2_base() {
 # 7번째 인자(stage1 variant, 선택)는 상류 stage1 ablation 계보를 구분한다 — 같은 stage2
 # 학습이라도 어느 stage1 에서 왔는지가 다르면 다른 repo 여야 한다. 미지정이면 바이트 불변.
 hf_repo_id_stage2_world_model() {
-  local model_short="$1" ds="$2" mode1="$3" epoch1="$4" mode2="$5" epoch2="$6" s1_variant="${7:-}"
-  printf 'SaFD-00/%s-%sworld-model%s-stage1-%s-epoch%s-stage2-%s-epoch%s%s' \
+  local model_short="$1" ds="$2" mode1="$3" epoch1="$4" mode2="$5" epoch2="$6" \
+        s1_variant="${7:-}" s2_variant="${8:-}"
+  printf 'SaFD-00/%s-%sworld-model%s-stage1-%s-epoch%s-stage2-%s-epoch%s%s%s' \
     "$model_short" "${HF_SLUG[$ds]}" "$(stage1_variant_seg "$s1_variant")" \
-    "$mode1" "$epoch1" "$mode2" "$epoch2" "$(ds_hf_version "$ds")"
+    "$mode1" "$epoch1" "$mode2" "$epoch2" \
+    "$(stage2_variant_seg "$s2_variant")" "$(ds_hf_version "$ds")"
 }
 
 # Stage 2 (world-model-adapter variant — merge X: stage1 LoRA 어댑터를 병합하지 않고
@@ -1193,15 +1272,17 @@ resolve_eval_model_path() {
       hub_id="$(hf_repo_id_stage1 "$_ms" "$_ds" "$_mode" "$_ep" "$_s1v")"
       ;;
     stage2_base)
-      local _ms="$1" _ds="$2" _m2="$3" _ep2="$4"
-      local_dir="$(local_merged_epoch_dir stage2 "$_ms" "$_ds" "${_m2}_base" "$_ep2")"
-      hub_id="$(hf_repo_id_stage2_base "$_ms" "$_ds" "$_m2" "$_ep2")"
+      local _ms="$1" _ds="$2" _m2="$3" _ep2="$4" _s2v="${5:-}"
+      local _seg2; _seg2="$(stage2_variant_seg "$_s2v")"
+      local_dir="$(local_merged_epoch_dir stage2 "$_ms" "$_ds" "${_m2}_base${_seg2}" "$_ep2")"
+      hub_id="$(hf_repo_id_stage2_base "$_ms" "$_ds" "$_m2" "$_ep2" "$_s2v")"
       ;;
     stage2_world)
-      local _ms="$1" _ds="$2" _m1="$3" _ep1="$4" _m2="$5" _ep2="$6" _s1v="${7:-}"
+      local _ms="$1" _ds="$2" _m1="$3" _ep1="$4" _m2="$5" _ep2="$6" _s1v="${7:-}" _s2v="${8:-}"
       local _seg; _seg="$(stage1_variant_seg "$_s1v")"
-      local_dir="$(local_merged_epoch_dir stage2 "$_ms" "$_ds" "${_m2}_world-model${_seg}_from_${_m1}-ep${_ep1}" "$_ep2")"
-      hub_id="$(hf_repo_id_stage2_world_model "$_ms" "$_ds" "$_m1" "$_ep1" "$_m2" "$_ep2" "$_s1v")"
+      local _seg2; _seg2="$(stage2_variant_seg "$_s2v")"
+      local_dir="$(local_merged_epoch_dir stage2 "$_ms" "$_ds" "${_m2}_world-model${_seg}_from_${_m1}-ep${_ep1}${_seg2}" "$_ep2")"
+      hub_id="$(hf_repo_id_stage2_world_model "$_ms" "$_ds" "$_m1" "$_ep1" "$_m2" "$_ep2" "$_s1v" "$_s2v")"
       ;;
     stage2_world_adapter)
       # merge X 계보: variant_key 는 `..._world-model_from_adapter-ep{E1}` (from_full/from_lora 와 대칭).

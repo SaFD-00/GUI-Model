@@ -37,10 +37,13 @@ parse_args "$@"
 export DISABLE_VERSION_CHECK=1
 : "${NPROC_PER_NODE:=2}"
 
-SCRIPT_TAG="stage2_train_${STAGE2_MODE}_from_${STAGE1_MODE}${STAGE1_VARIANT:+_$STAGE1_VARIANT}"
+SCRIPT_TAG="stage2_train_${STAGE2_MODE}_from_${STAGE1_MODE}${STAGE1_VARIANT:+_$STAGE1_VARIANT}${STAGE2_VARIANT:+_$STAGE2_VARIANT}"
 
 # stage1 ablation 계보 세그먼트 ("" | -action-only | …). 정본: _common.sh::stage1_variant_seg.
 VARSEG="$(stage1_variant_seg "$STAGE1_VARIANT")"
+# stage2 데이터 ablation 세그먼트 ("" | -action-distribution). YAML 선택에만 쓴다 —
+# output_dir 은 커밋 YAML 이 이미 접미를 달고 렌더돼 있다 (gen_configs).
+S2VARSEG="$(stage2_variant_seg "$STAGE2_VARIANT")"
 
 # 계보 세그먼트를 output_dir 에 새기는 sed 표현식. 커밋 YAML 은 그대로 두고 런타임에만
 # 주입한다 (__STAGE1_EPOCH__ 와 같은 축 — 커밋 YAML 은 계보-불변 baseline 이다).
@@ -157,7 +160,9 @@ for MODEL_SHORT in "${MODELS[@]}"; do
       fi
 
       # YAML 정본은 repo 가 소유한다 (LF/examples/custom 이 아니라 configs/train).
-      YAML_ABS="$BASE_DIR/configs/train/$(ds_config_subfolder "$DS")/stage2_${STAGE2_MODE}/${MODEL_SHORT}_${VARIANT}$(ds_version_suffix "$DS").yaml"
+      # stage2 데이터 ablation 세그먼트는 **variant 키 끝**에 붙는다 (정본:
+      # _common.sh::stage2_variant_seg). 비면 항등이라 메인 런 경로가 바이트 불변이다.
+      YAML_ABS="$BASE_DIR/configs/train/$(ds_config_subfolder "$DS")/stage2_${STAGE2_MODE}/${MODEL_SHORT}_${VARIANT}${S2VARSEG}$(ds_version_suffix "$DS").yaml"
       require_model_eligible "$MODEL_SHORT" "${DS_DATADIR[$DS]}"
       require_yaml "$YAML_ABS" "python -m implicit_world_modeling.gen_configs --write 로 생성하세요"
       RUN_YAML="$YAML_ABS"
