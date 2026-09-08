@@ -565,6 +565,25 @@ _DATASET_CONFIG = {
             "action-only": "IWM-AC_EXP08_stage1_train_action_only",
             "inverse-mix": "IWM-AC_EXP08_stage1_train_inverse_mix",
         },
+        # Stage 2 데이터 ablation. stage1 쪽 축(`stage1_extra_variants`)의 대칭이되
+        # **하이퍼파라미터까지 함께 바뀔 수 있어** dict 값이 dataset 키 하나가 아니라
+        # override 묶음이다.
+        #
+        # action-distribution: stage2_train(30K) 의 terminate 27.3% 가 stage1
+        # downstream(10K, 14.9%) 과 크게 달라, 그 분포를 맞춘 대조군이다. 기존 샘플은
+        # 바이트 불변으로 두고 과대한 층(terminate·type)만 드롭한 뒤 상한까지 채웠다
+        # (실현 28,421 — `open`/`navigate_back` 은 메인 stage1 이 재고를 이미 써서
+        # 목표에 미달한다; 사유·실현치는 sidecar 가 정본).
+        # 데이터 정본은 scripts/build_exp08_action_dist_data.py.
+        "stage2_extra_variants": {
+            "action-distribution": {
+                "dataset": "IWM-AC_EXP08_stage2_train_action_distribution",
+                # 사용자 지정 (2026-09-08): 1 epoch · 0.25 epoch 마다 체크포인트.
+                "epochs": 1,
+                "save_strategy": "steps",
+                "save_steps": 0.25,
+            },
+        },
         "stage1": {
             "lr": "1.0e-5",
             "epochs": 1,

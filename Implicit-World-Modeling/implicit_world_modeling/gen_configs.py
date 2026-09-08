@@ -188,15 +188,30 @@ gradient_checkpointing: true
 # ============================================================
 # === Stage 2 YAML (노트북 Cell 12) ===
 # ============================================================
-def render_stage2(cfg: dict, mode: str, policy: GpuPolicy) -> dict[str, str]:
+def render_stage2(
+    cfg: dict,
+    mode: str,
+    policy: GpuPolicy,
+    *,
+    overrides: dict | None = None,
+    output_dir_suffix: str = "",
+) -> dict[str, str]:
     """Stage 2 (Action Prediction) 학습 YAML — variant 3~4 종을 한 번에 렌더한다.
 
     variant: base / world-model-full / world-model-lora (Stage 1 계보).
     ``cfg["stage2_adapter_variant"]`` 이 켜져 있고 mode=="lora" 이면 4번째 변형
     world-model-adapter (merge X — stage1 어댑터를 병합하지 않고 base 위에 얹는다)
     를 추가 렌더한다. EXP07 전용 (레지스트리 opt-in 플래그).
+
+    ``overrides``/``output_dir_suffix`` 는 stage2 데이터 ablation
+    (``AndroidControl_EXP08::stage2_extra_variants``) 전용이다 — 기본 호출(둘 다
+    미지정)은 기존 출력과 **byte-exact** 하다. stage1 쪽 축과 달리 dataset 뿐 아니라
+    epochs·save_strategy·save_steps 까지 덮을 수 있다 (분포 대조군은 체크포인트
+    간격이 다를 수 있다).
     """
-    s2 = cfg["stage2"]
+    s2 = dict(cfg["stage2"])
+    if overrides:
+        s2.update({k: v for k, v in overrides.items() if k != "dataset"})
     mcfg = cfg["model_config"]
 
     ds_line = f"deepspeed: {_deepspeed_field(policy)}\n"
@@ -225,6 +240,11 @@ def render_stage2(cfg: dict, mode: str, policy: GpuPolicy) -> dict[str, str]:
         )
         lr_value = s2["lr"]
 
+    # save_steps: 값이 있을 때만 emit (기존 DS 는 전부 None → byte 불변). stage1 과 같은 규약.
+    save_steps_line = (
+        f"save_steps: {s2['save_steps']}\n" if s2.get("save_steps") is not None else ""
+    )
+
     common_config = f"""\
 {_header(cfg["dataset_name"])}### model
 model_name_or_path: {{model_name_or_path}}
@@ -235,7 +255,7 @@ image_min_pixels: {cfg["image_min_pixels"]}
 {method_block}
 
 ### dataset
-dataset: {cfg["ds_s2_train"]}
+dataset: {(overrides or {}).get("dataset") or cfg["ds_s2_train"]}
 template: {cfg["template"]}
 cutoff_len: {cfg["cutoff_len"]}
 overwrite_cache: false
@@ -246,7 +266,7 @@ media_dir: ../data
 output_dir: {{output_dir}}
 logging_steps: 1
 save_strategy: {s2["save_strategy"]}
-save_total_limit: 5
+{save_steps_line}save_total_limit: 5
 plot_loss: true
 overwrite_output_dir: true
 
@@ -265,18 +285,19 @@ gradient_checkpointing: true
 # resume_from_checkpoint: true
 """
 
+    sfx = output_dir_suffix
     variants = {
         "base": {
             "model_name_or_path": cfg["model_id"],
-            "output_dir": cfg[f"save_s2_{mode}_base"],
+            "output_dir": cfg[f"save_s2_{mode}_base"] + sfx,
         },
         "world-model-full": {
             "model_name_or_path": cfg["hf_s1_model_full"],
-            "output_dir": cfg[f"save_s2_{mode}_world_from_full"],
+            "output_dir": cfg[f"save_s2_{mode}_world_from_full"] + sfx,
         },
         "world-model-lora": {
             "model_name_or_path": cfg["hf_s1_model_lora"],
-            "output_dir": cfg[f"save_s2_{mode}_world_from_lora"],
+            "output_dir": cfg[f"save_s2_{mode}_world_from_lora"] + sfx,
         },
     }
 
@@ -357,6 +378,21 @@ def generate_all(
                 for variant, content in render_stage2(cfg, mode, policy).items():
                     rel = f"{subfolder}/stage2_{mode}/{model_key}_{variant}{cfg_ver}.yaml"
                     out[rel] = content
+
+                # Stage 2 데이터 ablation (AndroidControl_EXP08::stage2_extra_variants) —
+                # stage1 쪽 축과 같은 이유로 **full 모드만** 렌더한다 (사용자 범위:
+                # base / world-model-full 두 계보를 full FT 1 epoch 로 돌린다).
+                if mode == "full":
+                    for dvar, ov in cfg.get("stage2_extra_variants", {}).items():
+                        rendered = render_stage2(
+                            cfg, mode, policy, overrides=ov, output_dir_suffix=f"-{dvar}"
+                        )
+                        for variant in ("base", "world-model-full"):
+                            rel_v = (
+                                f"{subfolder}/stage2_{mode}/"
+                                f"{model_key}_{variant}-{dvar}{cfg_ver}.yaml"
+                            )
+                            out[rel_v] = rendered[variant]
     return out
 
 

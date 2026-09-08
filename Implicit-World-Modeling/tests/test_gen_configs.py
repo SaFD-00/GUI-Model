@@ -447,8 +447,10 @@ def test_generated_count(generated: dict[str, str]) -> None:
     #          + EXP08 20 (Qwen2.5-VL 2 모델 × 2 모드 × [stage1 1 + stage2 3] = 16;
     #            EXP07 과 달리 merge X 변형이 없어 stage2_lora 도 3 variant.
     #            + stage1_extra_variants(action-only, inverse-mix) 4 개 — stage1 full 만,
-    #            2 모델 × 2 variant).
-    assert len(generated) == AS_TRAINED_COUNT - len(INELIGIBLE_REMOVED) + 150
+    #            2 모델 × 2 variant
+    #            + stage2_extra_variants(action-distribution) 4 개 — stage2 full 만,
+    #            2 모델 × {base, world-model-full}).
+    assert len(generated) == AS_TRAINED_COUNT - len(INELIGIBLE_REMOVED) + 154
 
     # 생성된 모든 YAML 이 자격 집합 안에 있는가 (자격 밖 조합을 만들지 않는가)
     for rel in generated:
