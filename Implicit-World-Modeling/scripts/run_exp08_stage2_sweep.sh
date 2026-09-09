@@ -87,6 +87,10 @@ fi
 # (gpu_memory_utilization 0.80 × 2). 그래서 첫 GPU 워커의 **마지막 작업으로 인라인** 실행한다.
 run_lr_unit() {
   local gpu="$1"
+  # PATH 에 conda bin 이 없으면 vLLM 의 flashinfer JIT 컴파일이 `ninja` 를 못 찾아
+  # "Engine core initialization failed" 로 죽는다 (2026-09-08·09-09 두 번 다 실측 —
+  # stage2_eval.sh 경유 leaf 165 개는 _common.sh 가 PATH 를 잡아줘서 안 걸렸다).
+  export PATH="$CONDA_ENV/bin:$PATH"
   local HUB="SaFD-00/qwen2.5-vl-3b-ac-exp08-base-lr-1e-04-stage2-lora-epoch1"
   local OUT_BASE="$REPO/outputs/AndroidControl_EXP08/eval/qwen2.5-vl-3b/stage2_eval/lora_base_lr-1e-04/epoch-1"
   local b leaf out test_jsonl
